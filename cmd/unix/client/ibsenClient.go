@@ -3,10 +3,10 @@ package main
 import (
 	"bufio"
 	"context"
-	grpcApi "dostoevsky/api/golang"
 	"encoding/base64"
 	"flag"
 	"fmt"
+	grpcApi "github.com/tcw/ibsen/api/grpc/golangApi"
 	"google.golang.org/grpc"
 	"log"
 	"os"
@@ -28,7 +28,7 @@ func main() {
 		log.Fatalf("did not connect: %v", err)
 	}
 	defer conn.Close()
-	c := grpcApi.NewDostoevskyClient(conn)
+	c := grpcApi.NewIbsenClient(conn)
 
 	log.Println("created client")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)

@@ -1,6 +1,8 @@
 syntax = "proto3";
 
-service Dostoevsky {
+option go_package = "/api/grpc/golangApi";
+
+service Ibsen {
 
     rpc create (Topic) returns (Empty) {}
     rpc drop (Topic) returns (Empty) {}
@@ -42,6 +44,6 @@ message Message {
 }
 
 message Status {
-    uint64 entries = 1;
+    int32 entries = 1;
     Offset current = 2;
 }

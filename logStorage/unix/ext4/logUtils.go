@@ -88,14 +88,6 @@ func listBlocksSorted(topicPath string) ([]uint64, error) {
 	return blocks, nil
 }
 
-func (t *TopicWrite) findCurrentBlock(topicPath string) (uint64, error) {
-	sorted, err := listBlocksSorted(topicPath)
-	if err != nil {
-		return 0, err
-	}
-	return sorted[len(sorted)-1], nil
-}
-
 func offsetToLittleEndian(offset logStorage.Offset) []byte {
 	bytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(bytes, uint64(offset))

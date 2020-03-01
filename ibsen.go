@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	grpcApi "github.com/tcw/ibsen/api/grpc/golangApi"
 	"log"
 	"os"
 	"os/signal"
@@ -15,14 +16,8 @@ import (
 var (
 	startServer = flag.Bool("s", false, "Run server")
 	startClient = flag.Bool("c", false, "Run client")
-	write       = flag.Bool("w", false, "write")
-	writeTopic  = flag.Bool("wt", false, "write topic")
-	read        = flag.Bool("r", false, "read")
-	readTopic   = flag.Int64("rt", -1, "read topic")
-	writeLock   = flag.Bool("l", false, "acquire Lock")
 	cpuprofile  = flag.String("cpu", "", "write cpu profile to `file`")
 	memprofile  = flag.String("mem", "", "write memory profile to `file`")
-	releaseLock chan bool
 )
 
 func main() {
@@ -44,22 +39,11 @@ func main() {
 
 	if *startServer {
 		fmt.Println("started server on port 50001")
-		err := grpc.StartGRPC(50001, "cert.pem", "key.pen", false, "/home/tom/tmp/doskey")
+		err := grpcApi.StartGRPC(50001, "cert.pem", "key.pen", false, "/home/tom/tmp/doskey")
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
-	if *startClient {
-		fmt.Println("connecting with client")
-		/*status := api.WriteToLog("localhost:50001", []byte("hello"))
-		fmt.Println(status)*/
-		toLog, err := examples.WriteStreamToLog("localhost:50001")
-		if err != nil {
-			log.Fatal(err)
-		}
-		fmt.Println(toLog)
-	}
-
 }
 
 func initSignals() {
@@ -109,15 +93,4 @@ func signalHandler(signal os.Signal) {
 
 	fmt.Println("\nFinished server cleanup")
 	os.Exit(0)
-}
-
-func printChan(c chan persistentLog.LogEntry) {
-	//counter := 0
-	for {
-		//counter = counter + 1
-		value := <-c
-		//if counter%100000 == 0 {
-		fmt.Println(value.Offset)
-		//}
-	}
 }

@@ -9,7 +9,7 @@ type TopicRead struct {
 	rootPath          string
 	name              string
 	topicPath         string
-	currentOffset     uint64
+	currentOffset     logStorage.Offset
 	sortedBlocks      []uint64
 	currentBlockIndex uint
 	logFile           *LogFile
@@ -35,36 +35,41 @@ func NewTopicRead(rootPath string, topicName string) (TopicRead, error) {
 	return topicRead, nil
 }
 
-//Todo: return error
-func (t *TopicRead) ReadFromBeginning(c chan *logStorage.LogEntry) {
-	var readCount uint64 = 0
+func (t *TopicRead) ReadFromBeginning(c chan *logStorage.LogEntry) error {
 	t.logFile = NewLogReader(t.rootPath + separator + t.name + separator + createBlockFileName(0))
 	for {
-		readCount = readCount + t.logFile.ReadLogFromBeginning(c)
+		err := t.logFile.ReadLogFromBeginning(c)
+		if err != nil {
+			return err
+		}
 		t.logFile.CloseLogReader()
 		if !t.nextBlock() {
-			return readCount
+			return nil
 		}
 	}
 }
 
-//Todo: return error
-func (t *TopicRead) ReadLogFromOffsetNotIncluding(offset uint64, c chan LogEntry) uint64 {
-	var readCount uint64 = 0
-	blockIndexContainingOffset, err := t.findBlockIndexContainingOffset(offset)
+func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEntry, offset logStorage.Offset) error {
+	blockIndexContainingOffset, err := t.findBlockIndexContainingOffset(uint64(offset))
 	if err != nil {
-		return 0
+		return err
 	}
 	t.currentBlockIndex = blockIndexContainingOffset
 	t.currentOffset = offset
 	blockName := createBlockFileName(t.sortedBlocks[t.currentBlockIndex])
 	t.logFile = NewLogReader(t.rootPath + separator + t.name + separator + blockName)
-	readCount = t.logFile.ReadLogFromOffsetNotIncluding(c, t.currentOffset)
+	err = t.logFile.ReadLogFromOffsetNotIncluding(logChan, t.currentOffset)
+	if err != nil {
+		return err
+	}
 	for {
-		readCount = readCount + t.logFile.ReadLogFromBeginning(c)
+		err := t.logFile.ReadLogFromBeginning(logChan)
+		if err != nil {
+			return err
+		}
 		t.logFile.CloseLogReader()
 		if !t.nextBlock() {
-			return readCount
+			return nil
 		}
 	}
 }

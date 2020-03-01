@@ -2,6 +2,7 @@ package ext4
 
 import (
 	"errors"
+	"github.com/tcw/ibsen/logStorage"
 	"log"
 	"os"
 )
@@ -17,22 +18,30 @@ type TopicWrite struct {
 	logFile          *LogFile
 }
 
-func (t *TopicWrite) WriteToTopic(payload []byte) int {
+func (t *TopicWrite) WriteToTopic(entry []byte) int {
 	t.currentOffset = t.currentOffset + 1
-	entry := LogEntry{
-		Offset:  t.currentOffset,
-		Size:    uint64(len(payload)),
-		Payload: payload,
+	logEntry := &logStorage.LogEntry{
+		Offset:   logStorage.Offset(t.currentOffset),
+		ByteSize: len(entry),
+		Entry:    entry,
 	}
-	n := t.logFile.WriteToFile(entry)
-	t.currentBlockSize = t.currentBlockSize + int64(entry.Size) + 16
+	n := t.logFile.WriteToFile(logEntry)
+	t.currentBlockSize = t.currentBlockSize + int64(logEntry.ByteSize) + 16 // 16 is offset + byteSize
 	if t.currentBlockSize > t.maxBlockSize {
 		t.createNextBlock()
 	}
 	return n
 }
 
-func NewTopicWrite(rootpath string, name string, maxBlockSize int64) *TopicWrite {
+func (t *TopicWrite) findCurrentBlock(topicPath string) (uint64, error) {
+	sorted, err := listBlocksSorted(topicPath)
+	if err != nil {
+		return 0, err
+	}
+	return sorted[len(sorted)-1], nil
+}
+
+func NewTopicWrite(rootpath string, name string, maxBlockSize int64) (TopicWrite, error) {
 
 	topic := TopicWrite{
 		rootPath:         rootpath,
@@ -45,11 +54,16 @@ func NewTopicWrite(rootpath string, name string, maxBlockSize int64) *TopicWrite
 	}
 	topicExist := doesTopicExist(rootpath, name)
 	if topicExist {
-		blocksSorted := listBlocksSorted(topic.topicPath)
+		blocksSorted, err := listBlocksSorted(topic.topicPath)
+		if err != nil {
+			return TopicWrite{}, err
+		}
 		if len(blocksSorted) == 0 {
-			createdTopic := topic.createTopic()
-			if createdTopic {
+			err := topic.createTopic()
+			if err == nil {
 				topic.createFirstBlock()
+			} else {
+				return TopicWrite{}, err
 			}
 		}
 	}
@@ -57,37 +71,41 @@ func NewTopicWrite(rootpath string, name string, maxBlockSize int64) *TopicWrite
 		block, err := topic.findCurrentBlock(topic.topicPath)
 		if err != nil {
 			log.Println(err)
+			return TopicWrite{}, err
 		}
 		fileName := createBlockFileName(block)
 		blockFileName := topic.topicPath + separator + fileName
-		topic.logFile = persistentLog.NewLogWriter(blockFileName)
+		topic.logFile = NewLogWriter(blockFileName)
 		topic.currentBlockSize = blockSize(topic.logFile.LogFile)
 		topic.currentBlock = block
-		reader := persistentLog.NewLogReader(blockFileName)
+		reader := NewLogReader(blockFileName)
 		offset, err := reader.ReadCurrentOffset()
 		if err != nil {
 			log.Println(err)
+			return TopicWrite{}, err
 		}
 		topic.currentOffset = offset
 		reader.CloseLogReader()
 	} else {
-		createdTopic := topic.createTopic()
-		if createdTopic {
+		err := topic.createTopic()
+		if err == nil {
 			topic.createFirstBlock()
+		} else {
+			return TopicWrite{}, err
 		}
 	}
-	return &topic
+	return topic, nil
 }
 
 func (t *TopicWrite) createNextBlock() {
 	t.logFile.CloseLogWriter()
 	t.currentBlock = t.currentOffset
 	newBlockFileName := t.topicPath + separator + createBlockFileName(t.currentBlock+1)
-	t.logFile = persistentLog.NewLogWriter(newBlockFileName)
+	t.logFile = NewLogWriter(newBlockFileName)
 	t.currentBlockSize = 0
 }
 
-func CreateNewTopic(rootPath string, topicName string) error {
+func createNewTopic(rootPath string, topicName string) error {
 	topics, err := ListTopics(rootPath)
 	if err != nil {
 		return err
@@ -104,16 +122,16 @@ func CreateNewTopic(rootPath string, topicName string) error {
 	return nil
 }
 
-func (t *TopicWrite) createTopic() bool {
+func (t *TopicWrite) createTopic() error {
 	err := os.Mkdir(t.topicPath, 0777)
 	if err != nil {
 		log.Println("Couldn't create topic", t.name)
-		return false
+		return err
 	}
-	return true
+	return nil
 }
 
 func (t *TopicWrite) createFirstBlock() {
 	fileName := createBlockFileName(t.currentBlock)
-	t.logFile = persistentLog.NewLogWriter(t.topicPath + separator + fileName)
+	t.logFile = NewLogWriter(t.topicPath + separator + fileName)
 }

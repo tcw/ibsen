@@ -54,8 +54,7 @@ func (lw *LogFile) ReadCurrentOffset() (uint64, error) {
 	}
 }
 
-func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, excludingOffset uint64) error {
-
+func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, excludingOffset logStorage.Offset) error {
 	var offsetFound = false
 	skippedFirst := false
 
@@ -71,21 +70,23 @@ func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, ex
 		}
 		if n != 8 {
 			log.Println("offset incorrect")
-			return
+			return errors.New("offset incorrect")
 		}
 		offset := fromLittleEndian(bytes)
 
 		n, err2 := lw.LogFile.Read(bytes)
 		if n != 8 {
-			log.Println("offset incorrect")
+			log.Println("byte size incorrect")
+			return errors.New("byte size incorrect")
 		}
 		size := fromLittleEndian(bytes)
 		if err2 != nil {
 			log.Println(err)
+			return err2
 		}
 
 		if !offsetFound {
-			if excludingOffset != offset {
+			if uint64(excludingOffset) != offset {
 				lw.LogFile.Seek(int64(size), 1)
 				continue
 			} else {
@@ -94,19 +95,20 @@ func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, ex
 		}
 
 		if offsetFound {
-			payload := make([]byte, size)
-			n, err3 := lw.LogFile.Read(payload)
+			entry := make([]byte, size)
+			n, err3 := lw.LogFile.Read(entry)
 			if err3 != nil {
 				log.Println(err)
 			}
 			if n != int(size) {
-				log.Println("offset incorrect")
+				log.Println("entry incorrect")
+				return errors.New("entry incorrect")
 			}
 			if skippedFirst {
 				c <- &logStorage.LogEntry{
 					Offset:   logStorage.Offset(offset),
 					ByteSize: int(size),
-					Entry:    payload,
+					Entry:    entry,
 				}
 			} else {
 				skippedFirst = true
@@ -117,7 +119,6 @@ func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, ex
 }
 
 func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry) error {
-	var readCount uint64 = 0
 	reader := bufio.NewReader(lw.LogFile)
 	bytes := make([]byte, 8)
 	for {
@@ -136,30 +137,29 @@ func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry) error {
 		offset := fromLittleEndian(bytes)
 		n, err2 := io.ReadFull(reader, bytes)
 		if n != 8 {
-			log.Println("payload size incorrect")
-			return errors.New("payload size incorrect")
+			log.Println("entry size incorrect")
+			return errors.New("entry size incorrect")
 		}
 		size := fromLittleEndian(bytes)
 		if err2 != nil {
 			log.Println(err2)
 			return err2
 		}
-		payload := make([]byte, size)
-		n, err3 := io.ReadFull(reader, payload)
+		entry := make([]byte, size)
+		n, err3 := io.ReadFull(reader, entry)
 		if err3 != nil {
 			log.Println(err3)
 			return err3
 		}
 		if n != int(size) {
-			log.Println("payload incorrect")
-			return errors.New("payload incorrect")
+			log.Println("entry incorrect")
+			return errors.New("entry incorrect")
 		}
 		c <- &logStorage.LogEntry{
 			Offset:   logStorage.Offset(offset),
 			ByteSize: int(size),
-			Entry:    payload,
+			Entry:    entry,
 		}
-		readCount = readCount + 1
 	}
 }
 
