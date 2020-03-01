@@ -3,6 +3,7 @@ package ext4
 import (
 	"bufio"
 	"errors"
+	"github.com/tcw/ibsen/logStorage"
 	"io"
 	"log"
 	"os"
@@ -53,23 +54,24 @@ func (lw *LogFile) ReadCurrentOffset() (uint64, error) {
 	}
 }
 
-func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan LogEntry, excludingOffset uint64) uint64 {
+func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, excludingOffset uint64) error {
 
 	var offsetFound = false
-	var readCount uint64 = 0
 	skippedFirst := false
 
 	for {
 		bytes := make([]byte, 8)
 		n, err := lw.LogFile.Read(bytes)
 		if err == io.EOF {
-			return readCount
+			return nil
 		}
 		if err != nil {
 			log.Println(err)
+			return err
 		}
 		if n != 8 {
 			log.Println("offset incorrect")
+			return
 		}
 		offset := fromLittleEndian(bytes)
 
@@ -101,50 +103,62 @@ func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan LogEntry, excludingOffse
 				log.Println("offset incorrect")
 			}
 			if skippedFirst {
-				c <- LogEntry{Offset: offset, Size: size, Payload: payload}
-				readCount = readCount + 1
+				c <- &logStorage.LogEntry{
+					Offset:   logStorage.Offset(offset),
+					ByteSize: int(size),
+					Entry:    payload,
+				}
 			} else {
 				skippedFirst = true
 				continue
 			}
-
 		}
 	}
 }
 
-func (lw *LogFile) ReadLogFromBeginning(c chan LogEntry) uint64 {
+func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry) error {
 	var readCount uint64 = 0
 	reader := bufio.NewReader(lw.LogFile)
 	bytes := make([]byte, 8)
 	for {
 		n, err := io.ReadFull(reader, bytes)
 		if err == io.EOF {
-			return readCount
+			return nil
 		}
 		if err != nil {
 			log.Println(err)
+			return err
 		}
 		if n != 8 {
 			log.Println("offset incorrect")
+			return errors.New("offset incorrect")
 		}
 		offset := fromLittleEndian(bytes)
 		n, err2 := io.ReadFull(reader, bytes)
 		if n != 8 {
 			log.Println("payload size incorrect")
+			return errors.New("payload size incorrect")
 		}
 		size := fromLittleEndian(bytes)
 		if err2 != nil {
-			log.Println(err)
+			log.Println(err2)
+			return err2
 		}
 		payload := make([]byte, size)
 		n, err3 := io.ReadFull(reader, payload)
 		if err3 != nil {
-			log.Println(err)
+			log.Println(err3)
+			return err3
 		}
 		if n != int(size) {
 			log.Println("payload incorrect")
+			return errors.New("payload incorrect")
 		}
-		c <- LogEntry{Offset: offset, Size: size, Payload: payload}
+		c <- &logStorage.LogEntry{
+			Offset:   logStorage.Offset(offset),
+			ByteSize: int(size),
+			Entry:    payload,
+		}
 		readCount = readCount + 1
 	}
 }

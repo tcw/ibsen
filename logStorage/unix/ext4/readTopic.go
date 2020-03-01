@@ -2,6 +2,7 @@ package ext4
 
 import (
 	"errors"
+	"github.com/tcw/ibsen/logStorage"
 )
 
 type TopicRead struct {
@@ -18,7 +19,7 @@ func ListTopics(rootPath string) ([]string, error) {
 	return listUnhiddenDirectories(rootPath)
 }
 
-func NewTopicRead(rootPath string, topicName string) TopicRead {
+func NewTopicRead(rootPath string, topicName string) (TopicRead, error) {
 	topicRead := TopicRead{
 		rootPath:          rootPath,
 		name:              topicName,
@@ -26,12 +27,16 @@ func NewTopicRead(rootPath string, topicName string) TopicRead {
 		currentBlockIndex: 0,
 		currentOffset:     1,
 	}
-	topicRead.sortedBlocks = listBlocksSorted(topicRead.topicPath)
-	return topicRead
+	sorted, err := listBlocksSorted(topicRead.topicPath)
+	if err != nil {
+		return TopicRead{}, err
+	}
+	topicRead.sortedBlocks = sorted
+	return topicRead, nil
 }
 
 //Todo: return error
-func (t *TopicRead) ReadFromBeginning(c chan LogEntry) uint64 {
+func (t *TopicRead) ReadFromBeginning(c chan *logStorage.LogEntry) {
 	var readCount uint64 = 0
 	t.logFile = NewLogReader(t.rootPath + separator + t.name + separator + createBlockFileName(0))
 	for {

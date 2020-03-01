@@ -1,7 +1,7 @@
 ## Create grpc api
 
 ```shell script
-protoc -I api/ api/grpcApi.proto --go_out=plugins=grpc:api
+protoc -I api/ api/ibsen.proto --go_out=plugins=grpc:api
 ```
 
 ## Create ssl certs

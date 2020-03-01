@@ -1,7 +1,5 @@
 package logStorage
 
-import "encoding/binary"
-
 type LogStorage interface {
 	Create(topic Topic) (bool, error)
 	Drop(topic Topic) (bool, error)
@@ -29,16 +27,4 @@ func NewLogEntry(offset Offset, entry Entry) LogEntry {
 		ByteSize: len(entry),
 		Entry:    entry,
 	}
-}
-
-func (l *LogEntry) toLittleEndianOffest() []byte {
-	offset := make([]byte, 8)
-	binary.LittleEndian.PutUint64(offset, uint64(l.Offset))
-	return offset
-}
-
-func (l *LogEntry) toLittleEndianSize() []byte {
-	offset := make([]byte, 8)
-	binary.LittleEndian.PutUint64(offset, uint64(l.Offset))
-	return offset
 }

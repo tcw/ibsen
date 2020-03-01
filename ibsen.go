@@ -1,11 +1,6 @@
 package main
 
 import (
-	"dostoevsky/coordinator"
-	"dostoevsky/examples"
-	"dostoevsky/logSequencer"
-	"dostoevsky/persistentLog"
-	"dostoevsky/servers/grpc"
 	"flag"
 	"fmt"
 	"log"
@@ -45,56 +40,6 @@ func main() {
 		if err := pprof.StartCPUProfile(f); err != nil {
 			log.Fatal("could not start CPU profile: ", err)
 		}
-	}
-
-	if *writeLock {
-		releaseLock = make(chan bool)
-		go coordinator.StartScheduledAcquiredLock("lock.doe", 3, releaseLock)
-		time.Sleep(time.Second * 20)
-		fmt.Println("releasing lock...")
-		releaseLock <- true
-		fmt.Println("released lock")
-		time.Sleep(time.Second * 2)
-	}
-
-	if *writeTopic {
-		topic := logSequencer.NewTopicWrite("target", "MyTopic", 1024)
-		for i := 0; i < 100; i++ {
-			topic.WriteToTopic([]byte("asdgdfgsdfgsdfgsdfgfsdasdgdfgsdfgsdfgsdfgfsdasdgdfgsdfgsdfgsdfgfsdasdgdfgsdfgsdfgsdfgfsdasdgdfgsdfg" + string(i)))
-		}
-	}
-
-	if *write {
-		writer := persistentLog.NewLogWriter("test.doe")
-		for i := 0; i < 1000000; i++ {
-			entry := persistentLog.NewLogEntry(1+uint64(i), []byte("asdgdfgsdfgsdfgsdfgfsdasdgdfgsdfgsdfgsdfgfsdasdgdfgsdfgsdfgsdfgfsdasdgdfgsdfgsdfgsdfgfsdasdgdfgsdfg"+string(i)))
-			writer.WriteToFile(entry)
-		}
-		writer.CloseLogWriter()
-	}
-
-	if *readTopic == 0 {
-		logchan := make(chan persistentLog.LogEntry)
-		topicRead := logSequencer.NewTopicRead("target", "MyTopic")
-		go printChan(logchan)
-		read := topicRead.ReadFromBeginning(logchan)
-		fmt.Println("read:", read)
-	}
-
-	if *readTopic > 0 {
-		logchan := make(chan persistentLog.LogEntry)
-		topicRead := logSequencer.NewTopicRead("target", "MyTopic")
-		go printChan(logchan)
-		read := topicRead.ReadLogFromOffsetNotIncluding(uint64(*readTopic), logchan)
-		fmt.Println("read:", read)
-	}
-
-	if *read {
-		logchan := make(chan persistentLog.LogEntry)
-		reader := persistentLog.NewLogReader("test.doe")
-		go printChan(logchan)
-		reader.ReadLogFromBeginning(logchan)
-		//reader.ReadLogFromOffsetNotIncluding(logchan,999990)
 	}
 
 	if *startServer {

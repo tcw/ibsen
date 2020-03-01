@@ -1,6 +1,7 @@
 package ext4
 
 import (
+	"github.com/tcw/ibsen/logStorage"
 	"log"
 	"os"
 )
@@ -18,9 +19,9 @@ func NewLogWriter(FileName string) *LogFile {
 	return lw
 }
 
-func (lw *LogFile) WriteToFile(logEntry LogEntry) int {
-	bytes := append(logEntry.toLittleEndianOffest(), logEntry.toLittleEndianSize()...)
-	bytes = append(bytes, logEntry.Payload...)
+func (lw *LogFile) WriteToFile(logEntry *logStorage.LogEntry) int {
+	bytes := append(offsetToLittleEndian(logEntry.Offset), byteSizeToLittleEndian(logEntry.ByteSize)...)
+	bytes = append(bytes, logEntry.Entry...)
 	n, err := lw.LogFile.Write(bytes)
 	if err != nil {
 		log.Println(err)

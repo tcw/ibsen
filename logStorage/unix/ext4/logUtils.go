@@ -2,8 +2,8 @@ package ext4
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
+	"github.com/tcw/ibsen/logStorage"
 	"io/ioutil"
 	"log"
 	"os"
@@ -62,13 +62,13 @@ func listFilesInDirectory(dir string) ([]string, error) {
 	return files, nil
 }
 
-func listBlocksSorted(topicPath string) []uint64 {
+func listBlocksSorted(topicPath string) ([]uint64, error) {
 
 	var blocks []uint64
 	files, err := listFilesInDirectory(topicPath)
 	if err != nil {
 		log.Println(err)
-		return nil
+		return nil, err
 	}
 	for _, file := range files {
 		splitFileName := strings.Split(file, ".")
@@ -85,13 +85,36 @@ func listBlocksSorted(topicPath string) []uint64 {
 		}
 	}
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
-	return blocks
+	return blocks, nil
 }
 
 func (t *TopicWrite) findCurrentBlock(topicPath string) (uint64, error) {
-	sorted := listBlocksSorted(topicPath)
-	if sorted == nil {
-		return 0, errors.New("no current block")
+	sorted, err := listBlocksSorted(topicPath)
+	if err != nil {
+		return 0, err
 	}
 	return sorted[len(sorted)-1], nil
+}
+
+func offsetToLittleEndian(offset logStorage.Offset) []byte {
+	bytes := make([]byte, 8)
+	binary.LittleEndian.PutUint64(bytes, uint64(offset))
+	return bytes
+}
+
+func byteSizeToLittleEndian(number int) []byte {
+	bytes := make([]byte, 8)
+	binary.LittleEndian.PutUint32(bytes, uint32(number))
+	return bytes
+}
+
+func toLittleEndian(number uint64) []byte {
+	offset := make([]byte, 8)
+	binary.LittleEndian.PutUint64(offset, number)
+	return offset
+}
+
+func fromLittleEndian(bytes []byte) uint64 {
+	return binary.LittleEndian.Uint64(bytes)
+
 }
