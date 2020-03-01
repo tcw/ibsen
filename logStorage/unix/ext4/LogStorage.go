@@ -7,9 +7,9 @@ import (
 	"os"
 )
 
-func createWriters(rootPath string, maxBlockSize int64) (map[string]TopicWrite, error) {
+func createWriters(rootPath string, maxBlockSize int64) (map[string]*TopicWrite, error) {
 	topics, err := ListTopics(rootPath)
-	writers := make(map[string]TopicWrite)
+	writers := make(map[string]*TopicWrite)
 	if err != nil {
 		return nil, err
 	}
@@ -19,7 +19,7 @@ func createWriters(rootPath string, maxBlockSize int64) (map[string]TopicWrite, 
 		if err != nil {
 			return nil, err
 		}
-		writers[v] = writer
+		writers[v] = &writer
 	}
 	return writers, nil
 }
@@ -32,7 +32,7 @@ type LogFile struct {
 
 type LogStorage struct {
 	rootPath     string
-	topicWriters map[string]TopicWrite
+	topicWriters map[string]*TopicWrite
 }
 
 func NewLogStorage(rootPath string, maxBlockSize int64) (LogStorage, error) {
@@ -60,7 +60,12 @@ func (e LogStorage) Drop(topic logStorage.Topic) (bool, error) {
 }
 
 func (e LogStorage) Write(topic logStorage.Topic, entry logStorage.Entry) (int, error) {
-	panic("implement me")
+
+	n, err := e.topicWriters[string(topic)].WriteToTopic(entry)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, topic logStorage.Topic) error {

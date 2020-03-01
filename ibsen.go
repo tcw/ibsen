@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	startServer = flag.Bool("s", false, "Run server")
-	startClient = flag.Bool("c", false, "Run client")
+	storagePath = flag.String("s", "", "Where to store logs")
+	grpcPort    = flag.Int("p", 50001, "grpc port (default 50001)")
 	cpuprofile  = flag.String("cpu", "", "write cpu profile to `file`")
 	memprofile  = flag.String("mem", "", "write memory profile to `file`")
 )
@@ -37,13 +37,16 @@ func main() {
 		}
 	}
 
-	if *startServer {
-		fmt.Println("started server on port 50001")
-		err := grpcApi.StartGRPC(50001, "cert.pem", "key.pen", false, "/home/tom/tmp/doskey")
-		if err != nil {
-			log.Fatal(err)
-		}
+	if *storagePath == "" {
+		fmt.Println("Storage path is mandatory and must exist(use -s).")
 	}
+
+	fmt.Println("started server on port 50001")
+	err := grpcApi.StartGRPC(uint16(*grpcPort), "cert.pem", "key.pen", false, *storagePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 }
 
 func initSignals() {

@@ -18,19 +18,22 @@ type TopicWrite struct {
 	logFile          *LogFile
 }
 
-func (t *TopicWrite) WriteToTopic(entry []byte) int {
+func (t *TopicWrite) WriteToTopic(entry []byte) (int, error) {
 	t.currentOffset = t.currentOffset + 1
 	logEntry := &logStorage.LogEntry{
 		Offset:   logStorage.Offset(t.currentOffset),
 		ByteSize: len(entry),
 		Entry:    entry,
 	}
-	n := t.logFile.WriteToFile(logEntry)
+	n, err := t.logFile.WriteToFile(logEntry)
+	if err != nil {
+		return 0, err
+	}
 	t.currentBlockSize = t.currentBlockSize + int64(logEntry.ByteSize) + 16 // 16 is offset + byteSize
 	if t.currentBlockSize > t.maxBlockSize {
 		t.createNextBlock()
 	}
-	return n
+	return n, nil
 }
 
 func (t *TopicWrite) findCurrentBlock(topicPath string) (uint64, error) {
@@ -41,18 +44,18 @@ func (t *TopicWrite) findCurrentBlock(topicPath string) (uint64, error) {
 	return sorted[len(sorted)-1], nil
 }
 
-func NewTopicWrite(rootpath string, name string, maxBlockSize int64) (TopicWrite, error) {
+func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (TopicWrite, error) {
 
 	topic := TopicWrite{
-		rootPath:         rootpath,
+		rootPath:         rootPath,
 		name:             name,
-		topicPath:        rootpath + separator + name,
+		topicPath:        rootPath + separator + name,
 		currentBlock:     0,
 		currentBlockSize: 0,
 		currentOffset:    0,
 		maxBlockSize:     maxBlockSize,
 	}
-	topicExist := doesTopicExist(rootpath, name)
+	topicExist := doesTopicExist(rootPath, name)
 	if topicExist {
 		blocksSorted, err := listBlocksSorted(topic.topicPath)
 		if err != nil {
@@ -75,7 +78,10 @@ func NewTopicWrite(rootpath string, name string, maxBlockSize int64) (TopicWrite
 		}
 		fileName := createBlockFileName(block)
 		blockFileName := topic.topicPath + separator + fileName
-		topic.logFile = NewLogWriter(blockFileName)
+		topic.logFile, err = NewLogWriter(blockFileName)
+		if err != nil {
+			return TopicWrite{}, err
+		}
 		topic.currentBlockSize = blockSize(topic.logFile.LogFile)
 		topic.currentBlock = block
 		reader := NewLogReader(blockFileName)
@@ -97,12 +103,19 @@ func NewTopicWrite(rootpath string, name string, maxBlockSize int64) (TopicWrite
 	return topic, nil
 }
 
-func (t *TopicWrite) createNextBlock() {
-	t.logFile.CloseLogWriter()
+func (t *TopicWrite) createNextBlock() error {
+	err := t.logFile.CloseLogWriter()
+	if err != nil {
+		return err
+	}
 	t.currentBlock = t.currentOffset
 	newBlockFileName := t.topicPath + separator + createBlockFileName(t.currentBlock+1)
-	t.logFile = NewLogWriter(newBlockFileName)
+	t.logFile, err = NewLogWriter(newBlockFileName)
+	if err != nil {
+		return err
+	}
 	t.currentBlockSize = 0
+	return nil
 }
 
 func createNewTopic(rootPath string, topicName string) error {
@@ -131,7 +144,12 @@ func (t *TopicWrite) createTopic() error {
 	return nil
 }
 
-func (t *TopicWrite) createFirstBlock() {
+func (t *TopicWrite) createFirstBlock() error {
 	fileName := createBlockFileName(t.currentBlock)
-	t.logFile = NewLogWriter(t.topicPath + separator + fileName)
+	writer, err := NewLogWriter(t.topicPath + separator + fileName)
+	if err != nil {
+		return err
+	}
+	t.logFile = writer
+	return nil
 }
