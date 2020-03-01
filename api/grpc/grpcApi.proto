@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+service Dostoevsky {
+
+    rpc create (Topic) returns (Empty) {}
+    rpc drop (Topic) returns (Empty) {}
+
+    rpc write (TopicMessage) returns (Status) {}
+    rpc writeStream (stream TopicMessage) returns (Status) {}
+
+    rpc readFromBeginning (Topic) returns (stream Message) {}
+    rpc readFromOffset (TopicOffset) returns (stream Message) {}
+
+    rpc listTopics (Empty) returns (stream Topic) {}
+    rpc listTopicsWithOffset (Empty) returns (stream TopicOffset) {}
+}
+
+message Empty {
+
+}
+
+message Offset {
+   uint64 id = 1;
+}
+
+message Topic {
+    string name = 1;
+}
+
+message TopicOffset {
+   string topicName = 1;
+   uint64 offset = 2;
+}
+
+message TopicMessage{
+    string topicName = 1;
+    bytes messagePayload = 2;
+}
+
+message Message {
+    bytes payload = 1;
+}
+
+message Status {
+    uint64 entries = 1;
+    Offset current = 2;
+}
