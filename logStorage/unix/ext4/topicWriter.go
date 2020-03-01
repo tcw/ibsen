@@ -31,7 +31,10 @@ func (t *TopicWrite) WriteToTopic(entry []byte) (int, error) {
 	}
 	t.currentBlockSize = t.currentBlockSize + int64(logEntry.ByteSize) + 16 // 16 is offset + byteSize
 	if t.currentBlockSize > t.maxBlockSize {
-		t.createNextBlock()
+		err := t.createNextBlock()
+		if err != nil {
+			return 0, err
+		}
 	}
 	return n, nil
 }
@@ -44,9 +47,9 @@ func (t *TopicWrite) findCurrentBlock(topicPath string) (uint64, error) {
 	return sorted[len(sorted)-1], nil
 }
 
-func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (TopicWrite, error) {
+func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (*TopicWrite, error) {
 
-	topic := TopicWrite{
+	topic := &TopicWrite{
 		rootPath:         rootPath,
 		name:             name,
 		topicPath:        rootPath + separator + name,
@@ -59,14 +62,12 @@ func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (TopicWrite
 	if topicExist {
 		blocksSorted, err := listBlocksSorted(topic.topicPath)
 		if err != nil {
-			return TopicWrite{}, err
+			return nil, err
 		}
 		if len(blocksSorted) == 0 {
-			err := topic.createTopic()
-			if err == nil {
-				topic.createFirstBlock()
-			} else {
-				return TopicWrite{}, err
+			err = topic.createFirstBlock()
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -74,13 +75,13 @@ func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (TopicWrite
 		block, err := topic.findCurrentBlock(topic.topicPath)
 		if err != nil {
 			log.Println(err)
-			return TopicWrite{}, err
+			return nil, err
 		}
 		fileName := createBlockFileName(block)
 		blockFileName := topic.topicPath + separator + fileName
 		topic.logFile, err = NewLogWriter(blockFileName)
 		if err != nil {
-			return TopicWrite{}, err
+			return nil, err
 		}
 		topic.currentBlockSize = blockSize(topic.logFile.LogFile)
 		topic.currentBlock = block
@@ -88,16 +89,19 @@ func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (TopicWrite
 		offset, err := reader.ReadCurrentOffset()
 		if err != nil {
 			log.Println(err)
-			return TopicWrite{}, err
+			return nil, err
 		}
 		topic.currentOffset = offset
 		reader.CloseLogReader()
 	} else {
 		err := topic.createTopic()
 		if err == nil {
-			topic.createFirstBlock()
+			err := topic.createFirstBlock()
+			if err != nil {
+				return nil, err
+			}
 		} else {
-			return TopicWrite{}, err
+			return nil, err
 		}
 	}
 	return topic, nil

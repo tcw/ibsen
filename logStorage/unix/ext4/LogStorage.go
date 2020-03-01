@@ -5,6 +5,7 @@ import (
 	"github.com/tcw/ibsen/logStorage"
 	"log"
 	"os"
+	"sync"
 )
 
 func createWriters(rootPath string, maxBlockSize int64) (map[string]*TopicWrite, error) {
@@ -19,7 +20,7 @@ func createWriters(rootPath string, maxBlockSize int64) (map[string]*TopicWrite,
 		if err != nil {
 			return nil, err
 		}
-		writers[v] = &writer
+		writers[v] = writer
 	}
 	return writers, nil
 }
@@ -73,7 +74,8 @@ func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, topic l
 	if err != nil {
 		return err
 	}
-	err = reader.ReadFromBeginning(logChan)
+	var wg sync.WaitGroup //Todo: propagate wg
+	err = reader.ReadFromBeginning(logChan, &wg)
 	if err != nil {
 		return err
 	}
@@ -85,7 +87,8 @@ func (e LogStorage) ReadFromNotIncluding(logChan chan *logStorage.LogEntry, topi
 	if err != nil {
 		return err
 	}
-	err = reader.ReadLogFromOffsetNotIncluding(logChan, offset)
+	var wg sync.WaitGroup //Todo: propagate wg
+	err = reader.ReadLogFromOffsetNotIncluding(logChan, &wg, offset)
 	if err != nil {
 		return err
 	}

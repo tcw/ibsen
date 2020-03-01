@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sync"
 )
 
 func NewLogReader(FileName string) *LogFile {
@@ -118,7 +119,7 @@ func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, ex
 	}
 }
 
-func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry) error {
+func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry, wg *sync.WaitGroup) error {
 	reader := bufio.NewReader(lw.LogFile)
 	bytes := make([]byte, 8)
 	for {
@@ -155,6 +156,7 @@ func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry) error {
 			log.Println("entry incorrect")
 			return errors.New("entry incorrect")
 		}
+		wg.Add(1)
 		c <- &logStorage.LogEntry{
 			Offset:   logStorage.Offset(offset),
 			ByteSize: int(size),
@@ -164,5 +166,5 @@ func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry) error {
 }
 
 func (lw *LogFile) CloseLogReader() {
-	lw.LogFile.Close()
+	lw.LogFile.Close() //Todo: fix
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 )
 
 var (
@@ -46,16 +47,17 @@ func main() {
 		if isDir {
 			dir, topic := path.Split(abs)
 			logChannel := make(chan *logStorage.LogEntry)
-			go writeToStdOut(logChannel)
-			println(dir, topic)
+			var wg sync.WaitGroup
+			go writeToStdOut(logChannel, &wg)
 			reader, err := ext4.NewTopicRead(dir, topic)
 			if err != nil {
 				log.Fatal(err)
 			}
-			err = reader.ReadFromBeginning(logChannel)
+			err = reader.ReadFromBeginning(logChannel, &wg)
 			if err != nil {
 				log.Fatal(err)
 			}
+			wg.Wait()
 		} else {
 			fmt.Println("Not a dir")
 		}
@@ -68,8 +70,9 @@ func main() {
 		}
 		reader := ext4.NewLogReader(abs)
 		logChannel := make(chan *logStorage.LogEntry)
-		go writeToStdOut(logChannel)
-		err = reader.ReadLogFromBeginning(logChannel)
+		var wg sync.WaitGroup
+		go writeToStdOut(logChannel, &wg)
+		err = reader.ReadLogFromBeginning(logChannel, &wg)
 		if err != nil {
 			fmt.Println("Absolute:", abs)
 		}
@@ -78,10 +81,11 @@ func main() {
 
 }
 
-func writeToStdOut(c chan *logStorage.LogEntry) {
+func writeToStdOut(c chan *logStorage.LogEntry, wg *sync.WaitGroup) {
 	for {
 		entry := <-c
 		base64Payload := base64.StdEncoding.EncodeToString(entry.Entry)
 		fmt.Printf("%d\t%d\t%s\n", entry.Offset, entry.ByteSize, base64Payload)
+		wg.Done()
 	}
 }

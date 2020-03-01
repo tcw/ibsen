@@ -3,6 +3,7 @@ package ext4
 import (
 	"errors"
 	"github.com/tcw/ibsen/logStorage"
+	"sync"
 )
 
 type TopicRead struct {
@@ -35,10 +36,10 @@ func NewTopicRead(rootPath string, topicName string) (TopicRead, error) {
 	return topicRead, nil
 }
 
-func (t *TopicRead) ReadFromBeginning(c chan *logStorage.LogEntry) error {
+func (t *TopicRead) ReadFromBeginning(c chan *logStorage.LogEntry, wg *sync.WaitGroup) error {
 	t.logFile = NewLogReader(t.rootPath + separator + t.name + separator + createBlockFileName(0))
 	for {
-		err := t.logFile.ReadLogFromBeginning(c)
+		err := t.logFile.ReadLogFromBeginning(c, wg)
 		if err != nil {
 			return err
 		}
@@ -49,7 +50,7 @@ func (t *TopicRead) ReadFromBeginning(c chan *logStorage.LogEntry) error {
 	}
 }
 
-func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEntry, offset logStorage.Offset) error {
+func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, offset logStorage.Offset) error {
 	blockIndexContainingOffset, err := t.findBlockIndexContainingOffset(uint64(offset))
 	if err != nil {
 		return err
@@ -58,12 +59,12 @@ func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEn
 	t.currentOffset = offset
 	blockName := createBlockFileName(t.sortedBlocks[t.currentBlockIndex])
 	t.logFile = NewLogReader(t.rootPath + separator + t.name + separator + blockName)
-	err = t.logFile.ReadLogFromOffsetNotIncluding(logChan, t.currentOffset)
+	err = t.logFile.ReadLogFromOffsetNotIncluding(logChan, t.currentOffset) // Todo: add waitgroup
 	if err != nil {
 		return err
 	}
 	for {
-		err := t.logFile.ReadLogFromBeginning(logChan)
+		err := t.logFile.ReadLogFromBeginning(logChan, wg)
 		if err != nil {
 			return err
 		}
