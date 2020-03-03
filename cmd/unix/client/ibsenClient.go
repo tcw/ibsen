@@ -15,10 +15,11 @@ import (
 )
 
 var (
-	verbose     = flag.Bool("v", false, "Verbose")
-	writeTopic  = flag.String("w", "", "Write to Topic")
-	readTopic   = flag.String("r", "", "Read from Topic")
-	createTopic = flag.String("c", "", "Create Topic")
+	verbose         = flag.Bool("v", false, "Verbose")
+	writeTopic      = flag.String("w", "", "Write to Topic")
+	readTopic       = flag.String("r", "", "Read from Topic")
+	createTopic     = flag.String("c", "", "Create Topic")
+	createNTestData = flag.Int("n", 0, "Number of entries to test topic")
 )
 
 func main() {
@@ -45,6 +46,43 @@ func main() {
 			fmt.Println("created Topic ", *createTopic)
 		} else {
 			fmt.Println("Topic", *createTopic, " already exists!")
+		}
+	}
+
+	if *createNTestData > 0 {
+		status, err := c.Create(ctx, &grpcApi.Topic{
+			Name: "test",
+		})
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Println("created new topic: ", status.Created)
+		r, err := c.WriteStream(ctx)
+		if err != nil {
+			log.Fatalf("could not greet: %v", err)
+		}
+
+		bytes, err := base64.StdEncoding.DecodeString("asdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdf")
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		mes := grpcApi.TopicMessage{
+			TopicName:      *writeTopic,
+			MessagePayload: bytes,
+		}
+		for i := 0; i < *createNTestData; i++ {
+			err = r.Send(&mes)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+		}
+		_, err = r.CloseAndRecv()
+		if err != nil {
+			fmt.Println(err)
+			return
 		}
 	}
 
