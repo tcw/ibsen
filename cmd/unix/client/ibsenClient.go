@@ -15,9 +15,10 @@ import (
 )
 
 var (
-	verbose    = flag.Bool("v", false, "Verbose")
-	writeTopic = flag.String("w", "", "Write to Topic")
-	readTopic  = flag.String("r", "", "Read from Topic")
+	verbose     = flag.Bool("v", false, "Verbose")
+	writeTopic  = flag.String("w", "", "Write to Topic")
+	readTopic   = flag.String("r", "", "Read from Topic")
+	createTopic = flag.String("c", "", "Create Topic")
 )
 
 func main() {
@@ -32,6 +33,20 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+
+	if *createTopic != "" {
+		topic, err := c.Create(ctx, &grpcApi.Topic{
+			Name: *createTopic,
+		})
+		if err != nil {
+			fmt.Println(err)
+		}
+		if topic.Created {
+			fmt.Println("created Topic ", *createTopic)
+		} else {
+			fmt.Println("Topic", *createTopic, " already exists!")
+		}
+	}
 
 	if *readTopic != "" {
 		entryStream, err := c.ReadFromBeginning(ctx, &grpcApi.Topic{

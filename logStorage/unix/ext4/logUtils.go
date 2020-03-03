@@ -32,6 +32,18 @@ func doesTopicExist(rootPath string, topicName string) bool {
 	return !os.IsNotExist(err)
 }
 
+func createTopic(rootPath string, topicName string) (bool, error) {
+	exist := doesTopicExist(rootPath, topicName)
+	if exist {
+		return false, nil
+	}
+	err := os.Mkdir(rootPath+separator+topicName, 0777) //Todo: more restrictive
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func listUnhiddenDirectories(root string) ([]string, error) {
 	var files []string
 	fileInfo, err := ioutil.ReadDir(root)

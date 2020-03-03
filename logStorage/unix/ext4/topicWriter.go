@@ -1,10 +1,8 @@
 package ext4
 
 import (
-	"errors"
 	"github.com/tcw/ibsen/logStorage"
 	"log"
-	"os"
 )
 
 type TopicWrite struct {
@@ -97,14 +95,15 @@ func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (*TopicWrit
 			return nil, err
 		}
 	} else {
-		err := topic.createTopic()
-		if err == nil {
+		isCreated, err := topic.createTopic()
+		if err != nil {
+			return nil, err
+		}
+		if isCreated {
 			err := topic.createFirstBlock()
 			if err != nil {
 				return nil, err
 			}
-		} else {
-			return nil, err
 		}
 	}
 	return topic, nil
@@ -125,30 +124,8 @@ func (t *TopicWrite) createNextBlock() error {
 	return nil
 }
 
-func createNewTopic(rootPath string, topicName string) error {
-	topics, err := ListTopics(rootPath)
-	if err != nil {
-		return err
-	}
-	for _, v := range topics {
-		if topicName == v {
-			return errors.New("Topic exist")
-		}
-	}
-	err = os.Mkdir(rootPath+separator+topicName, 0777) //Todo: more restrictive
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (t *TopicWrite) createTopic() error {
-	err := os.Mkdir(t.topicPath, 0777)
-	if err != nil {
-		log.Println("Couldn't create topic", t.name)
-		return err
-	}
-	return nil
+func (t *TopicWrite) createTopic() (bool, error) {
+	return createTopic(t.rootPath, t.name)
 }
 
 func (t *TopicWrite) createFirstBlock() error {

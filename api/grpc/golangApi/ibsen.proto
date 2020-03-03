@@ -4,8 +4,8 @@ option go_package = "/api/grpc/golangApi";
 
 service Ibsen {
 
-    rpc create (Topic) returns (Empty) {}
-    rpc drop (Topic) returns (Empty) {}
+    rpc create (Topic) returns (TopicStatus) {}
+    rpc drop (Topic) returns (TopicStatus) {}
 
     rpc write (TopicMessage) returns (Status) {}
     rpc writeStream (stream TopicMessage) returns (Status) {}
@@ -15,6 +15,10 @@ service Ibsen {
 
     rpc listTopics (Empty) returns (stream Topic) {}
     rpc listTopicsWithOffset (Empty) returns (stream TopicOffset) {}
+}
+
+message TopicStatus{
+    bool created = 1;
 }
 
 message Empty {

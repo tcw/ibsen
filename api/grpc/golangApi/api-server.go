@@ -18,11 +18,15 @@ type server struct {
 	logStorage ext4.LogStorage
 }
 
-func (s server) Create(context.Context, *Topic) (*Empty, error) {
-	panic("implement me")
+//Todo: should it return true if topic exists?
+func (s server) Create(ctx context.Context, topic *Topic) (*TopicStatus, error) {
+	create, err := s.logStorage.Create(logStorage.Topic(topic.Name))
+	return &TopicStatus{
+		Created: create,
+	}, err
 }
 
-func (s server) Drop(context.Context, *Topic) (*Empty, error) {
+func (s server) Drop(context.Context, *Topic) (*TopicStatus, error) {
 	panic("implement me")
 }
 
