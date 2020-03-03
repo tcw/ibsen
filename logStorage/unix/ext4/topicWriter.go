@@ -101,8 +101,8 @@ func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (*TopicWrit
 	return topic, nil
 }
 
-func (t *TopicWrite) Close() {
-	t.Close()
+func (t *TopicWrite) Close() error {
+	return t.logFile.CloseLogWriter()
 }
 
 func (t *TopicWrite) findCurrentBlock(topicPath string) (uint64, error) {

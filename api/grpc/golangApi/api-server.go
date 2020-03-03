@@ -2,6 +2,7 @@ package golangApi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"github.com/tcw/ibsen/logStorage/unix/ext4"
@@ -18,33 +19,70 @@ type server struct {
 	logStorage ext4.LogStorage
 }
 
-type IbsenConfig struct {
-	port            uint16
-	certFile        string
-	keyFile         string
-	useTls          bool
-	storageRootPath string
-	maxBlockSize    int64
+type IbsenGrpcServer struct {
+	Port            uint16
+	CertFile        string
+	KeyFile         string
+	UseTls          bool
+	StorageRootPath string
+	MaxBlockSize    int64
+	IbsenServer     *grpc.Server
+	Storage         *ext4.LogStorage
 }
 
-func NewIbsenConfig() *IbsenConfig {
-	return &IbsenConfig{
-		port:            50001,
-		certFile:        "",
-		keyFile:         "",
-		useTls:          false,
-		storageRootPath: "",
-		maxBlockSize:    1024 * 1024 * 10,
+func NewIbsenGrpcServer() *IbsenGrpcServer {
+	return &IbsenGrpcServer{
+		Port:            50001,
+		CertFile:        "",
+		KeyFile:         "",
+		UseTls:          false,
+		StorageRootPath: "",
+		MaxBlockSize:    1024 * 1024 * 10,
 	}
 }
 
-func (config *IbsenConfig) ValidateConfig() {
-	if config.storageRootPath == "" {
-
+func (igs *IbsenGrpcServer) ValidateConfig() []error {
+	var configErrors []error
+	if igs.StorageRootPath == "" {
+		err := errors.New("Missing storage root path")
+		configErrors = append(configErrors, err)
 	}
+	return configErrors
 }
 
-//Todo: should it return true if topic exists?
+func (igs *IbsenGrpcServer) StartGRPC() error {
+	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", igs.Port))
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	var opts []grpc.ServerOption
+	if igs.UseTls {
+		absCert := testdata.Path(igs.CertFile)
+		absKey := testdata.Path(igs.KeyFile)
+		creds, err := credentials.NewServerTLSFromFile(absCert, absKey)
+		if err != nil {
+			log.Fatalf("Failed to generate credentials %v", err)
+		}
+		opts = []grpc.ServerOption{grpc.Creds(creds)}
+	}
+	grpcServer := grpc.NewServer(opts...)
+
+	storage, err := ext4.NewLogStorage(igs.StorageRootPath, igs.MaxBlockSize)
+	if err != nil {
+		grpcServer.GracefulStop()
+		return err
+	}
+	igs.IbsenServer = grpcServer
+	igs.Storage = &storage
+	RegisterIbsenServer(grpcServer, &server{
+		logStorage: storage,
+	})
+
+	return grpcServer.Serve(lis)
+}
+
+var _ IbsenServer = &server{}
+
 func (s server) Create(ctx context.Context, topic *Topic) (*TopicStatus, error) {
 	create, err := s.logStorage.Create(logStorage.Topic(topic.Name))
 	return &TopicStatus{
@@ -119,40 +157,4 @@ func (s server) ListTopicsWithOffset(*Empty, Ibsen_ListTopicsWithOffsetServer) e
 
 func (s server) Close() {
 	s.logStorage.Close()
-}
-
-var _ IbsenServer = &server{}
-
-func StartGRPC(port uint16, certFile string, keyFile string, useTls bool, rootPath string) (*grpc.Server, *ext4.LogStorage, error) {
-	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
-	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
-	}
-	var opts []grpc.ServerOption
-	if useTls {
-		if certFile == "" {
-			certFile = testdata.Path("key.pem")
-		}
-		if keyFile == "" {
-			keyFile = testdata.Path("cert.key")
-		}
-		creds, err := credentials.NewServerTLSFromFile(certFile, keyFile)
-		if err != nil {
-			log.Fatalf("Failed to generate credentials %v", err)
-		}
-		opts = []grpc.ServerOption{grpc.Creds(creds)}
-	}
-	grpcServer := grpc.NewServer(opts...)
-
-	storage, err := ext4.NewLogStorage(rootPath, 1024*1024*10)
-	if err != nil {
-		grpcServer.GracefulStop()
-		return nil, nil, err
-	}
-	RegisterIbsenServer(grpcServer, &server{
-		logStorage: storage,
-	})
-
-	err = grpcServer.Serve(lis)
-	return grpcServer, &storage, err
 }

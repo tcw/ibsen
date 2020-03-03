@@ -4,8 +4,6 @@ import (
 	"flag"
 	"fmt"
 	grpcApi "github.com/tcw/ibsen/api/grpc/golangApi"
-	"github.com/tcw/ibsen/logStorage/unix/ext4"
-	"google.golang.org/grpc"
 	"log"
 	"os"
 	"os/signal"
@@ -19,10 +17,19 @@ var (
 	grpcPort    = flag.Int("p", 50001, "grpc port (default 50001)")
 	cpuprofile  = flag.String("cpu", "", "write cpu profile to `file`")
 	memprofile  = flag.String("mem", "", "write memory profile to `file`")
+	ibsenFiglet = `
+
+                           _____ _                    
+                          |_   _| |                   
+                            | | | |__  ___  ___ _ __  
+                            | | | '_ \/ __|/ _ \ '_ \ 
+                           _| |_| |_) \__ \  __/ | | |
+                          |_____|_.__/|___/\___|_| |_|
+
+`
 )
 
-var ibsenServer *grpc.Server
-var storage *ext4.LogStorage
+var ibsenGrpcServer *grpcApi.IbsenGrpcServer
 
 func main() {
 
@@ -41,15 +48,20 @@ func main() {
 		}
 	}
 
-	if *storagePath == "" {
-		fmt.Println("Storage path is mandatory and must exist(use -s).")
+	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer()
+	ibsenGrpcServer.StorageRootPath = *storagePath
+	ibsenGrpcServer.Port = uint16(*grpcPort)
+	err := ibsenGrpcServer.ValidateConfig()
+	if len(err) > 0 {
+		log.Println(err)
 	}
 
-	fmt.Println("started server on port 50001")
-	var err error
-	ibsenServer, storage, err = grpcApi.StartGRPC(uint16(*grpcPort), "cert.pem", "key.pen", false, *storagePath)
+	fmt.Println(ibsenFiglet)
+	fmt.Println("Ibsen server started on port %d", ibsenGrpcServer.Port)
+	var err2 error
+	err2 = ibsenGrpcServer.StartGRPC()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(err2)
 	}
 }
 
@@ -60,8 +72,8 @@ func initSignals() {
 }
 
 func shutdownCleanly() {
-	storage.Close()
-	ibsenServer.GracefulStop()
+	ibsenGrpcServer.Storage.Close()
+	ibsenGrpcServer.IbsenServer.GracefulStop()
 }
 
 func signalHandler(signal os.Signal) {
