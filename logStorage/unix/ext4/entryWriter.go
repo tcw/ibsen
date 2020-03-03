@@ -33,9 +33,5 @@ func (lw *LogFile) CloseLogWriter() error {
 	if err != nil {
 		return err
 	}
-	err = lw.LogFile.Close()
-	if err != nil {
-		return err
-	}
-	return nil
+	return lw.LogFile.Close()
 }

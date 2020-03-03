@@ -10,8 +10,8 @@ service Ibsen {
     rpc write (TopicMessage) returns (Status) {}
     rpc writeStream (stream TopicMessage) returns (Status) {}
 
-    rpc readFromBeginning (Topic) returns (stream Message) {}
-    rpc readFromOffset (TopicOffset) returns (stream Message) {}
+    rpc readFromBeginning (Topic) returns (stream Entry) {}
+    rpc readFromOffset (TopicOffset) returns (stream Entry) {}
 
     rpc listTopics (Empty) returns (stream Topic) {}
     rpc listTopicsWithOffset (Empty) returns (stream TopicOffset) {}
@@ -41,6 +41,11 @@ message TopicMessage{
 
 message Message {
     bytes payload = 1;
+}
+
+message Entry {
+    uint64 offset = 1;
+    bytes payload = 2;
 }
 
 message Status {

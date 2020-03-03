@@ -10,7 +10,7 @@ import (
 	"sync"
 )
 
-func NewLogReader(FileName string) *LogFile {
+func NewLogReader(FileName string) (*LogFile, error) {
 	lw := new(LogFile)
 	lw.FileName = FileName
 
@@ -18,9 +18,10 @@ func NewLogReader(FileName string) *LogFile {
 		os.O_RDONLY, 0400)
 	if err != nil {
 		log.Println(err)
+		return nil, err
 	}
 	lw.LogFile = f
-	return lw
+	return lw, nil
 }
 
 func (lw *LogFile) ReadCurrentOffset() (uint64, error) {
@@ -46,11 +47,13 @@ func (lw *LogFile) ReadCurrentOffset() (uint64, error) {
 		}
 		size := fromLittleEndian(bytes)
 		if err2 != nil {
-			log.Println(err)
+			log.Println(err2)
+			return 0, err2
 		}
-		lw.LogFile.Seek(int64(size), 1)
+		_, err = lw.LogFile.Seek(int64(size), 1)
 		if err != nil {
 			println(err)
+			return 0, err
 		}
 	}
 }
@@ -88,7 +91,10 @@ func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, ex
 
 		if !offsetFound {
 			if uint64(excludingOffset) != offset {
-				lw.LogFile.Seek(int64(size), 1)
+				_, err := lw.LogFile.Seek(int64(size), 1)
+				if err != nil {
+					return err
+				}
 				continue
 			} else {
 				offsetFound = true
@@ -165,6 +171,6 @@ func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry, wg *sync.Wa
 	}
 }
 
-func (lw *LogFile) CloseLogReader() {
-	lw.LogFile.Close() //Todo: fix
+func (lw *LogFile) CloseLogReader() error {
+	return lw.LogFile.Close()
 }

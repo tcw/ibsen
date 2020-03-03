@@ -37,14 +37,25 @@ func NewTopicRead(rootPath string, topicName string) (TopicRead, error) {
 }
 
 func (t *TopicRead) ReadFromBeginning(c chan *logStorage.LogEntry, wg *sync.WaitGroup) error {
-	t.logFile = NewLogReader(t.rootPath + separator + t.name + separator + createBlockFileName(0))
+	reader, err := NewLogReader(t.rootPath + separator + t.name + separator + createBlockFileName(0))
+	if err != nil {
+		return err
+	}
+	t.logFile = reader
 	for {
 		err := t.logFile.ReadLogFromBeginning(c, wg)
 		if err != nil {
 			return err
 		}
-		t.logFile.CloseLogReader()
-		if !t.nextBlock() {
+		err = t.logFile.CloseLogReader()
+		if err != nil {
+			return err
+		}
+		isNextBlock, err := t.nextBlock()
+		if err != nil {
+			return nil
+		}
+		if !isNextBlock {
 			return nil
 		}
 	}
@@ -58,7 +69,11 @@ func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEn
 	t.currentBlockIndex = blockIndexContainingOffset
 	t.currentOffset = offset
 	blockName := createBlockFileName(t.sortedBlocks[t.currentBlockIndex])
-	t.logFile = NewLogReader(t.rootPath + separator + t.name + separator + blockName)
+	reader, err := NewLogReader(t.rootPath + separator + t.name + separator + blockName)
+	if err != nil {
+		return err
+	}
+	t.logFile = reader
 	err = t.logFile.ReadLogFromOffsetNotIncluding(logChan, t.currentOffset) // Todo: add waitgroup
 	if err != nil {
 		return err
@@ -68,8 +83,15 @@ func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEn
 		if err != nil {
 			return err
 		}
-		t.logFile.CloseLogReader()
-		if !t.nextBlock() {
+		err = t.logFile.CloseLogReader()
+		if err != nil {
+			return err
+		}
+		isNextblock, err := t.nextBlock()
+		if err != nil {
+			return err
+		}
+		if !isNextblock {
 			return nil
 		}
 	}
@@ -92,12 +114,16 @@ func (t *TopicRead) findBlockIndexContainingOffset(offset uint64) (uint, error) 
 }
 
 //Todo: Create common cache with writer
-func (t *TopicRead) nextBlock() bool {
+func (t *TopicRead) nextBlock() (bool, error) {
 	t.currentBlockIndex = t.currentBlockIndex + 1
 	if uint(len(t.sortedBlocks)) <= t.currentBlockIndex {
-		return false
+		return false, nil
 	}
 	blockName := createBlockFileName(t.sortedBlocks[t.currentBlockIndex])
-	t.logFile = NewLogReader(t.rootPath + separator + t.name + separator + blockName)
-	return true
+	reader, err := NewLogReader(t.rootPath + separator + t.name + separator + blockName)
+	if err != nil {
+		return false, err
+	}
+	t.logFile = reader
+	return true, nil
 }

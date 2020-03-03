@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 )
 
 type server struct {
@@ -47,8 +48,31 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 	return inStream.SendAndClose(&Status{Entries: int32(sum)})
 }
 
-func (s server) ReadFromBeginning(*Topic, Ibsen_ReadFromBeginningServer) error {
-	panic("implement me")
+func (s server) ReadFromBeginning(topic *Topic, outStream Ibsen_ReadFromBeginningServer) error {
+	logChan := make(chan *logStorage.LogEntry)
+	var wg sync.WaitGroup
+	go sendMessage(logChan, &wg, outStream)
+	err := s.logStorage.ReadFromBeginning(logChan, &wg, logStorage.Topic(topic.Name))
+	if err != nil {
+		return err
+	}
+	wg.Wait()
+	return nil
+}
+
+func sendMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadFromBeginningServer) {
+	for {
+		entry := <-logChan
+		err := outStream.Send(&Entry{
+			Offset:  uint64(entry.Offset),
+			Payload: entry.Entry,
+		})
+		wg.Done()
+		if err != nil {
+			log.Println(err)
+			return
+		}
+	}
 }
 
 func (s server) ReadFromOffset(*TopicOffset, Ibsen_ReadFromOffsetServer) error {

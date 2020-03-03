@@ -69,26 +69,24 @@ func (e LogStorage) Write(topic logStorage.Topic, entry logStorage.Entry) (int, 
 	return n, nil
 }
 
-func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, topic logStorage.Topic) error {
+func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic logStorage.Topic) error {
 	reader, err := NewTopicRead(e.rootPath, string(topic))
 	if err != nil {
 		return err
 	}
-	var wg sync.WaitGroup //Todo: propagate wg
-	err = reader.ReadFromBeginning(logChan, &wg)
+	err = reader.ReadFromBeginning(logChan, wg)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (e LogStorage) ReadFromNotIncluding(logChan chan *logStorage.LogEntry, topic logStorage.Topic, offset logStorage.Offset) error {
+func (e LogStorage) ReadFromNotIncluding(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic logStorage.Topic, offset logStorage.Offset) error {
 	reader, err := NewTopicRead(e.rootPath, string(topic))
 	if err != nil {
 		return err
 	}
-	var wg sync.WaitGroup //Todo: propagate wg
-	err = reader.ReadLogFromOffsetNotIncluding(logChan, &wg, offset)
+	err = reader.ReadLogFromOffsetNotIncluding(logChan, wg, offset)
 	if err != nil {
 		return err
 	}

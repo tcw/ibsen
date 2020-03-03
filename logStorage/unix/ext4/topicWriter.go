@@ -85,14 +85,17 @@ func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (*TopicWrit
 		}
 		topic.currentBlockSize = blockSize(topic.logFile.LogFile)
 		topic.currentBlock = block
-		reader := NewLogReader(blockFileName)
-		offset, err := reader.ReadCurrentOffset()
+		logReader, err := NewLogReader(blockFileName)
+		offset, err := logReader.ReadCurrentOffset()
 		if err != nil {
 			log.Println(err)
 			return nil, err
 		}
 		topic.currentOffset = offset
-		reader.CloseLogReader()
+		err = logReader.CloseLogReader()
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		err := topic.createTopic()
 		if err == nil {

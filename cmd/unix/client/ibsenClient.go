@@ -8,14 +8,16 @@ import (
 	"fmt"
 	grpcApi "github.com/tcw/ibsen/api/grpc/golangApi"
 	"google.golang.org/grpc"
+	"io"
 	"log"
 	"os"
 	"time"
 )
 
 var (
-	verbose = flag.Bool("v", false, "Verbose")
-	topic   = flag.String("t", "", "Topic name")
+	verbose    = flag.Bool("v", false, "Verbose")
+	writeTopic = flag.String("w", "", "Write to Topic")
+	readTopic  = flag.String("r", "", "Read from Topic")
 )
 
 func main() {
@@ -33,40 +35,68 @@ func main() {
 	log.Println("created client")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	r, err := c.WriteStream(ctx)
-	if err != nil {
-		log.Fatalf("could not greet: %v", err)
+
+	if *readTopic != "" {
+		entryStream, err := c.ReadFromBeginning(ctx, &grpcApi.Topic{
+			Name: *readTopic,
+		})
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		stdout := os.Stdout
+		defer stdout.Close()
+		for {
+			in, err := entryStream.Recv()
+			if err == io.EOF {
+				return
+			}
+			payLoadBase64 := base64.StdEncoding.EncodeToString(in.Payload)
+			bytes := append([]byte(payLoadBase64), []byte("\n")...)
+			_, err = stdout.Write(bytes)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+		}
 	}
 
-	stdin := os.Stdin
-	defer stdin.Close()
-	scanner := bufio.NewScanner(stdin)
-	const maxCapacity = 512 * 1024
-	buf := make([]byte, maxCapacity)
-	scanner.Buffer(buf, maxCapacity)
-	for scanner.Scan() {
-		text := scanner.Text()
-		log.Println(text)
-		bytes, err := base64.StdEncoding.DecodeString(text)
+	if *writeTopic != "" {
+		r, err := c.WriteStream(ctx)
+		if err != nil {
+			log.Fatalf("could not greet: %v", err)
+		}
+
+		stdin := os.Stdin
+		defer stdin.Close()
+		scanner := bufio.NewScanner(stdin)
+		const maxCapacity = 512 * 1024
+		buf := make([]byte, maxCapacity)
+		scanner.Buffer(buf, maxCapacity)
+		for scanner.Scan() {
+			text := scanner.Text()
+			log.Println(text)
+			bytes, err := base64.StdEncoding.DecodeString(text)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+			mes := grpcApi.TopicMessage{
+				TopicName:      *writeTopic,
+				MessagePayload: bytes,
+			}
+			err = r.Send(&mes)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+		}
+
+		_, err = r.CloseAndRecv()
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		mes := grpcApi.TopicMessage{
-			TopicName:      *topic,
-			MessagePayload: bytes,
-		}
-		err = r.Send(&mes)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-	}
-
-	_, err = r.CloseAndRecv()
-	if err != nil {
-		fmt.Println(err)
-		return
 	}
 
 }

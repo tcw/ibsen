@@ -68,15 +68,22 @@ func main() {
 		if err != nil {
 			fmt.Println("Absolute:", abs)
 		}
-		reader := ext4.NewLogReader(abs)
+		logReader, err := ext4.NewLogReader(abs)
+		if err != nil {
+			log.Println(err)
+			return
+		}
 		logChannel := make(chan *logStorage.LogEntry)
 		var wg sync.WaitGroup
 		go writeToStdOut(logChannel, &wg)
-		err = reader.ReadLogFromBeginning(logChannel, &wg)
+		err = logReader.ReadLogFromBeginning(logChannel, &wg)
 		if err != nil {
 			fmt.Println("Absolute:", abs)
 		}
-		reader.CloseLogReader()
+		err = logReader.CloseLogReader()
+		if err != nil {
+			println(err)
+		}
 	}
 
 }

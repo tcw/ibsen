@@ -1,11 +1,13 @@
 package logStorage
 
+import "sync"
+
 type LogStorage interface {
 	Create(topic Topic) (bool, error)
 	Drop(topic Topic) (bool, error)
 	Write(topic Topic, entry Entry) (int, error)
-	ReadFromBeginning(logChan chan *LogEntry, topic Topic) error
-	ReadFromNotIncluding(logChan chan *LogEntry, topic Topic, offset Offset) error
+	ReadFromBeginning(logChan chan *LogEntry, wg *sync.WaitGroup, topic Topic) error
+	ReadFromNotIncluding(logChan chan *LogEntry, wg *sync.WaitGroup, topic Topic, offset Offset) error
 	ListTopics() ([]Topic, error)
 }
 
