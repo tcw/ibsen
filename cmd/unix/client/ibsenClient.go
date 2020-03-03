@@ -23,16 +23,13 @@ var (
 func main() {
 
 	flag.Parse()
-	log.Println("creating client...")
 	conn, err := grpc.Dial("localhost:50001", grpc.WithInsecure(), grpc.WithBlock())
-	log.Println("created client")
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
 	defer conn.Close()
 	c := grpcApi.NewIbsenClient(conn)
 
-	log.Println("created client")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
@@ -45,15 +42,17 @@ func main() {
 			return
 		}
 		stdout := os.Stdout
+		writer := bufio.NewWriter(stdout)
 		defer stdout.Close()
 		for {
 			in, err := entryStream.Recv()
 			if err == io.EOF {
+				writer.Flush()
 				return
 			}
 			payLoadBase64 := base64.StdEncoding.EncodeToString(in.Payload)
-			bytes := append([]byte(payLoadBase64), []byte("\n")...)
-			_, err = stdout.Write(bytes)
+			line := fmt.Sprintf("%d\t%s\n", in.Offset, payLoadBase64)
+			_, err = writer.Write([]byte(line))
 			if err != nil {
 				log.Println(err)
 				return
@@ -98,5 +97,4 @@ func main() {
 			return
 		}
 	}
-
 }
