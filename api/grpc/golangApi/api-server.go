@@ -18,6 +18,32 @@ type server struct {
 	logStorage ext4.LogStorage
 }
 
+type IbsenConfig struct {
+	port            uint16
+	certFile        string
+	keyFile         string
+	useTls          bool
+	storageRootPath string
+	maxBlockSize    int64
+}
+
+func NewIbsenConfig() *IbsenConfig {
+	return &IbsenConfig{
+		port:            50001,
+		certFile:        "",
+		keyFile:         "",
+		useTls:          false,
+		storageRootPath: "",
+		maxBlockSize:    1024 * 1024 * 10,
+	}
+}
+
+func (config *IbsenConfig) ValidateConfig() {
+	if config.storageRootPath == "" {
+
+	}
+}
+
 //Todo: should it return true if topic exists?
 func (s server) Create(ctx context.Context, topic *Topic) (*TopicStatus, error) {
 	create, err := s.logStorage.Create(logStorage.Topic(topic.Name))
@@ -91,9 +117,13 @@ func (s server) ListTopicsWithOffset(*Empty, Ibsen_ListTopicsWithOffsetServer) e
 	panic("implement me")
 }
 
+func (s server) Close() {
+	s.logStorage.Close()
+}
+
 var _ IbsenServer = &server{}
 
-func StartGRPC(port uint16, certFile string, keyFile string, useTls bool, rootPath string) error {
+func StartGRPC(port uint16, certFile string, keyFile string, useTls bool, rootPath string) (*grpc.Server, *ext4.LogStorage, error) {
 	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
@@ -116,10 +146,13 @@ func StartGRPC(port uint16, certFile string, keyFile string, useTls bool, rootPa
 
 	storage, err := ext4.NewLogStorage(rootPath, 1024*1024*10)
 	if err != nil {
-		return err
+		grpcServer.GracefulStop()
+		return nil, nil, err
 	}
 	RegisterIbsenServer(grpcServer, &server{
 		logStorage: storage,
 	})
-	return grpcServer.Serve(lis)
+
+	err = grpcServer.Serve(lis)
+	return grpcServer, &storage, err
 }

@@ -4,13 +4,14 @@ import (
 	"flag"
 	"fmt"
 	grpcApi "github.com/tcw/ibsen/api/grpc/golangApi"
+	"github.com/tcw/ibsen/logStorage/unix/ext4"
+	"google.golang.org/grpc"
 	"log"
 	"os"
 	"os/signal"
 	"runtime"
 	"runtime/pprof"
 	"syscall"
-	"time"
 )
 
 var (
@@ -19,6 +20,9 @@ var (
 	cpuprofile  = flag.String("cpu", "", "write cpu profile to `file`")
 	memprofile  = flag.String("mem", "", "write memory profile to `file`")
 )
+
+var ibsenServer *grpc.Server
+var storage *ext4.LogStorage
 
 func main() {
 
@@ -42,11 +46,11 @@ func main() {
 	}
 
 	fmt.Println("started server on port 50001")
-	err := grpcApi.StartGRPC(uint16(*grpcPort), "cert.pem", "key.pen", false, *storagePath)
+	var err error
+	ibsenServer, storage, err = grpcApi.StartGRPC(uint16(*grpcPort), "cert.pem", "key.pen", false, *storagePath)
 	if err != nil {
 		log.Fatal(err)
 	}
-
 }
 
 func initSignals() {
@@ -55,27 +59,31 @@ func initSignals() {
 	signalHandler(<-captureSignal)
 }
 
+func shutdownCleanly() {
+	storage.Close()
+	ibsenServer.GracefulStop()
+}
+
 func signalHandler(signal os.Signal) {
 	fmt.Printf("\nCaught signal: %+v", signal)
-	fmt.Println("\nWait for 1 second to finish processing")
-	time.Sleep(1 * time.Second)
+	fmt.Println("\nWait Ibsen to shutdown...")
 
 	switch signal {
 
 	case syscall.SIGHUP: // kill -SIGHUP XXXX
-		fmt.Println("- got hungup")
+		shutdownCleanly()
 
 	case syscall.SIGINT: // kill -SIGINT XXXX or Ctrl+c
-		fmt.Println("- got ctrl+c")
+		shutdownCleanly()
 
 	case syscall.SIGTERM: // kill -SIGTERM XXXX
-		fmt.Println("- got force stop")
+		shutdownCleanly()
 
 	case syscall.SIGQUIT: // kill -SIGQUIT XXXX
-		fmt.Println("- stop and core dump")
+		shutdownCleanly()
 
 	default:
-		fmt.Println("- unknown signal")
+		fmt.Println("- unknown system signal sent to Ibsen")
 	}
 
 	if *cpuprofile != "" {
@@ -94,6 +102,6 @@ func signalHandler(signal os.Signal) {
 		}
 	}
 
-	fmt.Println("\nFinished server cleanup")
+	fmt.Println("\nIbsen finished server cleanup")
 	os.Exit(0)
 }

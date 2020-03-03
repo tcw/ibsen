@@ -116,3 +116,9 @@ func (e LogStorage) ReadFromNotIncluding(logChan chan *logStorage.LogEntry, wg *
 func (e LogStorage) ListTopics() ([]logStorage.Topic, error) {
 	panic("implement me")
 }
+
+func (e LogStorage) Close() {
+	for _, v := range e.topicWriters {
+		v.Close()
+	}
+}

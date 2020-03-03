@@ -37,14 +37,6 @@ func (t *TopicWrite) WriteToTopic(entry []byte) (int, error) {
 	return n, nil
 }
 
-func (t *TopicWrite) findCurrentBlock(topicPath string) (uint64, error) {
-	sorted, err := listBlocksSorted(topicPath)
-	if err != nil {
-		return 0, err
-	}
-	return sorted[len(sorted)-1], nil
-}
-
 func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (*TopicWrite, error) {
 
 	topic := &TopicWrite{
@@ -107,6 +99,18 @@ func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (*TopicWrit
 		}
 	}
 	return topic, nil
+}
+
+func (t *TopicWrite) Close() {
+	t.Close()
+}
+
+func (t *TopicWrite) findCurrentBlock(topicPath string) (uint64, error) {
+	sorted, err := listBlocksSorted(topicPath)
+	if err != nil {
+		return 0, err
+	}
+	return sorted[len(sorted)-1], nil
 }
 
 func (t *TopicWrite) createNextBlock() error {
