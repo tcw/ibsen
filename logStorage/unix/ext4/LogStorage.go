@@ -68,8 +68,9 @@ func (e LogStorage) Create(topic logStorage.Topic) (bool, error) {
 		}
 		e.topicWriters[sTopic] = writer
 		log.Printf("Registered topic [%s]", topic)
+		return true, nil
 	}
-	return true, err
+	return false, nil
 }
 
 func (e LogStorage) Drop(topic logStorage.Topic) (bool, error) {

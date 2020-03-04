@@ -19,7 +19,7 @@ var (
 	writeTopic      = flag.String("w", "", "Write to Topic")
 	readTopic       = flag.String("r", "", "Read from Topic")
 	createTopic     = flag.String("c", "", "Create Topic")
-	createNTestData = flag.Int("n", 0, "Number of entries to test topic")
+	createNTestData = flag.Int("n", 0, "Number of entries to [test] topic")
 )
 
 func main() {
@@ -43,7 +43,7 @@ func main() {
 			fmt.Println(err)
 		}
 		if topic.Created {
-			fmt.Println("created Topic ", *createTopic)
+			fmt.Printf("Created Topic [%s]", *createTopic)
 		} else {
 			fmt.Println("Topic", *createTopic, " already exists!")
 		}
@@ -69,7 +69,7 @@ func main() {
 			return
 		}
 		mes := grpcApi.TopicMessage{
-			TopicName:      *writeTopic,
+			TopicName:      "test",
 			MessagePayload: bytes,
 		}
 		for i := 0; i < *createNTestData; i++ {
