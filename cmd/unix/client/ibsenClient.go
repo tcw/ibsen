@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc"
 	"io"
 	"log"
+	"math/rand"
 	"os"
 	"time"
 )
@@ -19,7 +20,9 @@ var (
 	writeTopic      = flag.String("w", "", "Write to Topic")
 	readTopic       = flag.String("r", "", "Read from Topic")
 	createTopic     = flag.String("c", "", "Create Topic")
-	createNTestData = flag.Int("n", 0, "Number of entries to [test] topic")
+	createNTestData = flag.Int("tn", 0, "Number of entries to [test] topic")
+	useTestTopic    = flag.String("tt", "test", "Test topic name ")
+	entryTestSize   = flag.Int("ts", 100, "Each message will contain n bytes")
 )
 
 func main() {
@@ -64,11 +67,18 @@ func main() {
 			log.Fatalf("could not greet: %v", err)
 		}
 
-		//bytes := []byte("asdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdf")
-		bytes := []byte("sdfasdfasd")
+		rand.Seed(time.Now().UnixNano())
+
+		var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+		b := make([]rune, *entryTestSize)
+		for i := range b {
+			b[i] = letterRunes[rand.Intn(len(letterRunes))]
+		}
+
 		mes := grpcApi.TopicMessage{
-			TopicName:      "test",
-			MessagePayload: bytes,
+			TopicName:      *useTestTopic,
+			MessagePayload: []byte(string(b)),
 		}
 		for i := 0; i < *createNTestData; i++ {
 			err = r.Send(&mes)
