@@ -22,7 +22,7 @@ func (t *TopicWrite) WriteToTopic(topicMessage *golangApi.TopicMessage) (int, er
 	logEntry := &logStorage.LogEntry{
 		Offset:   t.currentOffset,
 		ByteSize: len(topicMessage.MessagePayload),
-		Entry:    topicMessage,
+		Entry:    &topicMessage.MessagePayload,
 	}
 	n, err := t.logFile.WriteToFile(logEntry)
 	if err != nil {
