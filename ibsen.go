@@ -13,11 +13,12 @@ import (
 )
 
 var (
-	storagePath = flag.String("s", "", "Where to store logs")
-	grpcPort    = flag.Int("p", 50001, "grpc port (default 50001)")
-	cpuprofile  = flag.String("cpu", "", "write cpu profile to `file`")
-	memprofile  = flag.String("mem", "", "write memory profile to `file`")
-	ibsenFiglet = `
+	storagePath    = flag.String("s", "", "Where to store logs")
+	grpcPort       = flag.Int("p", 50001, "grpc port (default 50001)")
+	maxBlockSizeMB = flag.Int("b", 100, "Max size for each log block")
+	cpuprofile     = flag.String("cpu", "", "write cpu profile to `file`")
+	memprofile     = flag.String("mem", "", "write memory profile to `file`")
+	ibsenFiglet    = `
 
                            _____ _                    
                           |_   _| |                   
@@ -51,6 +52,7 @@ func main() {
 	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer()
 	ibsenGrpcServer.StorageRootPath = *storagePath
 	ibsenGrpcServer.Port = uint16(*grpcPort)
+	ibsenGrpcServer.MaxBlockSize = int64(*maxBlockSizeMB) * 1024 * 1024
 	err := ibsenGrpcServer.ValidateConfig()
 	if len(err) > 0 {
 		log.Println(err)
@@ -72,6 +74,23 @@ func initSignals() {
 }
 
 func shutdownCleanly() {
+	if *cpuprofile != "" {
+		pprof.StopCPUProfile()
+	}
+
+	if *memprofile != "" {
+		f, err := os.Create(*memprofile)
+		if err != nil {
+			log.Fatal("could not create memory profile: ", err)
+		}
+		defer f.Close()
+		runtime.GC() // get up-to-date statistics
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			log.Fatal("could not write memory profile: ", err)
+		}
+	}
+
+	fmt.Println("\nIbsen finished server cleanup")
 	ibsenGrpcServer.Storage.Close()
 	ibsenGrpcServer.IbsenServer.GracefulStop()
 }
@@ -98,22 +117,5 @@ func signalHandler(signal os.Signal) {
 		fmt.Println("- unknown system signal sent to Ibsen")
 	}
 
-	if *cpuprofile != "" {
-		pprof.StopCPUProfile()
-	}
-
-	if *memprofile != "" {
-		f, err := os.Create(*memprofile)
-		if err != nil {
-			log.Fatal("could not create memory profile: ", err)
-		}
-		defer f.Close()
-		runtime.GC() // get up-to-date statistics
-		if err := pprof.WriteHeapProfile(f); err != nil {
-			log.Fatal("could not write memory profile: ", err)
-		}
-	}
-
-	fmt.Println("\nIbsen finished server cleanup")
 	os.Exit(0)
 }

@@ -42,32 +42,30 @@ func main() {
 		if err != nil {
 			fmt.Println(err)
 		}
-		if topic.Created {
-			fmt.Printf("Created Topic [%s]", *createTopic)
-		} else {
-			fmt.Println("Topic", *createTopic, " already exists!")
+		if *verbose {
+			if topic.Created {
+				fmt.Printf("Created Topic [%s]", *createTopic)
+			} else {
+				fmt.Println("Topic", *createTopic, " already exists!")
+			}
 		}
 	}
 
 	if *createNTestData > 0 {
-		status, err := c.Create(ctx, &grpcApi.Topic{
+		_, err := c.Create(ctx, &grpcApi.Topic{
 			Name: "test",
 		})
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		fmt.Println("created new topic: ", status.Created)
 		r, err := c.WriteStream(ctx)
 		if err != nil {
 			log.Fatalf("could not greet: %v", err)
 		}
 
-		bytes, err := base64.StdEncoding.DecodeString("asdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdf")
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		//bytes := []byte("asdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdf")
+		bytes := []byte("sdfasdfasd")
 		mes := grpcApi.TopicMessage{
 			TopicName:      "test",
 			MessagePayload: bytes,
