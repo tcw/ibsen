@@ -3,15 +3,15 @@ package ext4
 import (
 	"bufio"
 	"errors"
+	"github.com/tcw/ibsen/api/grpc/golangApi"
 	"github.com/tcw/ibsen/logStorage"
 	"log"
 	"os"
 	"sync"
 )
 
-func createWriters(rootPath string, maxBlockSize int64) (map[string]*TopicWrite, error) {
+func createWriters(rootPath string, maxBlockSize int64) ([]topicWriteConfig, error) {
 	topics, err := ListTopics(rootPath)
-	writers := make(map[string]*TopicWrite)
 	if err != nil {
 		return nil, err
 	}
@@ -24,6 +24,42 @@ func createWriters(rootPath string, maxBlockSize int64) (map[string]*TopicWrite,
 		writers[topic] = writer
 	}
 	return writers, nil
+}
+
+type WriteTask struct {
+	entry logStorage.Entry
+	done  bool
+}
+
+type topicWriteConfig struct {
+	rootPath     string
+	maxBlockSize int64
+	topic        logStorage.Topic
+	task         chan WriteTask //Todo: should this be a pointer?
+	writerError  chan error
+}
+
+func registerTopicWriterJob(config chan topicWriteConfig, errChan chan error) {
+	var topicWriterJobs []topicWriteConfig
+}
+
+func topicWriterJob(config topicWriteConfig) {
+	topicWrite, err := NewTopicWrite(config.rootPath, string(config.topic), config.maxBlockSize)
+	if err != nil {
+		config.writerError <- err
+		return
+	}
+	for {
+		task := <-config.task
+		if task.done {
+			return
+		}
+		_, err = topicWrite.WriteToTopic(task.entry)
+		if err != nil {
+			config.writerError <- err
+			return
+		}
+	}
 }
 
 type LogFile struct {
@@ -55,34 +91,34 @@ func NewLogStorage(rootPath string, maxBlockSize int64) (LogStorage, error) {
 var _ logStorage.LogStorage = LogStorage{} // Verify that T implements I.
 //var _ logStorage.LogStorage = (*LogStorage{})(nil) // Verify that *T implements I.
 
-func (e LogStorage) Create(topic logStorage.Topic) (bool, error) {
-	sTopic := string(topic)
-	created, err := createTopic(e.rootPath, sTopic)
+func (e LogStorage) Create(topic *golangApi.Topic) (bool, error) {
+
+	created, err := createTopic(e.rootPath, topic.Name)
 	if err != nil {
 		return false, err
 	}
 	if created {
-		writer, err := NewTopicWrite(e.rootPath, sTopic, e.maxBlockSize)
+		writer, err := NewTopicWrite(e.rootPath, topic.Name, e.maxBlockSize)
 		if err != nil {
 			return false, err
 		}
-		e.topicWriters[sTopic] = writer
+		e.topicWriters[topic.Name] = writer
 		log.Printf("Registered topic [%s]", topic)
 		return true, nil
 	}
 	return false, nil
 }
 
-func (e LogStorage) Drop(topic logStorage.Topic) (bool, error) {
+func (e LogStorage) Drop(topic *golangApi.Topic) (bool, error) {
 	panic("implement me")
 }
 
-func (e LogStorage) Write(topic logStorage.Topic, entry logStorage.Entry) (int, error) {
-	topicWrite := e.topicWriters[string(topic)]
+func (e LogStorage) Write(topicMessage *golangApi.TopicMessage) (int, error) {
+	topicWrite := e.topicWriters[topicMessage.TopicName]
 	if topicWrite == nil {
 		return 0, errors.New("Topic does not exist")
 	}
-	n, err := topicWrite.WriteToTopic(entry)
+	n, err := topicWrite.WriteToTopic(topicMessage)
 	if err != nil {
 		return 0, err
 	}
@@ -90,7 +126,7 @@ func (e LogStorage) Write(topic logStorage.Topic, entry logStorage.Entry) (int, 
 
 }
 
-func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic logStorage.Topic) error {
+func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic *golangApi.Topic) error {
 	reader, err := NewTopicRead(e.rootPath, string(topic))
 	if err != nil {
 		return err
@@ -102,7 +138,7 @@ func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, wg *syn
 	return nil
 }
 
-func (e LogStorage) ReadFromNotIncluding(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic logStorage.Topic, offset logStorage.Offset) error {
+func (e LogStorage) ReadFromNotIncluding(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic *golangApi.Topic, offset *golangApi.Offset) error {
 	reader, err := NewTopicRead(e.rootPath, string(topic))
 	if err != nil {
 		return err
