@@ -2,7 +2,6 @@ package ext4
 
 import (
 	"bufio"
-	"errors"
 	"github.com/tcw/ibsen/api/grpc/golangApi"
 	"github.com/tcw/ibsen/logStorage"
 	"log"
@@ -10,9 +9,9 @@ import (
 	"sync"
 )
 
-func registerTopics(rootPath string, maxBlockSize int64, registerChan chan topicWriteConfig, wg *sync.WaitGroup) ([]topicWriteConfig, error) {
+func registerTopics(rootPath string, maxBlockSize int64, registerChan chan *topicWriteConfig, wg *sync.WaitGroup) ([]*topicWriteConfig, error) {
 	topics, err := ListTopics(rootPath)
-	var topicWriters []topicWriteConfig
+	var topicWriters []*topicWriteConfig
 	if err != nil {
 		return nil, err
 	}
@@ -26,8 +25,8 @@ func registerTopics(rootPath string, maxBlockSize int64, registerChan chan topic
 	return topicWriters, nil
 }
 
-func registerTopic(rootPath string, topic string, maxBlockSize int64, registerChan chan topicWriteConfig, wg *sync.WaitGroup) (topicWriteConfig, error) {
-	config := topicWriteConfig{
+func registerTopic(rootPath string, topic string, maxBlockSize int64, registerChan chan *topicWriteConfig, wg *sync.WaitGroup) (*topicWriteConfig, error) {
+	config := &topicWriteConfig{
 		rootPath:     rootPath,
 		maxBlockSize: maxBlockSize,
 		topic:        topic,
@@ -103,7 +102,7 @@ type LogStorage struct {
 	rootPath           string
 	maxBlockSize       int64
 	wgTopic            sync.WaitGroup
-	chanWriterRegister chan topicWriteConfig
+	chanWriterRegister chan *topicWriteConfig
 	topicWriters       map[string]topicWriteConfig
 	mu                 sync.Mutex
 }
@@ -113,6 +112,7 @@ func NewLogStorage(rootPath string, maxBlockSize int64) (LogStorage, error) {
 		rootPath:           rootPath,
 		maxBlockSize:       maxBlockSize,
 		chanWriterRegister: make(chan topicWriteConfig),
+		topicWriters:       make(map[string]topicWriteConfig),
 	}
 	storage.mu.Lock()
 	go registerTopicWriterJob(storage.chanWriterRegister, &storage.wgTopic)
