@@ -15,3 +15,8 @@ openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out c
 ```shell script
 dostoevsky -s -cpu=cpu-profile.out -mem=mem-profile.out
 ```
+
+
+if os.Getenv("DEBUG") == "true" {
+		fmt.Printf("worker [%d] - created hash [%d] from word [%s]\n", id, h.Sum32(), word)
+	}

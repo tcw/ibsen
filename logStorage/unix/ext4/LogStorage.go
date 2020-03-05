@@ -10,14 +10,14 @@ import (
 	"sync"
 )
 
-func registerTopics(rootPath string, maxBlockSize int64, registerChan chan *topicWriteConfig, wg *sync.WaitGroup) ([]*topicWriteConfig, error) {
+func registerTopics(rootPath string, maxBlockSize int64) ([]*topicWriteConfig, error) {
 	topics, err := ListTopics(rootPath)
 	var topicWriters []*topicWriteConfig
 	if err != nil {
 		return nil, err
 	}
 	for _, topic := range topics {
-		config, err := registerTopic(rootPath, topic, maxBlockSize, registerChan, wg)
+		config, err := registerTopic(rootPath, topic, maxBlockSize)
 		if err != nil {
 			return nil, err
 		}
@@ -26,7 +26,7 @@ func registerTopics(rootPath string, maxBlockSize int64, registerChan chan *topi
 	return topicWriters, nil
 }
 
-func registerTopic(rootPath string, topic string, maxBlockSize int64, registerChan chan *topicWriteConfig, wg *sync.WaitGroup) (*topicWriteConfig, error) {
+func registerTopic(rootPath string, topic string, maxBlockSize int64) (*topicWriteConfig, error) {
 	config := &topicWriteConfig{
 		rootPath:     rootPath,
 		maxBlockSize: maxBlockSize,
@@ -34,9 +34,7 @@ func registerTopic(rootPath string, topic string, maxBlockSize int64, registerCh
 		task:         make(chan *WriteTask),
 		writerError:  make(chan error),
 	}
-	wg.Add(1)
-	registerChan <- config
-	wg.Done()
+	go runTopicWriterJob(config)
 	return config, nil
 }
 
@@ -53,28 +51,7 @@ type topicWriteConfig struct {
 	writerError  chan error
 }
 
-func registerTopicWriterJob(config chan *topicWriteConfig, wg *sync.WaitGroup) {
-	var topicWriterJobs []topicWriteConfig
-	for {
-		writeConfig := <-config
-
-		jobExists := false
-		for _, topicJob := range topicWriterJobs {
-			if topicJob.topic == writeConfig.topic {
-				log.Printf("Tried to register already registered topic %s", writeConfig.topic)
-				jobExists = true
-				break
-			}
-		}
-		if !jobExists {
-			topicWriterJobs = append(topicWriterJobs, *writeConfig)
-			go runTopicWriterJob(*writeConfig)
-		}
-		wg.Done()
-	}
-}
-
-func runTopicWriterJob(config topicWriteConfig) {
+func runTopicWriterJob(config *topicWriteConfig) {
 	topicWrite, err := NewTopicWrite(config.rootPath, config.topic, config.maxBlockSize)
 	if err != nil {
 		config.writerError <- err
@@ -100,24 +77,23 @@ type LogFile struct {
 }
 
 type LogStorage struct {
-	rootPath           string
-	maxBlockSize       int64
-	wgTopic            *sync.WaitGroup
-	chanWriterRegister chan *topicWriteConfig
-	topicWriters       map[string]*topicWriteConfig
-	mu                 sync.Mutex
+	rootPath     string
+	maxBlockSize int64
+	wgTopic      sync.WaitGroup
+	topicWriters map[string]*topicWriteConfig
+	mu           sync.Mutex
 }
 
 func NewLogStorage(rootPath string, maxBlockSize int64) (*LogStorage, error) {
 	storage := &LogStorage{
-		rootPath:           rootPath,
-		maxBlockSize:       maxBlockSize,
-		chanWriterRegister: make(chan *topicWriteConfig),
-		topicWriters:       make(map[string]*topicWriteConfig),
+		rootPath:     rootPath,
+		maxBlockSize: maxBlockSize,
+		topicWriters: make(map[string]*topicWriteConfig),
 	}
+
 	storage.mu.Lock()
-	go registerTopicWriterJob(storage.chanWriterRegister, storage.wgTopic)
-	topics, err := registerTopics(rootPath, maxBlockSize, storage.chanWriterRegister, storage.wgTopic)
+
+	topics, err := registerTopics(rootPath, maxBlockSize)
 	for _, v := range topics {
 		storage.topicWriters[v.topic] = v
 	}
@@ -133,13 +109,16 @@ var _ logStorage.LogStorage = LogStorage{} // Verify that T implements I.
 
 func (e LogStorage) Create(topic string) (bool, error) {
 	e.mu.Lock()
-	config, err := registerTopic(e.rootPath, topic, e.maxBlockSize, e.chanWriterRegister, e.wgTopic)
+	if e.topicWriters[topic] == nil {
+		return false, nil
+	}
+	config, err := registerTopic(e.rootPath, topic, e.maxBlockSize)
 	if err != nil {
 		return false, err
 	}
 	e.topicWriters[topic] = config
 	e.mu.Unlock()
-	return true, nil // Todo: Is this behaviour really wanted?
+	return true, nil
 }
 
 func (e LogStorage) Drop(topic string) (bool, error) {
