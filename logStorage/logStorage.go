@@ -1,17 +1,21 @@
 package logStorage
 
 import (
-	"github.com/tcw/ibsen/api/grpc/golangApi"
 	"sync"
 )
 
 type LogStorage interface {
-	Create(topic *golangApi.Topic) (bool, error)
-	Drop(topic *golangApi.Topic) (bool, error)
-	Write(*golangApi.TopicMessage) (int, error)
-	ReadFromBeginning(logChan chan *LogEntry, wg *sync.WaitGroup, topic *golangApi.Topic) error
-	ReadFromNotIncluding(logChan chan *LogEntry, wg *sync.WaitGroup, topic *golangApi.Topic, offset *golangApi.Offset) error
-	ListTopics() ([]golangApi.Topic, error)
+	Create(topic string) (bool, error)
+	Drop(topic string) (bool, error)
+	Write(topicMessage TopicMessage) (int, error)
+	ReadFromBeginning(logChan chan *LogEntry, wg *sync.WaitGroup, topic string) error
+	ReadFromNotIncluding(logChan chan *LogEntry, wg *sync.WaitGroup, topic string, offset uint64) error
+	ListTopics() ([]string, error)
+}
+
+type TopicMessage struct {
+	Topic   string
+	Message *[]byte
 }
 
 type LogEntry struct {

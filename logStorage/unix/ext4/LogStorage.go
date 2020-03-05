@@ -2,7 +2,8 @@ package ext4
 
 import (
 	"bufio"
-	"github.com/tcw/ibsen/api/grpc/golangApi"
+	"errors"
+	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"log"
 	"os"
@@ -40,7 +41,7 @@ func registerTopic(rootPath string, topic string, maxBlockSize int64, registerCh
 }
 
 type WriteTask struct {
-	entry *golangApi.TopicMessage
+	entry *[]byte
 	done  bool
 }
 
@@ -52,7 +53,7 @@ type topicWriteConfig struct {
 	writerError  chan error
 }
 
-func registerTopicWriterJob(config chan topicWriteConfig, wg *sync.WaitGroup) {
+func registerTopicWriterJob(config chan *topicWriteConfig, wg *sync.WaitGroup) {
 	var topicWriterJobs []topicWriteConfig
 	for {
 		writeConfig := <-config
@@ -66,8 +67,8 @@ func registerTopicWriterJob(config chan topicWriteConfig, wg *sync.WaitGroup) {
 			}
 		}
 		if !jobExists {
-			topicWriterJobs = append(topicWriterJobs, writeConfig)
-			go runTopicWriterJob(writeConfig)
+			topicWriterJobs = append(topicWriterJobs, *writeConfig)
+			go runTopicWriterJob(*writeConfig)
 		}
 		wg.Done()
 	}
@@ -101,22 +102,22 @@ type LogFile struct {
 type LogStorage struct {
 	rootPath           string
 	maxBlockSize       int64
-	wgTopic            sync.WaitGroup
+	wgTopic            *sync.WaitGroup
 	chanWriterRegister chan *topicWriteConfig
-	topicWriters       map[string]topicWriteConfig
+	topicWriters       map[string]*topicWriteConfig
 	mu                 sync.Mutex
 }
 
-func NewLogStorage(rootPath string, maxBlockSize int64) (LogStorage, error) {
-	storage := LogStorage{
+func NewLogStorage(rootPath string, maxBlockSize int64) (*LogStorage, error) {
+	storage := &LogStorage{
 		rootPath:           rootPath,
 		maxBlockSize:       maxBlockSize,
-		chanWriterRegister: make(chan topicWriteConfig),
-		topicWriters:       make(map[string]topicWriteConfig),
+		chanWriterRegister: make(chan *topicWriteConfig),
+		topicWriters:       make(map[string]*topicWriteConfig),
 	}
 	storage.mu.Lock()
-	go registerTopicWriterJob(storage.chanWriterRegister, &storage.wgTopic)
-	topics, err := registerTopics(rootPath, maxBlockSize, storage.chanWriterRegister, &storage.wgTopic)
+	go registerTopicWriterJob(storage.chanWriterRegister, storage.wgTopic)
+	topics, err := registerTopics(rootPath, maxBlockSize, storage.chanWriterRegister, storage.wgTopic)
 	for _, v := range topics {
 		storage.topicWriters[v.topic] = v
 	}
@@ -130,30 +131,35 @@ func NewLogStorage(rootPath string, maxBlockSize int64) (LogStorage, error) {
 var _ logStorage.LogStorage = LogStorage{} // Verify that T implements I.
 //var _ logStorage.LogStorage = (*LogStorage{})(nil) // Verify that *T implements I.
 
-func (e LogStorage) Create(topic *golangApi.Topic) (bool, error) {
+func (e LogStorage) Create(topic string) (bool, error) {
 	e.mu.Lock()
-	config, err := registerTopic(e.rootPath, topic.Name, e.maxBlockSize, e.chanWriterRegister, &e.wgTopic)
+	config, err := registerTopic(e.rootPath, topic, e.maxBlockSize, e.chanWriterRegister, e.wgTopic)
 	if err != nil {
 		return false, err
 	}
-	e.topicWriters[topic.Name] = config
+	e.topicWriters[topic] = config
 	e.mu.Unlock()
 	return true, nil // Todo: Is this behaviour really wanted?
 }
 
-func (e LogStorage) Drop(topic *golangApi.Topic) (bool, error) {
+func (e LogStorage) Drop(topic string) (bool, error) {
 	panic("implement me")
 }
 
-func (e LogStorage) Write(topicMessage *golangApi.TopicMessage) (int, error) {
-	writeConfig := e.topicWriters[topicMessage.TopicName]
+func (e LogStorage) Write(topicMessage logStorage.TopicMessage) (int, error) {
+	writeConfig := e.topicWriters[topicMessage.Topic]
 	if writeConfig == nil {
-
+		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s]", topicMessage.Topic))
 	}
+	writeConfig.task <- &WriteTask{
+		entry: topicMessage.Message,
+		done:  false,
+	}
+	return 1, nil
 }
 
-func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic *golangApi.Topic) error {
-	reader, err := NewTopicRead(e.rootPath, topic.Name)
+func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic string) error {
+	reader, err := NewTopicRead(e.rootPath, topic)
 	if err != nil {
 		return err
 	}
@@ -164,8 +170,8 @@ func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, wg *syn
 	return nil
 }
 
-func (e LogStorage) ReadFromNotIncluding(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic *golangApi.Topic, offset *golangApi.Offset) error {
-	reader, err := NewTopicRead(e.rootPath, topic.Name)
+func (e LogStorage) ReadFromNotIncluding(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic string, offset uint64) error {
+	reader, err := NewTopicRead(e.rootPath, topic)
 	if err != nil {
 		return err
 	}
@@ -176,12 +182,15 @@ func (e LogStorage) ReadFromNotIncluding(logChan chan *logStorage.LogEntry, wg *
 	return nil
 }
 
-func (e LogStorage) ListTopics() ([]golangApi.Topic, error) {
+func (e LogStorage) ListTopics() ([]string, error) {
 	panic("implement me")
 }
 
 func (e LogStorage) Close() {
 	for _, v := range e.topicWriters {
-		v.Close()
+		v.task <- &WriteTask{
+			entry: nil,
+			done:  true,
+		}
 	}
 }

@@ -91,7 +91,7 @@ func main() {
 func writeToStdOut(c chan *logStorage.LogEntry, wg *sync.WaitGroup) {
 	for {
 		entry := <-c
-		base64Payload := base64.StdEncoding.EncodeToString(entry.Entry)
+		base64Payload := base64.StdEncoding.EncodeToString(*entry.Entry)
 		fmt.Printf("%d\t%d\t%s\n", entry.Offset, entry.ByteSize, base64Payload)
 		wg.Done()
 	}

@@ -1,7 +1,6 @@
 package ext4
 
 import (
-	"github.com/tcw/ibsen/api/grpc/golangApi"
 	"github.com/tcw/ibsen/logStorage"
 	"log"
 )
@@ -17,12 +16,12 @@ type TopicWrite struct {
 	logFile          *LogFile
 }
 
-func (t *TopicWrite) WriteToTopic(topicMessage *golangApi.TopicMessage) (int, error) {
+func (t *TopicWrite) WriteToTopic(entry *[]byte) (int, error) {
 	t.currentOffset = t.currentOffset + 1
 	logEntry := &logStorage.LogEntry{
 		Offset:   t.currentOffset,
-		ByteSize: len(topicMessage.MessagePayload),
-		Entry:    &topicMessage.MessagePayload,
+		ByteSize: len(*entry),
+		Entry:    entry,
 	}
 	n, err := t.logFile.WriteToFile(logEntry)
 	if err != nil {

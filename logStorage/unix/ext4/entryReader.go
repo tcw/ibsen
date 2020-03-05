@@ -58,7 +58,7 @@ func (lw *LogFile) ReadCurrentOffset() (uint64, error) {
 	}
 }
 
-func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, excludingOffset logStorage.Offset) error {
+func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, excludingOffset uint64) error {
 	var offsetFound = false
 	skippedFirst := false
 
@@ -113,9 +113,9 @@ func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, ex
 			}
 			if skippedFirst {
 				c <- &logStorage.LogEntry{
-					Offset:   logStorage.Offset(offset),
+					Offset:   offset,
 					ByteSize: int(size),
-					Entry:    entry,
+					Entry:    &entry,
 				}
 			} else {
 				skippedFirst = true
@@ -164,9 +164,9 @@ func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry, wg *sync.Wa
 		}
 		wg.Add(1)
 		c <- &logStorage.LogEntry{
-			Offset:   logStorage.Offset(offset),
+			Offset:   offset,
 			ByteSize: int(size),
-			Entry:    entry,
+			Entry:    &entry,
 		}
 	}
 }

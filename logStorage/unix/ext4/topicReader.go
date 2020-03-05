@@ -10,7 +10,7 @@ type TopicRead struct {
 	rootPath          string
 	name              string
 	topicPath         string
-	currentOffset     logStorage.Offset
+	currentOffset     uint64
 	sortedBlocks      []uint64
 	currentBlockIndex uint
 	logFile           *LogFile
@@ -61,8 +61,8 @@ func (t *TopicRead) ReadFromBeginning(c chan *logStorage.LogEntry, wg *sync.Wait
 	}
 }
 
-func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, offset logStorage.Offset) error {
-	blockIndexContainingOffset, err := t.findBlockIndexContainingOffset(uint64(offset))
+func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, offset uint64) error {
+	blockIndexContainingOffset, err := t.findBlockIndexContainingOffset(offset)
 	if err != nil {
 		return err
 	}

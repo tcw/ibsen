@@ -3,7 +3,6 @@ package ext4
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/tcw/ibsen/logStorage"
 	"io/ioutil"
 	"log"
 	"os"
@@ -100,7 +99,7 @@ func listBlocksSorted(topicPath string) ([]uint64, error) {
 	return blocks, nil
 }
 
-func offsetToLittleEndian(offset logStorage.Offset) []byte {
+func offsetToLittleEndian(offset uint64) []byte {
 	bytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(bytes, uint64(offset))
 	return bytes

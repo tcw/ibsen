@@ -73,9 +73,9 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 		return err
 	}
 	igs.IbsenServer = grpcServer
-	igs.Storage = &storage
+	igs.Storage = storage
 	RegisterIbsenServer(grpcServer, &server{
-		logStorage: storage,
+		logStorage: *storage,
 	})
 
 	return grpcServer.Serve(lis)
@@ -84,7 +84,7 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 var _ IbsenServer = &server{}
 
 func (s server) Create(ctx context.Context, topic *Topic) (*TopicStatus, error) {
-	create, err := s.logStorage.Create(logStorage.Topic(topic.Name))
+	create, err := s.logStorage.Create(topic.Name)
 	return &TopicStatus{
 		Created: create,
 	}, err
@@ -108,7 +108,10 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 		if err != nil {
 			return err
 		}
-		sum, err = s.logStorage.Write(logStorage.Topic(in.TopicName), in.MessagePayload)
+		sum, err = s.logStorage.Write(logStorage.TopicMessage{
+			Topic:   in.TopicName,
+			Message: &in.MessagePayload,
+		})
 		if err != nil {
 			return err
 		}
@@ -120,7 +123,7 @@ func (s server) ReadFromBeginning(topic *Topic, outStream Ibsen_ReadFromBeginnin
 	logChan := make(chan *logStorage.LogEntry)
 	var wg sync.WaitGroup
 	go sendMessage(logChan, &wg, outStream)
-	err := s.logStorage.ReadFromBeginning(logChan, &wg, logStorage.Topic(topic.Name))
+	err := s.logStorage.ReadFromBeginning(logChan, &wg, topic.Name)
 	if err != nil {
 		return err
 	}
@@ -132,8 +135,8 @@ func sendMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, outStrea
 	for {
 		entry := <-logChan
 		err := outStream.Send(&Entry{
-			Offset:  uint64(entry.Offset),
-			Payload: entry.Entry,
+			Offset:  entry.Offset,
+			Payload: *entry.Entry,
 		})
 		wg.Done()
 		if err != nil {
