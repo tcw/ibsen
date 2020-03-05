@@ -56,7 +56,7 @@ func main() {
 
 	if *createNTestData > 0 {
 		_, err := c.Create(ctx, &grpcApi.Topic{
-			Name: "test",
+			Name: *useTestTopic,
 		})
 		if err != nil {
 			fmt.Println(err)
@@ -83,7 +83,7 @@ func main() {
 		for i := 0; i < *createNTestData; i++ {
 			err = r.Send(&mes)
 			if err != nil {
-				fmt.Println(err)
+				fmt.Println("sent ", i, " messages", err)
 				return
 			}
 		}
