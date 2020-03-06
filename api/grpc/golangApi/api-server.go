@@ -108,7 +108,8 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 		if err != nil {
 			return err
 		}
-		sum, err = s.logStorage.Write(logStorage.TopicMessage{
+		//Todo: must have write group
+		sum, err = s.logStorage.Write(&logStorage.TopicMessage{
 			Topic:   in.TopicName,
 			Message: &in.MessagePayload,
 		})

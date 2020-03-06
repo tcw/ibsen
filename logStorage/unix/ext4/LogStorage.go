@@ -136,7 +136,8 @@ func (e LogStorage) Drop(topic string) (bool, error) {
 	panic("implement me")
 }
 
-func (e LogStorage) Write(topicMessage logStorage.TopicMessage) (int, error) {
+//Todo wait group must be in param
+func (e LogStorage) Write(topicMessage *logStorage.TopicMessage) (int, error) {
 	writeConfig := e.topicWriters[topicMessage.Topic]
 	if writeConfig == nil {
 		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s], topic not registered", topicMessage.Topic))
