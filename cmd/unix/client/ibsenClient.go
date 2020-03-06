@@ -10,19 +10,15 @@ import (
 	"google.golang.org/grpc"
 	"io"
 	"log"
-	"math/rand"
 	"os"
 	"time"
 )
 
 var (
-	verbose         = flag.Bool("v", false, "Verbose")
-	writeTopic      = flag.String("w", "", "Write to Topic")
-	readTopic       = flag.String("r", "", "Read from Topic")
-	createTopic     = flag.String("c", "", "Create Topic")
-	createNTestData = flag.Int("tn", 0, "Number of entries to [test] topic")
-	useTestTopic    = flag.String("tt", "test", "Test topic name ")
-	entryTestSize   = flag.Int("ts", 100, "Each message will contain n bytes")
+	verbose     = flag.Bool("v", false, "Verbose")
+	writeTopic  = flag.String("w", "", "Write to Topic")
+	readTopic   = flag.String("r", "", "Read from Topic")
+	createTopic = flag.String("c", "", "Create Topic")
 )
 
 func main() {
@@ -54,46 +50,6 @@ func main() {
 		}
 	}
 
-	if *createNTestData > 0 {
-		_, err := c.Create(ctx, &grpcApi.Topic{
-			Name: *useTestTopic,
-		})
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		r, err := c.WriteStream(ctx)
-		if err != nil {
-			log.Fatalf("could not greet: %v", err)
-		}
-
-		rand.Seed(time.Now().UnixNano())
-
-		var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-		b := make([]rune, *entryTestSize)
-		for i := range b {
-			b[i] = letterRunes[rand.Intn(len(letterRunes))]
-		}
-
-		mes := grpcApi.TopicMessage{
-			TopicName:      *useTestTopic,
-			MessagePayload: []byte(string(b)),
-		}
-		for i := 0; i < *createNTestData; i++ {
-			err = r.Send(&mes)
-			if err != nil {
-				fmt.Println("sent ", i, " messages", err)
-				return
-			}
-		}
-		_, err = r.CloseAndRecv()
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-	}
-
 	if *readTopic != "" {
 		entryStream, err := c.ReadFromBeginning(ctx, &grpcApi.Topic{
 			Name: *readTopic,
@@ -108,8 +64,10 @@ func main() {
 		for {
 			in, err := entryStream.Recv()
 			if err == io.EOF {
-				writer.Flush()
-				return
+				err := writer.Flush()
+				if err != nil {
+					log.Fatal("flush error")
+				}
 			}
 			payLoadBase64 := base64.StdEncoding.EncodeToString(in.Payload)
 			line := fmt.Sprintf("%d\t%s\n", in.Offset, payLoadBase64)

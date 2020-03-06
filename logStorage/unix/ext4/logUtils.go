@@ -101,7 +101,7 @@ func listBlocksSorted(topicPath string) ([]uint64, error) {
 
 func offsetToLittleEndian(offset uint64) []byte {
 	bytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(bytes, uint64(offset))
+	binary.LittleEndian.PutUint64(bytes, offset)
 	return bytes
 }
 
@@ -109,12 +109,6 @@ func byteSizeToLittleEndian(number int) []byte {
 	bytes := make([]byte, 8)
 	binary.LittleEndian.PutUint32(bytes, uint32(number))
 	return bytes
-}
-
-func toLittleEndian(number uint64) []byte {
-	offset := make([]byte, 8)
-	binary.LittleEndian.PutUint64(offset, number)
-	return offset
 }
 
 func fromLittleEndian(bytes []byte) uint64 {

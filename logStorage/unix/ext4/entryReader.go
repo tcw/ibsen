@@ -90,7 +90,7 @@ func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, ex
 		}
 
 		if !offsetFound {
-			if uint64(excludingOffset) != offset {
+			if excludingOffset != offset {
 				_, err := lw.LogFile.Seek(int64(size), 1)
 				if err != nil {
 					return err

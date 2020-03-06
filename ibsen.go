@@ -58,7 +58,7 @@ func main() {
 		log.Println(err)
 	}
 
-	fmt.Println(ibsenFiglet)
+	fmt.Print(ibsenFiglet)
 	fmt.Printf("Ibsen server started on port %d\n", ibsenGrpcServer.Port)
 	var err2 error
 	err2 = ibsenGrpcServer.StartGRPC()

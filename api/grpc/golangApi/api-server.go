@@ -44,7 +44,7 @@ func NewIbsenGrpcServer() *IbsenGrpcServer {
 func (igs *IbsenGrpcServer) ValidateConfig() []error {
 	var configErrors []error
 	if igs.StorageRootPath == "" {
-		err := errors.New("Missing storage root path")
+		err := errors.New("missing storage root path")
 		configErrors = append(configErrors, err)
 	}
 	return configErrors

@@ -99,7 +99,7 @@ func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEn
 
 func (t *TopicRead) findBlockIndexContainingOffset(offset uint64) (uint, error) {
 	if len(t.sortedBlocks) == 0 {
-		return 0, errors.New("No Block")
+		return 0, errors.New("no block")
 	}
 	if len(t.sortedBlocks) == 1 {
 		return 0, nil

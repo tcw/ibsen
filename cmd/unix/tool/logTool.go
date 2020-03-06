@@ -64,7 +64,7 @@ func main() {
 
 	}
 	if *file != "" {
-		abs, err := filepath.Abs(*topic)
+		abs, err := filepath.Abs(*file)
 		if err != nil {
 			fmt.Println("Absolute:", abs)
 		}
