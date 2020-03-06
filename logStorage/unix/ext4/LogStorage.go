@@ -109,8 +109,15 @@ var _ logStorage.LogStorage = LogStorage{} // Verify that T implements I.
 
 func (e LogStorage) Create(topic string) (bool, error) {
 	e.mu.Lock()
-	if e.topicWriters[topic] == nil {
+
+	_, exists := e.topicWriters[topic]
+	if exists {
 		return false, nil
+	}
+
+	_, err2 := createTopic(e.rootPath, topic)
+	if err2 != nil {
+		return false, err2
 	}
 	config, err := registerTopic(e.rootPath, topic, e.maxBlockSize)
 	if err != nil {
