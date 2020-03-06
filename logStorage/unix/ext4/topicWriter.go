@@ -1,6 +1,8 @@
 package ext4
 
 import (
+	"errors"
+	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"log"
 )
@@ -60,8 +62,6 @@ func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (*TopicWrit
 				return nil, err
 			}
 		}
-	}
-	if topicExist {
 		block, err := topic.findCurrentBlock(topic.topicPath)
 		if err != nil {
 			log.Println(err)
@@ -87,16 +87,7 @@ func NewTopicWrite(rootPath string, name string, maxBlockSize int64) (*TopicWrit
 			return nil, err
 		}
 	} else {
-		isCreated, err := topic.createTopic()
-		if err != nil {
-			return nil, err
-		}
-		if isCreated {
-			err := topic.createFirstBlock()
-			if err != nil {
-				return nil, err
-			}
-		}
+		return nil, errors.New(fmt.Sprintf("topic [%s] is not registered", topic.name))
 	}
 	return topic, nil
 }

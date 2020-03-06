@@ -49,6 +49,7 @@ type topicWriteConfig struct {
 	topic        string
 	task         chan *WriteTask
 	writerError  chan error
+	wg           sync.WaitGroup
 }
 
 func runTopicWriterJob(config *topicWriteConfig) {
@@ -65,8 +66,11 @@ func runTopicWriterJob(config *topicWriteConfig) {
 		_, err = topicWrite.WriteToTopic(task.entry)
 		if err != nil {
 			config.writerError <- err
-			return
+
+		} else {
+			config.writerError <- nil
 		}
+		config.wg.Done()
 	}
 }
 
@@ -135,12 +139,17 @@ func (e LogStorage) Drop(topic string) (bool, error) {
 func (e LogStorage) Write(topicMessage logStorage.TopicMessage) (int, error) {
 	writeConfig := e.topicWriters[topicMessage.Topic]
 	if writeConfig == nil {
-		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s]", topicMessage.Topic))
+		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s], topic not registered", topicMessage.Topic))
 	}
+	writeConfig.wg.Add(1)
 	writeConfig.task <- &WriteTask{
 		entry: topicMessage.Message,
 		done:  false,
 	}
+	if <-writeConfig.writerError != nil {
+		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s]", topicMessage.Topic))
+	}
+	writeConfig.wg.Wait()
 	return 1, nil
 }
 
