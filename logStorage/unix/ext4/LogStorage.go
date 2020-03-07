@@ -10,68 +10,21 @@ import (
 	"sync"
 )
 
-func registerTopics(rootPath string, maxBlockSize int64) ([]*topicWriteConfig, error) {
+func registerTopics(rootPath string, maxBlockSize int64) ([]*TopicWrite, error) {
 	topics, err := ListTopics(rootPath)
-	var topicWriters []*topicWriteConfig
+	var topicWriters []*TopicWrite
 	if err != nil {
 		return nil, err
 	}
 	for _, topic := range topics {
-		config, err := registerTopic(rootPath, topic, maxBlockSize)
+
+		topicWrite, err := NewTopicWrite(rootPath, topic, maxBlockSize)
 		if err != nil {
 			return nil, err
 		}
-		topicWriters = append(topicWriters, config)
+		topicWriters = append(topicWriters, topicWrite)
 	}
 	return topicWriters, nil
-}
-
-func registerTopic(rootPath string, topic string, maxBlockSize int64) (*topicWriteConfig, error) {
-	config := &topicWriteConfig{
-		rootPath:     rootPath,
-		maxBlockSize: maxBlockSize,
-		topic:        topic,
-		task:         make(chan *WriteTask),
-		writerError:  make(chan error),
-	}
-	go runTopicWriterJob(config)
-	return config, nil
-}
-
-type WriteTask struct {
-	entry *[]byte
-	done  bool
-}
-
-type topicWriteConfig struct {
-	rootPath     string
-	maxBlockSize int64
-	topic        string
-	task         chan *WriteTask
-	writerError  chan error
-	wg           sync.WaitGroup
-}
-
-func runTopicWriterJob(config *topicWriteConfig) {
-	topicWrite, err := NewTopicWrite(config.rootPath, config.topic, config.maxBlockSize)
-	if err != nil {
-		config.writerError <- err
-		return
-	}
-	for {
-		task := <-config.task
-		if task.done {
-			return
-		}
-		_, err = topicWrite.WriteToTopic(task.entry)
-		if err != nil {
-			config.writerError <- err
-
-		} else {
-			config.writerError <- nil
-		}
-		config.wg.Done()
-	}
 }
 
 type LogFile struct {
@@ -84,7 +37,7 @@ type LogStorage struct {
 	rootPath     string
 	maxBlockSize int64
 	wgTopic      sync.WaitGroup
-	topicWriters map[string]*topicWriteConfig
+	topicWriters map[string]*TopicWrite
 	mu           sync.Mutex
 }
 
@@ -92,14 +45,13 @@ func NewLogStorage(rootPath string, maxBlockSize int64) (*LogStorage, error) {
 	storage := &LogStorage{
 		rootPath:     rootPath,
 		maxBlockSize: maxBlockSize,
-		topicWriters: make(map[string]*topicWriteConfig),
+		topicWriters: make(map[string]*TopicWrite),
 	}
 
 	storage.mu.Lock()
-
 	topics, err := registerTopics(rootPath, maxBlockSize)
 	for _, v := range topics {
-		storage.topicWriters[v.topic] = v
+		storage.topicWriters[v.name] = v
 	}
 	if err != nil {
 		log.Fatal("Unable to register topics")
@@ -118,16 +70,16 @@ func (e LogStorage) Create(topic string) (bool, error) {
 	if exists {
 		return false, nil
 	}
-
-	_, err2 := createTopic(e.rootPath, topic)
-	if err2 != nil {
-		return false, err2
-	}
-	config, err := registerTopic(e.rootPath, topic, e.maxBlockSize)
+	_, err := createTopic(e.rootPath, topic)
 	if err != nil {
 		return false, err
 	}
-	e.topicWriters[topic] = config
+	topicWrite, err2 := NewTopicWrite(e.rootPath, topic, e.maxBlockSize)
+	if err2 != nil {
+		return false, err2
+	}
+
+	e.topicWriters[topic] = topicWrite
 	e.mu.Unlock()
 	return true, nil
 }
@@ -136,22 +88,19 @@ func (e LogStorage) Drop(topic string) (bool, error) {
 	panic("implement me")
 }
 
-//Todo wait group must be in param
 func (e LogStorage) Write(topicMessage *logStorage.TopicMessage) (int, error) {
-	writeConfig := e.topicWriters[topicMessage.Topic]
-	if writeConfig == nil {
+
+	topicWriter := e.topicWriters[topicMessage.Topic]
+	if topicWriter == nil {
 		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s], topic not registered", topicMessage.Topic))
 	}
-	writeConfig.wg.Add(1)
-	writeConfig.task <- &WriteTask{
-		entry: topicMessage.Message,
-		done:  false,
-	}
-	if <-writeConfig.writerError != nil {
+	topicWriter.mu.Lock()
+	n, err := topicWriter.WriteToTopic(topicMessage.Message)
+	if err != nil {
 		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s]", topicMessage.Topic))
 	}
-	writeConfig.wg.Wait()
-	return 1, nil
+	topicWriter.mu.Unlock()
+	return n, nil
 }
 
 func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic string) error {
@@ -184,9 +133,9 @@ func (e LogStorage) ListTopics() ([]string, error) {
 
 func (e LogStorage) Close() {
 	for _, v := range e.topicWriters {
-		v.task <- &WriteTask{
-			entry: nil,
-			done:  true,
+		err := v.Close()
+		if err != nil {
+			fmt.Println("unable to close writers cleanly")
 		}
 	}
 }

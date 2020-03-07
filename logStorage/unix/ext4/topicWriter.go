@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"log"
+	"sync"
 )
 
 type TopicWrite struct {
@@ -16,6 +17,7 @@ type TopicWrite struct {
 	currentBlockSize int64
 	maxBlockSize     int64
 	logFile          *LogFile
+	mu               sync.Mutex
 }
 
 func (t *TopicWrite) WriteToTopic(entry *[]byte) (int, error) {
