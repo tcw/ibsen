@@ -17,9 +17,10 @@ import (
 
 var (
 	verbose         = flag.Bool("v", false, "Verbose")
-	numberOfEntries = flag.Int("n", 0, "Number of entries to write to topic")
+	numberOfEntries = flag.Int("w", 0, "Number of entries to write to topic")
+	batches         = flag.Int("b", 0, "Number of entries to write to topic")
 	useTestTopic    = flag.String("t", "test", "Test topic name ")
-	entryTestSize   = flag.Int("b", 100, "Each message will contain n bytes")
+	entryTestSize   = flag.Int("es", 100, "Each message will contain n bytes")
 	readTopic       = flag.String("r", "", "Read Topic from beginning")
 )
 
@@ -38,6 +39,42 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+
+	if *batches > 0 {
+		_, err := c.Create(ctx, &grpcApi.Topic{
+			Name: *useTestTopic,
+		})
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		rand.Seed(time.Now().UnixNano())
+
+		var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+		b := make([]rune, *entryTestSize)
+		for i := range b {
+			b[i] = letterRunes[rand.Intn(len(letterRunes))]
+		}
+
+		var bytes [][]byte
+		for i := 0; i < *numberOfEntries; i++ {
+			bytes = append(bytes, []byte(string(b)))
+		}
+
+		mes := grpcApi.TopicBatchMessage{
+			TopicName:      *useTestTopic,
+			MessagePayload: bytes,
+		}
+		for i := 0; i < *batches; i++ {
+			_, err = c.WriteBatch(ctx, &mes)
+			if err != nil {
+				fmt.Println("error writing batch")
+			}
+		}
+		return
+	}
 
 	if *numberOfEntries > 0 {
 		_, err := c.Create(ctx, &grpcApi.Topic{

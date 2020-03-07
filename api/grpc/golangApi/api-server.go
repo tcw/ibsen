@@ -98,6 +98,19 @@ func (s server) Write(context.Context, *TopicMessage) (*Status, error) {
 	panic("implement me")
 }
 
+func (s server) WriteBatch(ctx context.Context, tbm *TopicBatchMessage) (*Status, error) {
+
+	n, err := s.logStorage.WriteBatch(&logStorage.TopicBatchMessage{
+		Topic:   tbm.TopicName,
+		Message: &tbm.MessagePayload,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &Status{Entries: int32(n)}, nil
+}
+
 func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 	var sum int
 	for {

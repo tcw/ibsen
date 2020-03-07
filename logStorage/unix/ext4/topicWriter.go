@@ -20,6 +20,27 @@ type TopicWrite struct {
 	mu               sync.Mutex
 }
 
+func (t *TopicWrite) WriteBatchToTopic(entry *[][]byte) (int, error) {
+	t.currentOffset = t.currentOffset + 1
+	logEntry := &logStorage.LogBatchEntry{
+		Offset: t.currentOffset,
+		Entry:  entry,
+	}
+	offset, n, err := t.logFile.WriteBatchToFile(logEntry)
+	t.currentOffset = offset
+	if err != nil {
+		return 0, err
+	}
+	t.currentBlockSize = t.currentBlockSize + int64(n)
+	if t.currentBlockSize > t.maxBlockSize {
+		err := t.createNextBlock()
+		if err != nil {
+			return 0, err
+		}
+	}
+	return n, nil
+}
+
 func (t *TopicWrite) WriteToTopic(entry *[]byte) (int, error) {
 	t.currentOffset = t.currentOffset + 1
 	logEntry := &logStorage.LogEntry{
@@ -31,7 +52,7 @@ func (t *TopicWrite) WriteToTopic(entry *[]byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	t.currentBlockSize = t.currentBlockSize + int64(logEntry.ByteSize) + 16 // 16 is offset + byteSize
+	t.currentBlockSize = t.currentBlockSize + int64(n)
 	if t.currentBlockSize > t.maxBlockSize {
 		err := t.createNextBlock()
 		if err != nil {

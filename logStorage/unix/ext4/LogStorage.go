@@ -88,6 +88,21 @@ func (e LogStorage) Drop(topic string) (bool, error) {
 	panic("implement me")
 }
 
+func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int, error) {
+
+	topicWriter := e.topicWriters[topicMessage.Topic]
+	if topicWriter == nil {
+		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s], topic not registered", topicMessage.Topic))
+	}
+	topicWriter.mu.Lock()
+	n, err := topicWriter.WriteBatchToTopic(topicMessage.Message)
+	if err != nil {
+		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s]", topicMessage.Topic))
+	}
+	topicWriter.mu.Unlock()
+	return n, nil
+}
+
 func (e LogStorage) Write(topicMessage *logStorage.TopicMessage) (int, error) {
 
 	topicWriter := e.topicWriters[topicMessage.Topic]

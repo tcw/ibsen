@@ -4,20 +4,30 @@ option go_package = "/api/grpc/golangApi";
 
 service Ibsen {
 
-    rpc create (Topic) returns (TopicStatus) {}
-    rpc drop (Topic) returns (TopicStatus) {}
+    rpc create (Topic) returns (TopicStatus) {
+    }
+    rpc drop (Topic) returns (TopicStatus) {
+    }
 
-    rpc write (TopicMessage) returns (Status) {}
-    rpc writeStream (stream TopicMessage) returns (Status) {}
+    rpc write (TopicMessage) returns (Status) {
+    }
+    rpc writeBatch (TopicBatchMessage) returns (Status) {
+    }
+    rpc writeStream (stream TopicMessage) returns (Status) {
+    }
 
-    rpc readFromBeginning (Topic) returns (stream Entry) {}
-    rpc readFromOffset (TopicOffset) returns (stream Entry) {}
+    rpc readFromBeginning (Topic) returns (stream Entry) {
+    }
+    rpc readFromOffset (TopicOffset) returns (stream Entry) {
+    }
 
-    rpc listTopics (Empty) returns (stream Topic) {}
-    rpc listTopicsWithOffset (Empty) returns (stream TopicOffset) {}
+    rpc listTopics (Empty) returns (stream Topic) {
+    }
+    rpc listTopicsWithOffset (Empty) returns (stream TopicOffset) {
+    }
 }
 
-message TopicStatus{
+message TopicStatus {
     bool created = 1;
 }
 
@@ -26,7 +36,7 @@ message Empty {
 }
 
 message Offset {
-   uint64 id = 1;
+    uint64 id = 1;
 }
 
 message Topic {
@@ -34,13 +44,18 @@ message Topic {
 }
 
 message TopicOffset {
-   string topicName = 1;
-   uint64 offset = 2;
+    string topicName = 1;
+    uint64 offset = 2;
 }
 
-message TopicMessage{
+message TopicMessage {
     string topicName = 1;
     bytes messagePayload = 2;
+}
+
+message TopicBatchMessage {
+    string topicName = 1;
+    repeated bytes messagePayload = 2;
 }
 
 message Message {
