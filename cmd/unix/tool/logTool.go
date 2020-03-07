@@ -84,6 +84,7 @@ func main() {
 		if err != nil {
 			println(err)
 		}
+		wg.Wait()
 	}
 
 }
