@@ -21,7 +21,7 @@ func NewLogWriter(FileName string) (*LogFile, error) {
 func (lw *LogFile) WriteBatchToFile(logEntry *logStorage.LogBatchEntry) (uint64, int, error) {
 	var bytes []byte
 	var currentOffset uint64
-	for i, v := range *logEntry.Entry {
+	for i, v := range *logEntry.Entries {
 		currentOffset = logEntry.Offset + uint64(i)
 		bytes = append(bytes, offsetToLittleEndian(currentOffset)...)
 		bytes = append(bytes, byteSizeToLittleEndian(len(v))...)

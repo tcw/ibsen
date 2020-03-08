@@ -12,7 +12,19 @@ type LogStorage interface {
 	WriteBatch(topicBatchMessage *TopicBatchMessage) (int, error)
 	ReadFromBeginning(logChan chan *LogEntry, wg *sync.WaitGroup, topic string) error
 	ReadFromNotIncluding(logChan chan *LogEntry, wg *sync.WaitGroup, topic string, offset uint64) error
+	ReadBatchFromOffsetNotIncluding(entryBatch *EntryBatch) (*EntryBatchResponse, error)
 	ListTopics() ([]string, error)
+}
+
+type EntryBatch struct {
+	Topic  string
+	Offset uint64
+	Marker int64
+}
+
+type EntryBatchResponse struct {
+	NextBatch EntryBatch
+	Entries   *[][]byte
 }
 
 type TopicMessage struct {
@@ -32,8 +44,8 @@ type LogEntry struct {
 }
 
 type LogBatchEntry struct {
-	Offset uint64
-	Entry  *[][]byte
+	Offset  uint64
+	Entries *[][]byte
 }
 
 func NewLogEntry(offset uint64, entry *[]byte) LogEntry {

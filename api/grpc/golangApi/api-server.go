@@ -163,6 +163,11 @@ func (s server) ReadFromOffset(*TopicOffset, Ibsen_ReadFromOffsetServer) error {
 	panic("implement me")
 }
 
+func (s server) ReadBatchFromOffset(context.Context, *EntryBatch) (*EntryBatch, error) {
+	panic("implement me") //Todo implement
+	//s.logStorage.ReadBatchFromOffsetNotIncluding()
+}
+
 func (s server) ListTopics(*Empty, Ibsen_ListTopicsServer) error {
 	panic("implement me")
 }

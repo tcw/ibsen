@@ -23,8 +23,8 @@ type TopicWrite struct {
 func (t *TopicWrite) WriteBatchToTopic(entry *[][]byte) (int, error) {
 	t.currentOffset = t.currentOffset + 1
 	logEntry := &logStorage.LogBatchEntry{
-		Offset: t.currentOffset,
-		Entry:  entry,
+		Offset:  t.currentOffset,
+		Entries: entry,
 	}
 	offset, n, err := t.logFile.WriteBatchToFile(logEntry)
 	t.currentOffset = offset

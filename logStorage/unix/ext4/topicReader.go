@@ -127,3 +127,13 @@ func (t *TopicRead) nextBlock() (bool, error) {
 	t.logFile = reader
 	return true, nil
 }
+
+func (t *TopicRead) ReadBatchFromOffsetNotIncluding(batch *logStorage.EntryBatch) (*logStorage.EntryBatchResponse, error) {
+
+	//Read from seek
+	if batch.Marker == -1 {
+		//Todo
+	}
+
+	return nil, nil
+}

@@ -58,6 +58,10 @@ func (lw *LogFile) ReadCurrentOffset() (uint64, error) {
 	}
 }
 
+func (lw *LogFile) ReadLogBlockFromOffsetNotIncluding() {
+
+}
+
 func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, excludingOffset uint64) error {
 	var offsetFound = false
 	skippedFirst := false
