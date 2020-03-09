@@ -139,21 +139,23 @@ func (t *TopicRead) ReadBatchFromOffsetNotIncluding(batch *logStorage.EntryBatch
 	var entriesBytes [][]byte
 	reader, err := NewLogReader(t.rootPath + separator + t.name + separator + blockName)
 	t.logFile = reader
-	entries, err := t.logFile.ReadLogBlockFromOffsetNotIncluding(batch, entriesToRead)
+	leftToRead := entriesToRead
+	entries, err := t.logFile.ReadLogBlockFromOffsetNotIncluding(batch, leftToRead)
 	entriesBytes = append(entriesBytes, *entries.Entries...)
 	size := entries.Size()
-	if size == entriesToRead {
+	leftToRead = leftToRead - size
+	if leftToRead == 0 {
 		return &logStorage.EntryBatchResponse{
 			NextBatch: logStorage.EntryBatch{
 				Topic:  batch.Topic,
-				Offset: 0,
-				Marker: 0,
+				Offset: entries.NextBatch.Offset,
+				Marker: entries.NextBatch.Marker,
 			},
 			Entries: &entriesBytes,
 		}, nil
 	}
 	for {
-		entries, err := t.logFile.ReadLogToEnd()
+		entries, err := t.logFile.ReadLogToEnd(0, leftToRead)
 		entriesBytes = append(entriesBytes, *entries.Entries...)
 		if err != nil {
 			return nil, err
@@ -172,13 +174,11 @@ func (t *TopicRead) ReadBatchFromOffsetNotIncluding(batch *logStorage.EntryBatch
 			return &logStorage.EntryBatchResponse{
 				NextBatch: logStorage.EntryBatch{
 					Topic:  batch.Topic,
-					Offset: 0,
-					Marker: 0,
+					Offset: entries.NextBatch.Offset,
+					Marker: entries.NextBatch.Marker,
 				},
 				Entries: &entriesBytes,
 			}, nil
 		}
 	}
-
-	return nil, nil
 }

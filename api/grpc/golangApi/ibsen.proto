@@ -30,7 +30,7 @@ service Ibsen {
 }
 
 message EntryBatch {
-    string topic = 1;
+    string topic = 1;//Todo entries to read
     uint64 offset = 2;
     int64 marker = 3;
 }
