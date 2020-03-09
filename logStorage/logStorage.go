@@ -27,6 +27,10 @@ type EntryBatchResponse struct {
 	Entries   *[][]byte
 }
 
+func (e *EntryBatchResponse) Size() int {
+	return len(*e.Entries)
+}
+
 type TopicMessage struct {
 	Topic   string
 	Message *[]byte

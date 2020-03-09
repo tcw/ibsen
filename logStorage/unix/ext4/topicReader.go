@@ -128,11 +128,56 @@ func (t *TopicRead) nextBlock() (bool, error) {
 	return true, nil
 }
 
-func (t *TopicRead) ReadBatchFromOffsetNotIncluding(batch *logStorage.EntryBatch) (*logStorage.EntryBatchResponse, error) {
+func (t *TopicRead) ReadBatchFromOffsetNotIncluding(batch *logStorage.EntryBatch, entriesToRead int) (*logStorage.EntryBatchResponse, error) {
+	blockIndexContainingOffset, err := t.findBlockIndexContainingOffset(batch.Offset)
+	if err != nil {
+		return nil, err
+	}
+	t.currentBlockIndex = blockIndexContainingOffset
+	t.currentOffset = batch.Offset
+	blockName := createBlockFileName(t.sortedBlocks[t.currentBlockIndex])
+	var entriesBytes [][]byte
+	reader, err := NewLogReader(t.rootPath + separator + t.name + separator + blockName)
+	t.logFile = reader
+	entries, err := t.logFile.ReadLogBlockFromOffsetNotIncluding(batch, entriesToRead)
+	entriesBytes = append(entriesBytes, *entries.Entries...)
+	size := entries.Size()
+	if size == entriesToRead {
+		return &logStorage.EntryBatchResponse{
+			NextBatch: logStorage.EntryBatch{
+				Topic:  batch.Topic,
+				Offset: 0,
+				Marker: 0,
+			},
+			Entries: &entriesBytes,
+		}, nil
+	}
+	for {
+		entries, err := t.logFile.ReadLogToEnd()
+		entriesBytes = append(entriesBytes, *entries.Entries...)
+		if err != nil {
+			return nil, err
+		}
+		err = t.logFile.CloseLogReader()
+		if err != nil {
+			return nil, err
 
-	//Read from seek
-	if batch.Marker == -1 {
-		//Todo
+		}
+		isNextblock, err := t.nextBlock()
+		if err != nil {
+			return nil, err
+
+		}
+		if !isNextblock {
+			return &logStorage.EntryBatchResponse{
+				NextBatch: logStorage.EntryBatch{
+					Topic:  batch.Topic,
+					Offset: 0,
+					Marker: 0,
+				},
+				Entries: &entriesBytes,
+			}, nil
+		}
 	}
 
 	return nil, nil
