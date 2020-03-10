@@ -142,16 +142,12 @@ func (e LogStorage) ReadFromNotIncluding(logChan chan *logStorage.LogEntry, wg *
 	return nil
 }
 
-func (e LogStorage) ReadBatchFromOffsetNotIncluding(entryBatch *logStorage.EntryBatch) (*logStorage.EntryBatchResponse, error) {
-	reader, err := NewTopicRead(e.rootPath, entryBatch.Topic)
-	if err != nil {
-		return nil, err
-	}
-	batch, err2 := reader.ReadBatchFromOffsetNotIncluding(entryBatch)
-	if err != nil {
-		return nil, err2
-	}
-	return batch, nil
+func (e LogStorage) ReadBatchFromBeginning(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string) error {
+	panic("implement me")
+}
+
+func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64) error {
+	panic("implement me")
 }
 
 func (e LogStorage) ListTopics() ([]string, error) {

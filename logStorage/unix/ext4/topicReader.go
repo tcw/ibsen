@@ -128,57 +128,41 @@ func (t *TopicRead) nextBlock() (bool, error) {
 	return true, nil
 }
 
-func (t *TopicRead) ReadBatchFromOffsetNotIncluding(batch *logStorage.EntryBatch, entriesToRead int) (*logStorage.EntryBatchResponse, error) {
-	blockIndexContainingOffset, err := t.findBlockIndexContainingOffset(batch.Offset)
+func (t *TopicRead) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, offset uint64, batchSize int) error {
+	blockIndexContainingOffset, err := t.findBlockIndexContainingOffset(offset)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	t.currentBlockIndex = blockIndexContainingOffset
-	t.currentOffset = batch.Offset
+	t.currentOffset = offset
 	blockName := createBlockFileName(t.sortedBlocks[t.currentBlockIndex])
-	var entriesBytes [][]byte
+	var entriesBytes []logStorage.LogEntry
 	reader, err := NewLogReader(t.rootPath + separator + t.name + separator + blockName)
 	t.logFile = reader
-	leftToRead := entriesToRead
-	entries, err := t.logFile.ReadLogBlockFromOffsetNotIncluding(batch, leftToRead)
+	entries, _, err := t.logFile.ReadLogBlockFromOffsetNotIncluding(logChan, wg, offset, batchSize)
 	entriesBytes = append(entriesBytes, *entries.Entries...)
-	size := entries.Size()
-	leftToRead = leftToRead - size
-	if leftToRead == 0 {
-		return &logStorage.EntryBatchResponse{
-			NextBatch: logStorage.EntryBatch{
-				Topic:  batch.Topic,
-				Offset: entries.NextBatch.Offset,
-				Marker: entries.NextBatch.Marker,
-			},
-			Entries: &entriesBytes,
-		}, nil
-	}
+	var entriesBytesFromBlock []logStorage.LogEntry
 	for {
-		entries, err := t.logFile.ReadLogToEnd(0, leftToRead)
-		entriesBytes = append(entriesBytes, *entries.Entries...)
+		entries, hasSent, err := t.logFile.ReadLogToEnd(&entriesBytes, logChan, wg, batchSize)
+		if hasSent {
+			entriesBytesFromBlock = nil
+		}
+		entriesBytesFromBlock = append(entriesBytes, *entries.Entries...)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		err = t.logFile.CloseLogReader()
 		if err != nil {
-			return nil, err
+			return err
 
 		}
 		isNextblock, err := t.nextBlock()
 		if err != nil {
-			return nil, err
+			return err
 
 		}
 		if !isNextblock {
-			return &logStorage.EntryBatchResponse{
-				NextBatch: logStorage.EntryBatch{
-					Topic:  batch.Topic,
-					Offset: entries.NextBatch.Offset,
-					Marker: entries.NextBatch.Marker,
-				},
-				Entries: &entriesBytes,
-			}, nil
+			logChan <- &logStorage.LogEntryBatch{Entries: &entriesBytesFromBlock}
 		}
 	}
 }

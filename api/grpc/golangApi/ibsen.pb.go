@@ -25,9 +25,7 @@ var _ = math.Inf
 const _ = proto.ProtoPackageIsVersion3 // please upgrade the proto package
 
 type EntryBatch struct {
-	Topic                string   `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
-	Offset               uint64   `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
-	Marker               int64    `protobuf:"varint,3,opt,name=marker,proto3" json:"marker,omitempty"`
+	Entries              []*Entry `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -58,68 +56,7 @@ func (m *EntryBatch) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_EntryBatch proto.InternalMessageInfo
 
-func (m *EntryBatch) GetTopic() string {
-	if m != nil {
-		return m.Topic
-	}
-	return ""
-}
-
-func (m *EntryBatch) GetOffset() uint64 {
-	if m != nil {
-		return m.Offset
-	}
-	return 0
-}
-
-func (m *EntryBatch) GetMarker() int64 {
-	if m != nil {
-		return m.Marker
-	}
-	return 0
-}
-
-type EntryBatchResponse struct {
-	NextBatch            *EntryBatch `protobuf:"bytes,1,opt,name=nextBatch,proto3" json:"nextBatch,omitempty"`
-	Entries              [][]byte    `protobuf:"bytes,2,rep,name=entries,proto3" json:"entries,omitempty"`
-	XXX_NoUnkeyedLiteral struct{}    `json:"-"`
-	XXX_unrecognized     []byte      `json:"-"`
-	XXX_sizecache        int32       `json:"-"`
-}
-
-func (m *EntryBatchResponse) Reset()         { *m = EntryBatchResponse{} }
-func (m *EntryBatchResponse) String() string { return proto.CompactTextString(m) }
-func (*EntryBatchResponse) ProtoMessage()    {}
-func (*EntryBatchResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{1}
-}
-
-func (m *EntryBatchResponse) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_EntryBatchResponse.Unmarshal(m, b)
-}
-func (m *EntryBatchResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_EntryBatchResponse.Marshal(b, m, deterministic)
-}
-func (m *EntryBatchResponse) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_EntryBatchResponse.Merge(m, src)
-}
-func (m *EntryBatchResponse) XXX_Size() int {
-	return xxx_messageInfo_EntryBatchResponse.Size(m)
-}
-func (m *EntryBatchResponse) XXX_DiscardUnknown() {
-	xxx_messageInfo_EntryBatchResponse.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_EntryBatchResponse proto.InternalMessageInfo
-
-func (m *EntryBatchResponse) GetNextBatch() *EntryBatch {
-	if m != nil {
-		return m.NextBatch
-	}
-	return nil
-}
-
-func (m *EntryBatchResponse) GetEntries() [][]byte {
+func (m *EntryBatch) GetEntries() []*Entry {
 	if m != nil {
 		return m.Entries
 	}
@@ -137,7 +74,7 @@ func (m *TopicStatus) Reset()         { *m = TopicStatus{} }
 func (m *TopicStatus) String() string { return proto.CompactTextString(m) }
 func (*TopicStatus) ProtoMessage()    {}
 func (*TopicStatus) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{2}
+	return fileDescriptor_c3e5c14afe4be539, []int{1}
 }
 
 func (m *TopicStatus) XXX_Unmarshal(b []byte) error {
@@ -175,7 +112,7 @@ func (m *Empty) Reset()         { *m = Empty{} }
 func (m *Empty) String() string { return proto.CompactTextString(m) }
 func (*Empty) ProtoMessage()    {}
 func (*Empty) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{3}
+	return fileDescriptor_c3e5c14afe4be539, []int{2}
 }
 
 func (m *Empty) XXX_Unmarshal(b []byte) error {
@@ -207,7 +144,7 @@ func (m *Offset) Reset()         { *m = Offset{} }
 func (m *Offset) String() string { return proto.CompactTextString(m) }
 func (*Offset) ProtoMessage()    {}
 func (*Offset) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{4}
+	return fileDescriptor_c3e5c14afe4be539, []int{3}
 }
 
 func (m *Offset) XXX_Unmarshal(b []byte) error {
@@ -246,7 +183,7 @@ func (m *Topic) Reset()         { *m = Topic{} }
 func (m *Topic) String() string { return proto.CompactTextString(m) }
 func (*Topic) ProtoMessage()    {}
 func (*Topic) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{5}
+	return fileDescriptor_c3e5c14afe4be539, []int{4}
 }
 
 func (m *Topic) XXX_Unmarshal(b []byte) error {
@@ -286,7 +223,7 @@ func (m *TopicOffset) Reset()         { *m = TopicOffset{} }
 func (m *TopicOffset) String() string { return proto.CompactTextString(m) }
 func (*TopicOffset) ProtoMessage()    {}
 func (*TopicOffset) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{6}
+	return fileDescriptor_c3e5c14afe4be539, []int{5}
 }
 
 func (m *TopicOffset) XXX_Unmarshal(b []byte) error {
@@ -333,7 +270,7 @@ func (m *TopicMessage) Reset()         { *m = TopicMessage{} }
 func (m *TopicMessage) String() string { return proto.CompactTextString(m) }
 func (*TopicMessage) ProtoMessage()    {}
 func (*TopicMessage) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{7}
+	return fileDescriptor_c3e5c14afe4be539, []int{6}
 }
 
 func (m *TopicMessage) XXX_Unmarshal(b []byte) error {
@@ -380,7 +317,7 @@ func (m *TopicBatchMessage) Reset()         { *m = TopicBatchMessage{} }
 func (m *TopicBatchMessage) String() string { return proto.CompactTextString(m) }
 func (*TopicBatchMessage) ProtoMessage()    {}
 func (*TopicBatchMessage) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{8}
+	return fileDescriptor_c3e5c14afe4be539, []int{7}
 }
 
 func (m *TopicBatchMessage) XXX_Unmarshal(b []byte) error {
@@ -426,7 +363,7 @@ func (m *Message) Reset()         { *m = Message{} }
 func (m *Message) String() string { return proto.CompactTextString(m) }
 func (*Message) ProtoMessage()    {}
 func (*Message) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{9}
+	return fileDescriptor_c3e5c14afe4be539, []int{8}
 }
 
 func (m *Message) XXX_Unmarshal(b []byte) error {
@@ -466,7 +403,7 @@ func (m *Entry) Reset()         { *m = Entry{} }
 func (m *Entry) String() string { return proto.CompactTextString(m) }
 func (*Entry) ProtoMessage()    {}
 func (*Entry) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{10}
+	return fileDescriptor_c3e5c14afe4be539, []int{9}
 }
 
 func (m *Entry) XXX_Unmarshal(b []byte) error {
@@ -513,7 +450,7 @@ func (m *Status) Reset()         { *m = Status{} }
 func (m *Status) String() string { return proto.CompactTextString(m) }
 func (*Status) ProtoMessage()    {}
 func (*Status) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{11}
+	return fileDescriptor_c3e5c14afe4be539, []int{10}
 }
 
 func (m *Status) XXX_Unmarshal(b []byte) error {
@@ -550,7 +487,6 @@ func (m *Status) GetCurrent() *Offset {
 
 func init() {
 	proto.RegisterType((*EntryBatch)(nil), "EntryBatch")
-	proto.RegisterType((*EntryBatchResponse)(nil), "EntryBatchResponse")
 	proto.RegisterType((*TopicStatus)(nil), "TopicStatus")
 	proto.RegisterType((*Empty)(nil), "Empty")
 	proto.RegisterType((*Offset)(nil), "Offset")
@@ -566,41 +502,38 @@ func init() {
 func init() { proto.RegisterFile("ibsen.proto", fileDescriptor_c3e5c14afe4be539) }
 
 var fileDescriptor_c3e5c14afe4be539 = []byte{
-	// 529 bytes of a gzipped FileDescriptorProto
+	// 488 bytes of a gzipped FileDescriptorProto
 	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x9c, 0x94, 0xdf, 0x6f, 0xd3, 0x30,
-	0x10, 0xc7, 0x97, 0xb6, 0x49, 0xe8, 0xa5, 0x54, 0x9a, 0x37, 0x50, 0x54, 0x10, 0xca, 0x8c, 0xc4,
-	0x3a, 0x90, 0xd2, 0x51, 0x9e, 0x78, 0xa4, 0xa8, 0x48, 0x3c, 0xf0, 0x43, 0xd9, 0x24, 0x34, 0xde,
-	0xbc, 0xc6, 0xcb, 0x2c, 0x1a, 0x27, 0x72, 0x3c, 0x41, 0xff, 0x1b, 0xfe, 0x54, 0x94, 0xb3, 0xd3,
-	0xa4, 0x40, 0x85, 0xc4, 0x5b, 0xbf, 0xe7, 0xef, 0x7d, 0x7a, 0xbe, 0x3b, 0x07, 0x02, 0x71, 0x5d,
-	0x71, 0x19, 0x97, 0xaa, 0xd0, 0x05, 0x4d, 0x00, 0x96, 0x52, 0xab, 0xcd, 0x82, 0xe9, 0xd5, 0x2d,
-	0x39, 0x06, 0x57, 0x17, 0xa5, 0x58, 0x85, 0x4e, 0xe4, 0x4c, 0x87, 0x89, 0x11, 0xe4, 0x21, 0x78,
-	0xc5, 0xcd, 0x4d, 0xc5, 0x75, 0xd8, 0x8b, 0x9c, 0xe9, 0x20, 0xb1, 0xaa, 0x8e, 0xe7, 0x4c, 0x7d,
-	0xe3, 0x2a, 0xec, 0x47, 0xce, 0xb4, 0x9f, 0x58, 0x45, 0xaf, 0x80, 0xb4, 0xcc, 0x84, 0x57, 0x65,
-	0x21, 0x2b, 0x4e, 0xce, 0x60, 0x28, 0xf9, 0x0f, 0x8d, 0x41, 0xe4, 0x07, 0xf3, 0x20, 0xee, 0xf8,
-	0xda, 0x53, 0x12, 0x82, 0xcf, 0xa5, 0x56, 0x82, 0x57, 0x61, 0x2f, 0xea, 0x4f, 0x47, 0x49, 0x23,
-	0xe9, 0x29, 0x04, 0x97, 0x75, 0x4d, 0x17, 0x9a, 0xe9, 0xbb, 0xaa, 0x36, 0xae, 0x14, 0x67, 0x9a,
-	0xa7, 0x48, 0xbc, 0x97, 0x34, 0x92, 0xfa, 0xe0, 0x2e, 0xf3, 0x52, 0x6f, 0x68, 0x08, 0xde, 0x27,
-	0x53, 0xee, 0x18, 0x7a, 0xc2, 0xf8, 0x06, 0x49, 0x4f, 0xa4, 0xf4, 0x11, 0xb8, 0xc8, 0x22, 0x04,
-	0x06, 0x92, 0xe5, 0xdc, 0x5e, 0x1a, 0x7f, 0xd3, 0xb7, 0xf6, 0x8f, 0x6c, 0xee, 0x63, 0x18, 0x62,
-	0x2f, 0x3e, 0xb6, 0xbe, 0x36, 0xb0, 0xaf, 0x41, 0xf4, 0x12, 0x46, 0x08, 0xf9, 0xc0, 0xab, 0x8a,
-	0x65, 0xfc, 0x1f, 0x94, 0x67, 0x30, 0xce, 0x8d, 0xf1, 0x33, 0xdb, 0xac, 0x0b, 0x96, 0x22, 0x6d,
-	0x94, 0xfc, 0x16, 0xa5, 0x57, 0x70, 0x88, 0x54, 0xec, 0xd5, 0xff, 0xa3, 0xfb, 0x7f, 0x41, 0x3f,
-	0x05, 0xbf, 0x01, 0x86, 0xe0, 0x97, 0xd6, 0xeb, 0x60, 0x19, 0x8d, 0xa4, 0xaf, 0xc1, 0xc5, 0xb1,
-	0x75, 0xae, 0xed, 0xec, 0xec, 0x45, 0x27, 0xb5, 0xb7, 0x9b, 0xba, 0x04, 0xaf, 0x9d, 0x5c, 0x33,
-	0xe2, 0x3a, 0xd9, 0xdd, 0x8e, 0x98, 0x9c, 0x80, 0xbf, 0xba, 0x53, 0x8a, 0x4b, 0xd3, 0xcd, 0x60,
-	0xee, 0xc7, 0x66, 0x08, 0x49, 0x13, 0x9f, 0xff, 0xec, 0x83, 0xfb, 0xbe, 0x5e, 0x62, 0x12, 0x81,
-	0x67, 0x26, 0x4e, 0xbc, 0x18, 0x9b, 0x32, 0x19, 0xc5, 0x9d, 0x05, 0xa1, 0x07, 0xe4, 0x09, 0x0c,
-	0x52, 0x55, 0x94, 0x7b, 0xcf, 0x4f, 0xc0, 0xfd, 0xae, 0x84, 0xe6, 0xe4, 0x7e, 0xdc, 0x9d, 0xd5,
-	0xc4, 0x8f, 0xb7, 0x96, 0x17, 0x00, 0x68, 0x31, 0xcb, 0x49, 0xe2, 0x3f, 0xba, 0xdf, 0x35, 0x9f,
-	0x41, 0x80, 0xe6, 0x0b, 0xad, 0x38, 0xcb, 0xf7, 0x53, 0xa7, 0x0e, 0x39, 0x85, 0x43, 0xc5, 0x59,
-	0xfa, 0x4e, 0x15, 0xf9, 0x82, 0x67, 0x42, 0x4a, 0x21, 0xb3, 0x6d, 0x9d, 0x9e, 0x79, 0x1b, 0xf4,
-	0xe0, 0xdc, 0x21, 0xcf, 0x61, 0xdc, 0x18, 0xed, 0x3e, 0xda, 0x5b, 0x18, 0xb5, 0xe3, 0x7d, 0x09,
-	0x47, 0xb5, 0x17, 0xcb, 0xeb, 0x24, 0x74, 0x9f, 0xda, 0xa4, 0x2b, 0xe8, 0x01, 0x89, 0x00, 0xd6,
-	0xa2, 0xd2, 0x48, 0xac, 0x88, 0x17, 0xe3, 0xc3, 0x99, 0xd8, 0x42, 0x10, 0x7a, 0x0e, 0xc7, 0xad,
-	0xe3, 0x8b, 0xd0, 0xb7, 0x96, 0xda, 0x78, 0x77, 0xca, 0xa9, 0x33, 0x16, 0x0f, 0xbe, 0x1e, 0xcd,
-	0x58, 0x29, 0x66, 0x99, 0x2a, 0x57, 0xb3, 0xac, 0x58, 0x33, 0x99, 0xbd, 0x29, 0xc5, 0xb5, 0x87,
-	0x5f, 0x9d, 0x57, 0xbf, 0x02, 0x00, 0x00, 0xff, 0xff, 0x5b, 0xa3, 0x0a, 0x63, 0x84, 0x04, 0x00,
-	0x00,
+	0x10, 0xc7, 0x97, 0xb6, 0x49, 0xd8, 0xa5, 0x54, 0x9a, 0x07, 0x53, 0x54, 0x10, 0xca, 0x8c, 0xc4,
+	0x0a, 0x48, 0xee, 0x28, 0xbc, 0xf0, 0x48, 0x51, 0x91, 0x78, 0xe0, 0x87, 0xb2, 0x49, 0x08, 0xde,
+	0xbc, 0xc4, 0xcb, 0x2c, 0x35, 0x4e, 0xe4, 0x78, 0x42, 0xfd, 0x47, 0xf9, 0x7b, 0x50, 0x2f, 0x4e,
+	0x93, 0xb2, 0x56, 0x48, 0x7b, 0xeb, 0x9d, 0x3f, 0xf7, 0x3d, 0xfb, 0xbe, 0x97, 0x42, 0x20, 0xaf,
+	0x2a, 0xa1, 0x58, 0xa9, 0x0b, 0x53, 0x50, 0x06, 0xb0, 0x50, 0x46, 0xaf, 0xe6, 0xdc, 0x24, 0x37,
+	0x24, 0x02, 0x5f, 0x28, 0xa3, 0xa5, 0xa8, 0x42, 0x27, 0xea, 0x4f, 0x82, 0x99, 0xc7, 0xf0, 0x34,
+	0x6e, 0xd2, 0xf4, 0x0c, 0x82, 0xcb, 0xa2, 0x94, 0xc9, 0x85, 0xe1, 0xe6, 0xb6, 0x22, 0x21, 0xf8,
+	0x89, 0x16, 0xdc, 0x88, 0x34, 0x74, 0x22, 0x67, 0xf2, 0x20, 0x6e, 0x42, 0xea, 0x83, 0xbb, 0xc8,
+	0x4b, 0xb3, 0xa2, 0x21, 0x78, 0xdf, 0xae, 0xaf, 0x2b, 0x61, 0xc8, 0x08, 0x7a, 0xb2, 0xe6, 0x06,
+	0x71, 0x4f, 0xa6, 0xf4, 0x09, 0xb8, 0xa8, 0x45, 0x08, 0x0c, 0x14, 0xcf, 0x05, 0x1e, 0x1d, 0xc6,
+	0xf8, 0x9b, 0x7e, 0xb4, 0x8d, 0x6c, 0xed, 0x53, 0x38, 0x34, 0xeb, 0xf0, 0x6b, 0xcb, 0xb5, 0x09,
+	0x72, 0x02, 0x5e, 0x81, 0x5c, 0xd8, 0x43, 0x75, 0x1b, 0xd1, 0x4b, 0x18, 0xa2, 0xc8, 0x17, 0x51,
+	0x55, 0x3c, 0x13, 0xff, 0x51, 0x79, 0x01, 0xa3, 0xbc, 0x06, 0xbf, 0xf3, 0xd5, 0xb2, 0xe0, 0x29,
+	0xaa, 0x0d, 0xe3, 0x7f, 0xb2, 0xf4, 0x27, 0x1c, 0xa1, 0x2a, 0xce, 0xec, 0xfe, 0xd2, 0xfd, 0x1d,
+	0xd2, 0xcf, 0xc1, 0x6f, 0x04, 0x43, 0xf0, 0x4b, 0xcb, 0x3a, 0x78, 0x8d, 0x26, 0xa4, 0xef, 0xc1,
+	0x45, 0x57, 0x3a, 0xcf, 0x76, 0xba, 0xcf, 0xee, 0x96, 0xf6, 0xb6, 0x4b, 0x17, 0xe0, 0xb5, 0xce,
+	0xb5, 0x56, 0x3b, 0x13, 0x77, 0x63, 0x31, 0x39, 0x05, 0x3f, 0xb9, 0xd5, 0x5a, 0xa8, 0x7a, 0x9a,
+	0xc1, 0xcc, 0x67, 0xb5, 0x09, 0x71, 0x93, 0x9f, 0xfd, 0xe9, 0x83, 0xfb, 0x79, 0xbd, 0x45, 0x24,
+	0x02, 0xaf, 0x76, 0x9c, 0x78, 0x0c, 0x87, 0x32, 0x1e, 0xb2, 0xce, 0x82, 0xd0, 0x03, 0xf2, 0x0c,
+	0x06, 0xa9, 0x2e, 0xca, 0xbd, 0xe7, 0xa7, 0xe0, 0xfe, 0xd6, 0xd2, 0x08, 0xf2, 0x90, 0x75, 0xbd,
+	0x1a, 0xfb, 0x6c, 0x83, 0xbc, 0x06, 0x40, 0xa4, 0x5e, 0x52, 0xc2, 0xee, 0x4c, 0xbf, 0x0b, 0xbf,
+	0x84, 0x00, 0xe1, 0x0b, 0xa3, 0x05, 0xcf, 0xf7, 0xab, 0x4e, 0x1c, 0x72, 0x06, 0x47, 0x5a, 0xf0,
+	0xf4, 0x93, 0x2e, 0xf2, 0xb9, 0xc8, 0xa4, 0x52, 0x52, 0x65, 0x9b, 0x7b, 0xda, 0xd5, 0xa7, 0x07,
+	0xe7, 0x0e, 0x79, 0x03, 0x27, 0x6b, 0x10, 0x5b, 0xee, 0xa6, 0x03, 0xd6, 0x7e, 0x46, 0x58, 0xf2,
+	0x0a, 0x46, 0x8d, 0xb6, 0x5d, 0x61, 0xfb, 0xf0, 0x3a, 0xda, 0x92, 0x7f, 0x07, 0xc7, 0x5b, 0xf2,
+	0x3b, 0x0b, 0xee, 0x74, 0x88, 0x00, 0x96, 0xb2, 0x32, 0xc8, 0x54, 0xc4, 0x63, 0xf8, 0xb9, 0x8d,
+	0xed, 0x85, 0x90, 0x38, 0x87, 0x47, 0x2d, 0xf1, 0x43, 0x9a, 0x1b, 0x2b, 0xdc, 0xb0, 0x5b, 0x0d,
+	0xd6, 0x15, 0xf3, 0xc7, 0xbf, 0x8e, 0xa7, 0xbc, 0x94, 0xd3, 0x4c, 0x97, 0xc9, 0x34, 0x2b, 0x96,
+	0x5c, 0x65, 0x1f, 0x4a, 0x79, 0xe5, 0xe1, 0x9f, 0xc5, 0xdb, 0xbf, 0x01, 0x00, 0x00, 0xff, 0xff,
+	0x66, 0xd2, 0x48, 0x66, 0x3b, 0x04, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -621,8 +554,9 @@ type IbsenClient interface {
 	WriteBatch(ctx context.Context, in *TopicBatchMessage, opts ...grpc.CallOption) (*Status, error)
 	WriteStream(ctx context.Context, opts ...grpc.CallOption) (Ibsen_WriteStreamClient, error)
 	ReadFromBeginning(ctx context.Context, in *Topic, opts ...grpc.CallOption) (Ibsen_ReadFromBeginningClient, error)
+	ReadBatchFromBeginning(ctx context.Context, in *Topic, opts ...grpc.CallOption) (Ibsen_ReadBatchFromBeginningClient, error)
 	ReadFromOffset(ctx context.Context, in *TopicOffset, opts ...grpc.CallOption) (Ibsen_ReadFromOffsetClient, error)
-	ReadBatchFromOffset(ctx context.Context, in *EntryBatch, opts ...grpc.CallOption) (*EntryBatch, error)
+	ReadBatchFromOffset(ctx context.Context, in *TopicOffset, opts ...grpc.CallOption) (Ibsen_ReadBatchFromOffsetClient, error)
 	ListTopics(ctx context.Context, in *Empty, opts ...grpc.CallOption) (Ibsen_ListTopicsClient, error)
 	ListTopicsWithOffset(ctx context.Context, in *Empty, opts ...grpc.CallOption) (Ibsen_ListTopicsWithOffsetClient, error)
 }
@@ -737,8 +671,40 @@ func (x *ibsenReadFromBeginningClient) Recv() (*Entry, error) {
 	return m, nil
 }
 
+func (c *ibsenClient) ReadBatchFromBeginning(ctx context.Context, in *Topic, opts ...grpc.CallOption) (Ibsen_ReadBatchFromBeginningClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[2], "/Ibsen/readBatchFromBeginning", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &ibsenReadBatchFromBeginningClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type Ibsen_ReadBatchFromBeginningClient interface {
+	Recv() (*EntryBatch, error)
+	grpc.ClientStream
+}
+
+type ibsenReadBatchFromBeginningClient struct {
+	grpc.ClientStream
+}
+
+func (x *ibsenReadBatchFromBeginningClient) Recv() (*EntryBatch, error) {
+	m := new(EntryBatch)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 func (c *ibsenClient) ReadFromOffset(ctx context.Context, in *TopicOffset, opts ...grpc.CallOption) (Ibsen_ReadFromOffsetClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[2], "/Ibsen/readFromOffset", opts...)
+	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[3], "/Ibsen/readFromOffset", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -769,17 +735,40 @@ func (x *ibsenReadFromOffsetClient) Recv() (*Entry, error) {
 	return m, nil
 }
 
-func (c *ibsenClient) ReadBatchFromOffset(ctx context.Context, in *EntryBatch, opts ...grpc.CallOption) (*EntryBatch, error) {
-	out := new(EntryBatch)
-	err := c.cc.Invoke(ctx, "/Ibsen/readBatchFromOffset", in, out, opts...)
+func (c *ibsenClient) ReadBatchFromOffset(ctx context.Context, in *TopicOffset, opts ...grpc.CallOption) (Ibsen_ReadBatchFromOffsetClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[4], "/Ibsen/readBatchFromOffset", opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &ibsenReadBatchFromOffsetClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type Ibsen_ReadBatchFromOffsetClient interface {
+	Recv() (*EntryBatch, error)
+	grpc.ClientStream
+}
+
+type ibsenReadBatchFromOffsetClient struct {
+	grpc.ClientStream
+}
+
+func (x *ibsenReadBatchFromOffsetClient) Recv() (*EntryBatch, error) {
+	m := new(EntryBatch)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func (c *ibsenClient) ListTopics(ctx context.Context, in *Empty, opts ...grpc.CallOption) (Ibsen_ListTopicsClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[3], "/Ibsen/listTopics", opts...)
+	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[5], "/Ibsen/listTopics", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -811,7 +800,7 @@ func (x *ibsenListTopicsClient) Recv() (*Topic, error) {
 }
 
 func (c *ibsenClient) ListTopicsWithOffset(ctx context.Context, in *Empty, opts ...grpc.CallOption) (Ibsen_ListTopicsWithOffsetClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[4], "/Ibsen/listTopicsWithOffset", opts...)
+	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[6], "/Ibsen/listTopicsWithOffset", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -850,8 +839,9 @@ type IbsenServer interface {
 	WriteBatch(context.Context, *TopicBatchMessage) (*Status, error)
 	WriteStream(Ibsen_WriteStreamServer) error
 	ReadFromBeginning(*Topic, Ibsen_ReadFromBeginningServer) error
+	ReadBatchFromBeginning(*Topic, Ibsen_ReadBatchFromBeginningServer) error
 	ReadFromOffset(*TopicOffset, Ibsen_ReadFromOffsetServer) error
-	ReadBatchFromOffset(context.Context, *EntryBatch) (*EntryBatch, error)
+	ReadBatchFromOffset(*TopicOffset, Ibsen_ReadBatchFromOffsetServer) error
 	ListTopics(*Empty, Ibsen_ListTopicsServer) error
 	ListTopicsWithOffset(*Empty, Ibsen_ListTopicsWithOffsetServer) error
 }
@@ -878,11 +868,14 @@ func (*UnimplementedIbsenServer) WriteStream(srv Ibsen_WriteStreamServer) error 
 func (*UnimplementedIbsenServer) ReadFromBeginning(req *Topic, srv Ibsen_ReadFromBeginningServer) error {
 	return status.Errorf(codes.Unimplemented, "method ReadFromBeginning not implemented")
 }
+func (*UnimplementedIbsenServer) ReadBatchFromBeginning(req *Topic, srv Ibsen_ReadBatchFromBeginningServer) error {
+	return status.Errorf(codes.Unimplemented, "method ReadBatchFromBeginning not implemented")
+}
 func (*UnimplementedIbsenServer) ReadFromOffset(req *TopicOffset, srv Ibsen_ReadFromOffsetServer) error {
 	return status.Errorf(codes.Unimplemented, "method ReadFromOffset not implemented")
 }
-func (*UnimplementedIbsenServer) ReadBatchFromOffset(ctx context.Context, req *EntryBatch) (*EntryBatch, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ReadBatchFromOffset not implemented")
+func (*UnimplementedIbsenServer) ReadBatchFromOffset(req *TopicOffset, srv Ibsen_ReadBatchFromOffsetServer) error {
+	return status.Errorf(codes.Unimplemented, "method ReadBatchFromOffset not implemented")
 }
 func (*UnimplementedIbsenServer) ListTopics(req *Empty, srv Ibsen_ListTopicsServer) error {
 	return status.Errorf(codes.Unimplemented, "method ListTopics not implemented")
@@ -1014,6 +1007,27 @@ func (x *ibsenReadFromBeginningServer) Send(m *Entry) error {
 	return x.ServerStream.SendMsg(m)
 }
 
+func _Ibsen_ReadBatchFromBeginning_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(Topic)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(IbsenServer).ReadBatchFromBeginning(m, &ibsenReadBatchFromBeginningServer{stream})
+}
+
+type Ibsen_ReadBatchFromBeginningServer interface {
+	Send(*EntryBatch) error
+	grpc.ServerStream
+}
+
+type ibsenReadBatchFromBeginningServer struct {
+	grpc.ServerStream
+}
+
+func (x *ibsenReadBatchFromBeginningServer) Send(m *EntryBatch) error {
+	return x.ServerStream.SendMsg(m)
+}
+
 func _Ibsen_ReadFromOffset_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(TopicOffset)
 	if err := stream.RecvMsg(m); err != nil {
@@ -1035,22 +1049,25 @@ func (x *ibsenReadFromOffsetServer) Send(m *Entry) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func _Ibsen_ReadBatchFromOffset_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(EntryBatch)
-	if err := dec(in); err != nil {
-		return nil, err
+func _Ibsen_ReadBatchFromOffset_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(TopicOffset)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(IbsenServer).ReadBatchFromOffset(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/Ibsen/ReadBatchFromOffset",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IbsenServer).ReadBatchFromOffset(ctx, req.(*EntryBatch))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(IbsenServer).ReadBatchFromOffset(m, &ibsenReadBatchFromOffsetServer{stream})
+}
+
+type Ibsen_ReadBatchFromOffsetServer interface {
+	Send(*EntryBatch) error
+	grpc.ServerStream
+}
+
+type ibsenReadBatchFromOffsetServer struct {
+	grpc.ServerStream
+}
+
+func (x *ibsenReadBatchFromOffsetServer) Send(m *EntryBatch) error {
+	return x.ServerStream.SendMsg(m)
 }
 
 func _Ibsen_ListTopics_Handler(srv interface{}, stream grpc.ServerStream) error {
@@ -1115,10 +1132,6 @@ var _Ibsen_serviceDesc = grpc.ServiceDesc{
 			MethodName: "writeBatch",
 			Handler:    _Ibsen_WriteBatch_Handler,
 		},
-		{
-			MethodName: "readBatchFromOffset",
-			Handler:    _Ibsen_ReadBatchFromOffset_Handler,
-		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -1132,8 +1145,18 @@ var _Ibsen_serviceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 		{
+			StreamName:    "readBatchFromBeginning",
+			Handler:       _Ibsen_ReadBatchFromBeginning_Handler,
+			ServerStreams: true,
+		},
+		{
 			StreamName:    "readFromOffset",
 			Handler:       _Ibsen_ReadFromOffset_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "readBatchFromOffset",
+			Handler:       _Ibsen_ReadBatchFromOffset_Handler,
 			ServerStreams: true,
 		},
 		{
