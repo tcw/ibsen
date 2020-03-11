@@ -154,7 +154,7 @@ func (e LogStorage) ReadBatchFromBeginning(logChan chan *logStorage.LogEntryBatc
 	return nil
 }
 
-func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64) error {
+func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64, batchSize int) error {
 	panic("implement me")
 }
 
