@@ -159,6 +159,21 @@ func sendMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, outStrea
 	}
 }
 
+func sendBatchMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadBatchFromBeginningServer) {
+	for {
+		entry := <-logChan
+		err := outStream.Send(&Entry{
+			Offset:  entry.Offset,
+			Payload: *entry.Entry,
+		})
+		wg.Done()
+		if err != nil {
+			log.Println(err)
+			return
+		}
+	}
+}
+
 func (s server) ReadFromOffset(*TopicOffset, Ibsen_ReadFromOffsetServer) error {
 	panic("implement me")
 }
