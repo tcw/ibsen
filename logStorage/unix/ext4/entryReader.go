@@ -3,7 +3,6 @@ package ext4
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"io"
 	"log"
@@ -126,7 +125,6 @@ func (lw *LogFile) ReadLogToEnd(partialBatch []logStorage.LogEntry, logChan chan
 		if entryBatch != nil && len(entryBatch)%batchSize == 0 {
 			wg.Add(1)
 			logChan <- logStorage.LogEntryBatch{Entries: entryBatch}
-			fmt.Printf("ReadLogToEnd: %d -> %d\n", entryBatch[0].Offset, entryBatch[len(entryBatch)-1].Offset)
 			hasSent = true
 			entryBatch = nil
 		}

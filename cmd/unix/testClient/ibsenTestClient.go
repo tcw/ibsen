@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc"
 	"io"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"time"
@@ -19,6 +20,7 @@ var (
 	verbose         = flag.Bool("v", false, "Verbose")
 	numberOfEntries = flag.Int("w", 0, "Number of entries to write to topic")
 	batches         = flag.Int("b", 0, "Number of entries to write to topic")
+	readBatchSize   = flag.Int("bs", 1000, "ReadBatch size")
 	useTestTopic    = flag.String("t", "test", "Test topic name ")
 	entryTestSize   = flag.Int("es", 100, "Each message will contain n bytes")
 	readTopic       = flag.String("r", "", "Read Topic from beginning")
@@ -31,7 +33,9 @@ func main() {
 	// evince callgraph.pdf
 
 	flag.Parse()
-	conn, err := grpc.Dial("localhost:50001", grpc.WithInsecure(), grpc.WithBlock())
+	conn, err := grpc.Dial("localhost:50001", grpc.WithInsecure(), grpc.WithBlock(),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)))
+
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
@@ -150,7 +154,7 @@ func main() {
 	if *readBatchTopic != "" {
 		entryStream, err := c.ReadBatchFromBeginning(ctx, &grpcApi.TopicBatch{
 			Name:      *readBatchTopic,
-			BatchSize: 1000,
+			BatchSize: uint32(*readBatchSize),
 		})
 		if err != nil {
 			log.Println(err)
@@ -174,7 +178,7 @@ func main() {
 			if in == nil {
 				continue
 			}
-			//fmt.Println(len(in.Entries))
+			fmt.Println(len(in.Entries))
 			//entries := in.Entries
 			/*for _, v := range entries {
 				payLoadBase64 := base64.StdEncoding.EncodeToString(v.Payload)

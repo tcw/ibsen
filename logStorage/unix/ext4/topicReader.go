@@ -2,7 +2,6 @@ package ext4
 
 import (
 	"errors"
-	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"sync"
 )
@@ -132,8 +131,6 @@ func (t *TopicRead) ReadBatchFromBeginning(c chan logStorage.LogEntryBatch, wg *
 		if reader == nil && entriesBytes != nil {
 			wg.Add(1)
 			c <- logStorage.LogEntryBatch{Entries: entriesBytes}
-			fmt.Printf("ReadBatchFromBeginning: %d -> %d\n", entriesBytes[0].Offset, entriesBytes[len(entriesBytes)-1].Offset)
-
 			return nil
 		}
 		if reader == nil {
