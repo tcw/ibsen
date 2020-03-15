@@ -6,51 +6,59 @@ import (
 	"testing"
 )
 
-func TestLogStorage_Create(t *testing.T) {
-	type fields struct {
-		rootPath     string
-		maxBlockSize int64
-	}
-	type args struct {
-		topic string
-	}
+const tenMB = 1024 * 1024 * 10
+const testTopic = "testTopic"
+
+func createTestDir(t *testing.T) string {
 	testDir, err := ioutil.TempDir("", "ibsenTest")
 	t.Log("created test dir: ", testDir)
 	if err != nil {
 		t.Error(err)
 	}
-	defer os.RemoveAll(testDir)
+	return testDir
+}
 
-	tests := []struct {
-		name    string
-		fields  fields
-		args    args
-		want    bool
-		wantErr bool
-	}{
-		{"CreateTopic",
-			fields{
-				rootPath:     testDir,
-				maxBlockSize: 1024 * 1024 * 10,
-			},
-			args{topic: "unittest"},
-			true,
-			false},
+func TestLogStorage_Create(t *testing.T) {
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+	storage, err := NewLogStorage(dir, tenMB)
+	if err != nil {
+		t.Error(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			storage, err2 := NewLogStorage(tt.fields.rootPath, tt.fields.maxBlockSize)
-			if err2 != nil {
-				t.Errorf("Failed on init")
-			}
-			got, err := storage.Create(tt.args.topic)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Create() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("Create() got = %v, want %v", got, tt.want)
-			}
-		})
+	create, err := storage.Create(testTopic)
+	if err != nil {
+		t.Error(err)
 	}
+	if !create {
+		t.Failed()
+	}
+}
+
+func TestLogStorage_Drop(t *testing.T) {
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+	storage, err := NewLogStorage(dir, tenMB)
+	if err != nil {
+		t.Error(err)
+	}
+	create, err := storage.Create(testTopic)
+	if err != nil {
+		t.Error(err)
+	}
+	if !create {
+		t.Fail()
+	}
+	drop, err := storage.Drop(testTopic)
+	if err != nil {
+		t.Error(err)
+	}
+	if !drop {
+		t.Fail()
+	}
+	directory := doesTopicExist(dir, "."+testTopic)
+	if !directory {
+		t.Error("Topic has not been moved to . file")
+		t.Fail()
+	}
+
 }

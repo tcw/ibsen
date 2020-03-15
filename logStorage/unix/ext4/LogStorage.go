@@ -85,7 +85,20 @@ func (e LogStorage) Create(topic string) (bool, error) {
 }
 
 func (e LogStorage) Drop(topic string) (bool, error) {
-	panic("implement me")
+	e.mu.Lock()
+	_, exists := e.topicWriters[topic]
+	if !exists {
+		return false, errors.New(fmt.Sprintf("topic [%s] does not exits", topic))
+	}
+	delete(e.topicWriters, topic)
+	oldLocation := e.rootPath + separator + topic
+	newLocation := e.rootPath + separator + "." + topic
+	err := os.Rename(oldLocation, newLocation)
+	if err != nil {
+		log.Fatal(err)
+	}
+	e.mu.Unlock()
+	return true, nil
 }
 
 func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int, error) {
