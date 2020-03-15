@@ -1,13 +1,16 @@
 package ext4
 
 import (
+	"github.com/tcw/ibsen/logStorage"
 	"io/ioutil"
 	"os"
+	"sync"
 	"testing"
 )
 
-const tenMB = 1024 * 1024 * 10
-const testTopic = "testTopic"
+const oneMB = 1024 * 1024 * 1
+const testTopic1 = "testTopic1"
+const testTopic2 = "testTopic2"
 
 func createTestDir(t *testing.T) string {
 	testDir, err := ioutil.TempDir("", "ibsenTest")
@@ -21,11 +24,11 @@ func createTestDir(t *testing.T) string {
 func TestLogStorage_Create(t *testing.T) {
 	dir := createTestDir(t)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, tenMB)
+	storage, err := NewLogStorage(dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
-	create, err := storage.Create(testTopic)
+	create, err := storage.Create(testTopic1)
 	if err != nil {
 		t.Error(err)
 	}
@@ -37,28 +40,145 @@ func TestLogStorage_Create(t *testing.T) {
 func TestLogStorage_Drop(t *testing.T) {
 	dir := createTestDir(t)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, tenMB)
+	storage, err := NewLogStorage(dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
-	create, err := storage.Create(testTopic)
+	create, err := storage.Create(testTopic1)
 	if err != nil {
 		t.Error(err)
 	}
 	if !create {
 		t.Fail()
 	}
-	drop, err := storage.Drop(testTopic)
+	drop, err := storage.Drop(testTopic1)
 	if err != nil {
 		t.Error(err)
 	}
 	if !drop {
 		t.Fail()
 	}
-	directory := doesTopicExist(dir, "."+testTopic)
+	directory := doesTopicExist(dir, "."+testTopic1)
 	if !directory {
 		t.Error("Topic has not been moved to . file")
 		t.Fail()
 	}
+}
 
+func TestLogStorage_ListTopics(t *testing.T) {
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+	storage, err := NewLogStorage(dir, oneMB)
+	if err != nil {
+		t.Error(err)
+	}
+	create, err := storage.Create(testTopic1)
+	if err != nil {
+		t.Error(err)
+	}
+	if !create {
+		t.Failed()
+	}
+	create2, err := storage.Create(testTopic2)
+	if err != nil {
+		t.Error(err)
+	}
+	if !create2 {
+		t.Failed()
+	}
+	topics, err := storage.ListTopics()
+	if err != nil {
+		t.Error(err)
+	}
+	t.Log(topics)
+	if len(topics) != 2 {
+		t.Fail()
+	}
+}
+
+func TestLogStorage_Write(t *testing.T) {
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+	storage, err := NewLogStorage(dir, oneMB)
+	if err != nil {
+		t.Error(err)
+	}
+	create, err := storage.Create(testTopic1)
+	if err != nil {
+		t.Error(err)
+	}
+	if !create {
+		t.Failed()
+	}
+	n, err := storage.Write(&logStorage.TopicMessage{
+		Topic:   testTopic1,
+		Message: []byte("hello"),
+	})
+	if err != nil {
+		t.Error(err)
+	}
+	if n == 0 {
+		t.Fail()
+	}
+	logChan := make(chan *logStorage.LogEntry)
+	var wg sync.WaitGroup
+
+	go func() {
+		err = storage.ReadFromBeginning(logChan, &wg, testTopic1)
+		if err != nil {
+			t.Error(err)
+		}
+	}()
+
+	entry := <-logChan
+	if entry.Offset != 1 {
+		t.Fail()
+	}
+}
+
+func TestLogStorage_WriteBatch(t *testing.T) {
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+	storage, err := NewLogStorage(dir, oneMB)
+	if err != nil {
+		t.Error(err)
+	}
+	create, err := storage.Create(testTopic1)
+	if err != nil {
+		t.Error(err)
+	}
+	if !create {
+		t.Failed()
+	}
+	n, err := storage.WriteBatch(&logStorage.TopicBatchMessage{
+		Topic: testTopic1,
+		Message: &[][]byte{
+			[]byte("hello1"),
+			[]byte("hello2"),
+		},
+	})
+	if err != nil {
+		t.Error(err)
+	}
+	if n == 0 {
+		t.Fail()
+	}
+	logChan := make(chan *logStorage.LogEntry)
+	var wg sync.WaitGroup
+
+	go func() {
+		err = storage.ReadFromBeginning(logChan, &wg, testTopic1)
+		if err != nil {
+			t.Error(err)
+		}
+	}()
+
+	entry := <-logChan
+	if entry.Offset != 1 {
+		t.Fail()
+	}
+	entry2 := <-logChan
+	if entry2.Offset != 2 {
+		t.Fail()
+	}
 }

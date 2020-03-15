@@ -101,19 +101,12 @@ func (e LogStorage) Drop(topic string) (bool, error) {
 	return true, nil
 }
 
-func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int, error) {
-
-	topicWriter := e.topicWriters[topicMessage.Topic]
-	if topicWriter == nil {
-		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s], topic not registered", topicMessage.Topic))
-	}
-	topicWriter.mu.Lock()
-	n, err := topicWriter.WriteBatchToTopic(topicMessage.Message)
+func (e LogStorage) ListTopics() ([]string, error) {
+	directories, err := listUnhiddenDirectories(e.rootPath)
 	if err != nil {
-		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s]", topicMessage.Topic))
+		return nil, err
 	}
-	topicWriter.mu.Unlock()
-	return n, nil
+	return directories, nil
 }
 
 func (e LogStorage) Write(topicMessage *logStorage.TopicMessage) (int, error) {
@@ -124,6 +117,21 @@ func (e LogStorage) Write(topicMessage *logStorage.TopicMessage) (int, error) {
 	}
 	topicWriter.mu.Lock()
 	n, err := topicWriter.WriteToTopic(topicMessage.Message)
+	if err != nil {
+		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s]", topicMessage.Topic))
+	}
+	topicWriter.mu.Unlock()
+	return n, nil
+}
+
+func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int, error) {
+
+	topicWriter := e.topicWriters[topicMessage.Topic]
+	if topicWriter == nil {
+		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s], topic not registered", topicMessage.Topic))
+	}
+	topicWriter.mu.Lock()
+	n, err := topicWriter.WriteBatchToTopic(topicMessage.Message)
 	if err != nil {
 		return 0, errors.New(fmt.Sprintf("Error writing to topic [%s]", topicMessage.Topic))
 	}
@@ -168,10 +176,6 @@ func (e LogStorage) ReadBatchFromBeginning(logChan chan logStorage.LogEntryBatch
 }
 
 func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64, batchSize int) error {
-	panic("implement me")
-}
-
-func (e LogStorage) ListTopics() ([]string, error) {
 	panic("implement me")
 }
 
