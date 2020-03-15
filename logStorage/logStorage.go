@@ -4,7 +4,6 @@ import (
 	"sync"
 )
 
-// Todo: add batch block write
 type LogStorage interface {
 	Create(topic string) (bool, error)
 	Drop(topic string) (bool, error)
