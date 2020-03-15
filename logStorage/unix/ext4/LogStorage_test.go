@@ -96,7 +96,7 @@ func TestLogStorage_ListTopics(t *testing.T) {
 	}
 }
 
-func TestLogStorage_Write(t *testing.T) {
+func TestLogStorage_Write_Read(t *testing.T) {
 	dir := createTestDir(t)
 	defer os.RemoveAll(dir)
 	storage, err := NewLogStorage(dir, oneMB)
@@ -136,7 +136,7 @@ func TestLogStorage_Write(t *testing.T) {
 	}
 }
 
-func TestLogStorage_WriteBatch(t *testing.T) {
+func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 	dir := createTestDir(t)
 	defer os.RemoveAll(dir)
 	storage, err := NewLogStorage(dir, oneMB)
@@ -163,22 +163,66 @@ func TestLogStorage_WriteBatch(t *testing.T) {
 	if n == 0 {
 		t.Fail()
 	}
-	logChan := make(chan *logStorage.LogEntry)
+	logChan := make(chan logStorage.LogEntryBatch)
 	var wg sync.WaitGroup
 
 	go func() {
-		err = storage.ReadFromBeginning(logChan, &wg, testTopic1)
+		err = storage.ReadBatchFromBeginning(logChan, &wg, testTopic1, 2)
 		if err != nil {
 			t.Error(err)
 		}
 	}()
 
 	entry := <-logChan
-	if entry.Offset != 1 {
+	if entry.Entries[0].Offset != 1 {
 		t.Fail()
 	}
-	entry2 := <-logChan
-	if entry2.Offset != 2 {
+	if entry.Entries[1].Offset != 2 {
 		t.Fail()
 	}
+}
+
+func TestLogStorage_ReadFromNotIncluding(t *testing.T) {
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+	storage, err := NewLogStorage(dir, oneMB)
+	if err != nil {
+		t.Error(err)
+	}
+	create, err := storage.Create(testTopic1)
+	if err != nil {
+		t.Error(err)
+	}
+	if !create {
+		t.Failed()
+	}
+	n, err := storage.Write(&logStorage.TopicMessage{
+		Topic:   testTopic1,
+		Message: []byte("hello1"),
+	})
+	n, err = storage.Write(&logStorage.TopicMessage{
+		Topic:   testTopic1,
+		Message: []byte("hello2"),
+	})
+	if err != nil {
+		t.Error(err)
+	}
+	if n == 0 {
+		t.Fail()
+	}
+	logChan := make(chan *logStorage.LogEntry)
+	var wg sync.WaitGroup
+
+	go func() {
+		err = storage.ReadFromNotIncluding(logChan, &wg, testTopic1, 1)
+		if err != nil {
+			t.Error(err)
+		}
+	}()
+
+	entry := <-logChan
+	if entry.Offset != 2 {
+		t.Fail()
+	}
+	t.Log(entry)
 }

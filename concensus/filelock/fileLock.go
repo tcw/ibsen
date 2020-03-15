@@ -2,7 +2,7 @@ package filelock
 
 import (
 	"errors"
-	"github.com/tcw/ibsen/filelock"
+
 	"os"
 )
 
@@ -33,7 +33,7 @@ type File interface {
 // Closing the file may or may not release the lock promptly. Callers should
 // ensure that Unlock is always called when Lock succeeds.
 func Lock(f File) error {
-	return filelock.lock(f, filelock.writeLock)
+	return lock(f, writeLock)
 }
 
 // RLock places an advisory read lock on the file, blocking until it can be locked.
@@ -46,24 +46,24 @@ func Lock(f File) error {
 // Closing the file may or may not release the lock promptly. Callers should
 // ensure that Unlock is always called if RLock succeeds.
 func RLock(f File) error {
-	return filelock.lock(f, filelock.readLock)
+	return lock(f, readLock)
 }
 
 // Unlock removes an advisory lock placed on f by this process.
 //
 // The caller must not attempt to unlock a file that is not locked.
 func Unlock(f File) error {
-	return filelock.unlock(f)
+	return unlock(f)
 }
 
 // String returns the name of the function corresponding to lt
 // (Lock, RLock, or Unlock).
-func (lt filelock.lockType) String() string {
+func (lt lockType) String() string {
 	switch lt {
-	case filelock.readLock:
+	case readLock:
 		return "RLock"
 
-	case filelock.writeLock:
+	case writeLock:
 		return "Lock"
 
 	default:
@@ -75,7 +75,7 @@ func (lt filelock.lockType) String() string {
 // report that a function is not supported (possibly for a specific input).
 // It is satisfied by ErrNotSupported as well as some syscall errors.
 func IsNotSupported(err error) bool {
-	return filelock.isNotSupported(underlyingError(err))
+	return isNotSupported(underlyingError(err))
 }
 
 var ErrNotSupported = errors.New("operation not supported")
