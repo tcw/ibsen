@@ -176,7 +176,15 @@ func (e LogStorage) ReadBatchFromBeginning(logChan chan logStorage.LogEntryBatch
 }
 
 func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64, batchSize int) error {
-	panic("implement me")
+	reader, err := NewTopicRead(e.rootPath, topic)
+	if err != nil {
+		return err
+	}
+	err = reader.ReadBatchFromOffsetNotIncluding(logChan, wg, offset, batchSize)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (e LogStorage) Close() {

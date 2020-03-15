@@ -226,3 +226,63 @@ func TestLogStorage_ReadFromNotIncluding(t *testing.T) {
 	}
 	t.Log(entry)
 }
+
+func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+	storage, err := NewLogStorage(dir, oneMB)
+	if err != nil {
+		t.Error(err)
+	}
+	create, err := storage.Create(testTopic1)
+	if err != nil {
+		t.Error(err)
+	}
+	if !create {
+		t.Failed()
+	}
+	n, err := storage.WriteBatch(&logStorage.TopicBatchMessage{
+		Topic: testTopic1,
+		Message: &[][]byte{
+			[]byte("hello1"),
+			[]byte("hello2"),
+		},
+	})
+	if err != nil {
+		t.Error(err)
+	}
+	if n == 0 {
+		t.Fail()
+	}
+	n, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
+		Topic: testTopic1,
+		Message: &[][]byte{
+			[]byte("hello3"),
+			[]byte("hello4"),
+		},
+	})
+	if err != nil {
+		t.Error(err)
+	}
+	if n == 0 {
+		t.Fail()
+	}
+	logChan := make(chan logStorage.LogEntryBatch)
+	var wg sync.WaitGroup
+
+	go func() {
+		err = storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, testTopic1, 2, 2)
+		if err != nil {
+			t.Error(err)
+		}
+	}()
+
+	entry := <-logChan
+	t.Log(entry)
+	if entry.Entries[0].Offset != 3 {
+		t.Fail()
+	}
+	if entry.Entries[1].Offset != 4 {
+		t.Fail()
+	}
+}
