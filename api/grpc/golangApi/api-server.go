@@ -90,12 +90,27 @@ func (s server) Create(ctx context.Context, topic *Topic) (*TopicStatus, error) 
 	}, err
 }
 
-func (s server) Drop(context.Context, *Topic) (*TopicStatus, error) {
-	panic("implement me")
+func (s server) Drop(ctx context.Context, topic *Topic) (*TopicStatus, error) {
+	create, err := s.logStorage.Drop(topic.Name)
+	return &TopicStatus{
+		Created: create,
+	}, err
 }
 
-func (s server) Write(context.Context, *TopicMessage) (*Status, error) {
-	panic("implement me")
+func (s server) Write(ctx context.Context, topicMessage *TopicMessage) (*Status, error) {
+	_, err := s.logStorage.Write(&logStorage.TopicMessage{
+		Topic:   topicMessage.TopicName,
+		Message: topicMessage.MessagePayload,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Status{ //Todo return real offset
+		Entries: 1,
+		Current: &Offset{
+			Id: 0,
+		},
+	}, nil
 }
 
 func (s server) WriteBatch(ctx context.Context, tbm *TopicBatchMessage) (*Status, error) {
@@ -159,7 +174,7 @@ func sendMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, outStrea
 	}
 }
 
-func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, outStream *Ibsen_ReadBatchFromBeginningServer) {
+func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadBatchFromBeginningServer) {
 	var grpcEntry []*Entry
 	for {
 		entry := <-logChan
@@ -175,7 +190,7 @@ func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup,
 				Payload: v.Entry,
 			})
 		}
-		err := (*outStream).Send(&EntryBatch{
+		err := outStream.Send(&EntryBatch{
 			Entries: grpcEntry,
 		})
 		if err != nil {
@@ -186,14 +201,22 @@ func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup,
 	}
 }
 
-func (s server) ReadFromOffset(*TopicOffset, Ibsen_ReadFromOffsetServer) error {
-	panic("implement me")
+func (s server) ReadFromOffset(topicOffset *TopicOffset, outStream Ibsen_ReadFromOffsetServer) error {
+	logChan := make(chan *logStorage.LogEntry)
+	var wg sync.WaitGroup
+	go sendMessage(logChan, &wg, outStream)
+	err := s.logStorage.ReadFromNotIncluding(logChan, &wg, topicOffset.TopicName, topicOffset.Offset)
+	if err != nil {
+		return err
+	}
+	wg.Wait()
+	return nil
 }
 
 func (s server) ReadBatchFromBeginning(topic *TopicBatch, outStream Ibsen_ReadBatchFromBeginningServer) error {
 	logChan := make(chan logStorage.LogEntryBatch)
 	var wg sync.WaitGroup
-	go sendBatchMessage(logChan, &wg, &outStream)
+	go sendBatchMessage(logChan, &wg, outStream)
 	err := s.logStorage.ReadBatchFromBeginning(logChan, &wg, topic.Name, int(topic.BatchSize))
 	if err != nil {
 		return err
@@ -202,15 +225,29 @@ func (s server) ReadBatchFromBeginning(topic *TopicBatch, outStream Ibsen_ReadBa
 	return nil
 }
 
-func (s server) ReadBatchFromOffset(*TopicBatchOffset, Ibsen_ReadBatchFromOffsetServer) error {
-	panic("implement me")
+func (s server) ReadBatchFromOffset(topicBatchOffest *TopicBatchOffset, outStream Ibsen_ReadBatchFromOffsetServer) error {
+	logChan := make(chan logStorage.LogEntryBatch)
+	var wg sync.WaitGroup
+	go sendBatchMessage(logChan, &wg, outStream)
+	err := s.logStorage.ReadBatchFromOffsetNotIncluding(logChan, &wg, topicBatchOffest.TopicName, topicBatchOffest.Offset, int(topicBatchOffest.BatchSize))
+	if err != nil {
+		return err
+	}
+	wg.Wait()
+	return nil
 }
 
-func (s server) ListTopics(*Empty, Ibsen_ListTopicsServer) error {
-	panic("implement me")
+func (s server) ListTopics(context.Context, *Empty) (*Topics, error) {
+	topics, err := s.logStorage.ListTopics()
+	if err != nil {
+		return nil, err
+	}
+	return &Topics{
+		Name: topics,
+	}, nil
 }
 
-func (s server) ListTopicsWithOffset(*Empty, Ibsen_ListTopicsWithOffsetServer) error {
+func (s server) ListTopicsWithOffset(context.Context, *Empty) (*TopicOffsets, error) {
 	panic("implement me")
 }
 
