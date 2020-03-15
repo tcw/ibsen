@@ -3,6 +3,7 @@ package ext4
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"io"
 	"log"
@@ -96,76 +97,79 @@ func (lw *LogFile) FastForwardToOffset(offset int64) error {
 	}
 }
 
-func (lw *LogFile) ReadLogBlockFromOffsetNotIncluding(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, offset uint64, batchSize int) (*logStorage.LogEntryBatch, bool, error) {
+func (lw *LogFile) ReadLogBlockFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, offset uint64, batchSize int) (logStorage.LogEntryBatch, bool, error) {
 
 	err := lw.FastForwardToOffset(int64(offset))
 	if err != nil {
-		return nil, false, err
+		return logStorage.LogEntryBatch{}, false, err
 	}
 
 	partialBatch, hasSent, err := lw.ReadLogToEnd(nil, logChan, wg, batchSize)
 	if err != nil {
-		return nil, false, err
+		return logStorage.LogEntryBatch{}, false, err
 	}
 	return partialBatch, hasSent, nil
 }
 
-func (lw *LogFile) ReadLogToEnd(partialBatch *[]logStorage.LogEntry, logChan chan *logStorage.LogEntryBatch,
-	wg *sync.WaitGroup, batchSize int) (*logStorage.LogEntryBatch, bool, error) {
+func (lw *LogFile) ReadLogToEnd(partialBatch []logStorage.LogEntry, logChan chan logStorage.LogEntryBatch,
+	wg *sync.WaitGroup, batchSize int) (logStorage.LogEntryBatch, bool, error) {
 
 	hasSent := false
 	reader := bufio.NewReader(lw.LogFile)
 	bytes := make([]byte, 8)
 	var entryBatch []logStorage.LogEntry
-	entryBatch = append(entryBatch, *partialBatch...)
+	if partialBatch != nil {
+		entryBatch = append(entryBatch, partialBatch...)
+	}
 	for {
 
-		if len(entryBatch)%batchSize == 0 {
-			logChan <- &logStorage.LogEntryBatch{Entries: &entryBatch}
-			hasSent = true
+		if entryBatch != nil && len(entryBatch)%batchSize == 0 {
 			wg.Add(1)
+			logChan <- logStorage.LogEntryBatch{Entries: entryBatch}
+			fmt.Printf("ReadLogToEnd: %d -> %d\n", entryBatch[0].Offset, entryBatch[len(entryBatch)-1].Offset)
+			hasSent = true
 			entryBatch = nil
 		}
 
 		n, err := io.ReadFull(reader, bytes)
 
 		if err == io.EOF {
-			return &logStorage.LogEntryBatch{Entries: &entryBatch}, hasSent, nil
+			return logStorage.LogEntryBatch{Entries: entryBatch}, hasSent, nil
 		}
 		if err != nil {
 			log.Println(err)
-			return nil, false, err
+			return logStorage.LogEntryBatch{}, false, err
 		}
 		if n != 8 {
 			log.Println("offset incorrect")
-			return nil, false, errors.New("offset incorrect")
+			return logStorage.LogEntryBatch{}, false, errors.New("offset incorrect")
 		}
 		offset := int64(fromLittleEndian(bytes))
 
 		n, err2 := io.ReadFull(reader, bytes)
 		if n != 8 {
 			log.Println("entry size incorrect")
-			return nil, false, errors.New("entry size incorrect")
+			return logStorage.LogEntryBatch{}, false, errors.New("entry size incorrect")
 		}
 		size := fromLittleEndian(bytes)
 		if err2 != nil {
 			log.Println(err2)
-			return nil, false, err2
+			return logStorage.LogEntryBatch{}, false, err2
 		}
 		entry := make([]byte, size)
 		n, err3 := io.ReadFull(reader, entry)
 		if err3 != nil {
 			log.Println(err3)
-			return nil, false, err3
+			return logStorage.LogEntryBatch{}, false, err3
 		}
 		if n != int(size) {
 			log.Println("entry incorrect")
-			return nil, false, errors.New("entry incorrect")
+			return logStorage.LogEntryBatch{}, false, errors.New("entry incorrect")
 		}
 		entryBatch = append(entryBatch, logStorage.LogEntry{
 			Offset:   uint64(offset),
 			ByteSize: int(size),
-			Entry:    &entry,
+			Entry:    entry,
 		})
 	}
 }
@@ -228,7 +232,7 @@ func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, ex
 				c <- &logStorage.LogEntry{
 					Offset:   offset,
 					ByteSize: int(size),
-					Entry:    &entry,
+					Entry:    entry,
 				}
 			} else {
 				skippedFirst = true
@@ -278,7 +282,7 @@ func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry, wg *sync.Wa
 		c <- &logStorage.LogEntry{
 			Offset:   offset,
 			ByteSize: int(size),
-			Entry:    &entry,
+			Entry:    entry,
 		}
 		wg.Add(1)
 	}

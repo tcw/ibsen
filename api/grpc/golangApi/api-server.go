@@ -123,7 +123,7 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 		}
 		sum, err = s.logStorage.Write(&logStorage.TopicMessage{
 			Topic:   in.TopicName,
-			Message: &in.MessagePayload,
+			Message: in.MessagePayload,
 		})
 		if err != nil {
 			return err
@@ -149,7 +149,7 @@ func sendMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, outStrea
 		entry := <-logChan
 		err := outStream.Send(&Entry{
 			Offset:  entry.Offset,
-			Payload: *entry.Entry,
+			Payload: entry.Entry,
 		})
 		wg.Done()
 		if err != nil {
@@ -159,19 +159,50 @@ func sendMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, outStrea
 	}
 }
 
-func sendBatchMessage(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadBatchFromBeginningServer) {
-
+func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, outStream *Ibsen_ReadBatchFromBeginningServer) {
+	var grpcEntry []*Entry
+	for {
+		entry := <-logChan
+		fmt.Printf("sendBatchMessage: %d\n", entry.Size())
+		entries := entry.Entries
+		fmt.Printf("sendBatchMessage: %d -> %d\n", entries[0].Offset, entries[len(entries)-1].Offset)
+		if entries == nil {
+			continue
+		}
+		for _, v := range entries {
+			grpcEntry = append(grpcEntry, &Entry{
+				Offset:  v.Offset,
+				Payload: v.Entry,
+			})
+		}
+		err := (*outStream).Send(&EntryBatch{
+			Entries: grpcEntry,
+		})
+		if err != nil {
+			log.Println(err)
+		}
+		wg.Done()
+		grpcEntry = nil
+	}
 }
 
 func (s server) ReadFromOffset(*TopicOffset, Ibsen_ReadFromOffsetServer) error {
 	panic("implement me")
 }
 
-func (s server) ReadBatchFromBeginning(*Topic, Ibsen_ReadBatchFromBeginningServer) error {
-	panic("implement me")
+func (s server) ReadBatchFromBeginning(topic *TopicBatch, outStream Ibsen_ReadBatchFromBeginningServer) error {
+	logChan := make(chan logStorage.LogEntryBatch)
+	var wg sync.WaitGroup
+	go sendBatchMessage(logChan, &wg, &outStream)
+	err := s.logStorage.ReadBatchFromBeginning(logChan, &wg, topic.Name, int(topic.BatchSize))
+	if err != nil {
+		return err
+	}
+	wg.Wait()
+	return nil
 }
 
-func (s server) ReadBatchFromOffset(*TopicOffset, Ibsen_ReadBatchFromOffsetServer) error {
+func (s server) ReadBatchFromOffset(*TopicBatchOffset, Ibsen_ReadBatchFromOffsetServer) error {
 	panic("implement me")
 }
 

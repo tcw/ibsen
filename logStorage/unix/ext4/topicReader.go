@@ -2,6 +2,7 @@ package ext4
 
 import (
 	"errors"
+	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"sync"
 )
@@ -119,7 +120,7 @@ func (t *TopicRead) createBlockReader(blockIndex uint) (*LogFile, error) {
 	return reader, nil
 }
 
-func (t *TopicRead) ReadBatchFromBeginning(c chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int) error {
+func (t *TopicRead) ReadBatchFromBeginning(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int) error {
 	var currenteBlock uint = 0
 
 	var entriesBytes []logStorage.LogEntry
@@ -128,18 +129,24 @@ func (t *TopicRead) ReadBatchFromBeginning(c chan *logStorage.LogEntryBatch, wg 
 		if err != nil {
 			return nil
 		}
-		if reader == nil {
-			c <- &logStorage.LogEntryBatch{Entries: &entriesBytes}
+		if reader == nil && entriesBytes != nil {
+			wg.Add(1)
+			c <- logStorage.LogEntryBatch{Entries: entriesBytes}
+			fmt.Printf("ReadBatchFromBeginning: %d -> %d\n", entriesBytes[0].Offset, entriesBytes[len(entriesBytes)-1].Offset)
+
 			return nil
 		}
-		partial, hasSent, err := reader.ReadLogToEnd(nil, c, wg, batchSize)
+		if reader == nil {
+			return nil
+		}
+		partial, hasSent, err := reader.ReadLogToEnd(entriesBytes, c, wg, batchSize)
 		if err != nil {
 			return err
 		}
 		if hasSent {
 			entriesBytes = nil
 		}
-		entriesBytes = append(entriesBytes, *partial.Entries...)
+		entriesBytes = append(entriesBytes, partial.Entries...)
 		err = reader.CloseLogReader()
 		if err != nil {
 			return err
@@ -148,7 +155,7 @@ func (t *TopicRead) ReadBatchFromBeginning(c chan *logStorage.LogEntryBatch, wg 
 	}
 }
 
-func (t *TopicRead) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, offset uint64, batchSize int) error {
+func (t *TopicRead) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, offset uint64, batchSize int) error {
 	blockIndexContainingOffset, err := t.findBlockIndexContainingOffset(offset)
 	if err != nil {
 		return err
@@ -159,7 +166,7 @@ func (t *TopicRead) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.Log
 	if err != nil {
 		return err
 	}
-	entriesBytes = append(entriesBytes, *entries.Entries...)
+	entriesBytes = append(entriesBytes, entries.Entries...)
 
 	for {
 		blockIndexContainingOffset = blockIndexContainingOffset + 1
@@ -168,14 +175,14 @@ func (t *TopicRead) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.Log
 			return err
 		}
 		if reader == nil {
-			logChan <- &logStorage.LogEntryBatch{Entries: &entriesBytes}
+			logChan <- logStorage.LogEntryBatch{Entries: entriesBytes}
 			return nil
 		}
-		entries, hasSent, err := reader.ReadLogToEnd(&entriesBytes, logChan, wg, batchSize)
+		entries, hasSent, err := reader.ReadLogToEnd(entriesBytes, logChan, wg, batchSize)
 		if hasSent {
 			entriesBytes = nil
 		}
-		entriesBytes = append(entriesBytes, *entries.Entries...)
+		entriesBytes = append(entriesBytes, entries.Entries...)
 		if err != nil {
 			return err
 		}

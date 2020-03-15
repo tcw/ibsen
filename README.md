@@ -1,7 +1,7 @@
 ## Create grpc api
 
 ```shell script
-protoc -I api/ api/ibsen.proto --go_out=plugins=grpc:api
+protoc --proto_path=api/grpc/golangApi ibsen.proto --go_out=plugins=grpc:./
 ```
 
 ## Create ssl certs
@@ -15,6 +15,8 @@ openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out c
 ```shell script
 dostoevsky -s -cpu=cpu-profile.out -mem=mem-profile.out
 ```
+
+GRPC_GO_LOG_VERBOSITY_LEVEL=99 GRPC_GO_LOG_SEVERITY_LEVEL=info
 
 
 if os.Getenv("DEBUG") == "true" {

@@ -22,6 +22,7 @@ var (
 	useTestTopic    = flag.String("t", "test", "Test topic name ")
 	entryTestSize   = flag.Int("es", 100, "Each message will contain n bytes")
 	readTopic       = flag.String("r", "", "Read Topic from beginning")
+	readBatchTopic  = flag.String("rb", "", "Read Topic from beginning in batches")
 )
 
 func main() {
@@ -143,6 +144,47 @@ func main() {
 				log.Println(err)
 				return
 			}
+		}
+	}
+
+	if *readBatchTopic != "" {
+		entryStream, err := c.ReadBatchFromBeginning(ctx, &grpcApi.TopicBatch{
+			Name:      *readBatchTopic,
+			BatchSize: 1000,
+		})
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		stdout := os.Stdout
+		writer := bufio.NewWriter(stdout)
+		defer stdout.Close()
+		for {
+			in, err := entryStream.Recv()
+			if err == io.EOF {
+				err := writer.Flush()
+				if err != nil {
+					log.Fatal(err)
+				}
+				return
+			}
+			if err != nil {
+				log.Fatal(err)
+			}
+			if in == nil {
+				continue
+			}
+			//fmt.Println(len(in.Entries))
+			//entries := in.Entries
+			/*for _, v := range entries {
+				payLoadBase64 := base64.StdEncoding.EncodeToString(v.Payload)
+				line := fmt.Sprintf("%d\t%s\n", v.Offset, payLoadBase64)
+				_, err = writer.Write([]byte(line))
+				if err != nil {
+					log.Println(err)
+					return
+				}
+			}*/
 		}
 	}
 

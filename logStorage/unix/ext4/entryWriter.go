@@ -36,7 +36,7 @@ func (lw *LogFile) WriteBatchToFile(logEntry *logStorage.LogBatchEntry) (uint64,
 
 func (lw *LogFile) WriteToFile(logEntry *logStorage.LogEntry) (int, error) {
 	bytes := append(offsetToLittleEndian(logEntry.Offset), byteSizeToLittleEndian(logEntry.ByteSize)...)
-	bytes = append(bytes, *logEntry.Entry...)
+	bytes = append(bytes, logEntry.Entry...)
 	n, err := lw.LogFile.Write(bytes)
 	if err != nil {
 		return 0, err

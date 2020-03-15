@@ -11,23 +11,23 @@ type LogStorage interface {
 	Write(topicMessage *TopicMessage) (int, error)
 	WriteBatch(topicBatchMessage *TopicBatchMessage) (int, error)
 	ReadFromBeginning(logChan chan *LogEntry, wg *sync.WaitGroup, topic string) error
-	ReadBatchFromBeginning(logChan chan *LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int) error
+	ReadBatchFromBeginning(logChan chan LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int) error
 	ReadFromNotIncluding(logChan chan *LogEntry, wg *sync.WaitGroup, topic string, offset uint64) error
-	ReadBatchFromOffsetNotIncluding(logChan chan *LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64, batchSize int) error
+	ReadBatchFromOffsetNotIncluding(logChan chan LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64, batchSize int) error
 	ListTopics() ([]string, error)
 }
 
 type LogEntryBatch struct {
-	Entries *[]LogEntry
+	Entries []LogEntry
 }
 
 func (e *LogEntryBatch) Size() int {
-	return len(*e.Entries)
+	return len(e.Entries)
 }
 
 type TopicMessage struct {
 	Topic   string
-	Message *[]byte
+	Message []byte
 }
 
 type TopicBatchMessage struct {
@@ -38,7 +38,7 @@ type TopicBatchMessage struct {
 type LogEntry struct {
 	Offset   uint64
 	ByteSize int
-	Entry    *[]byte
+	Entry    []byte
 }
 
 type LogBatchEntry struct {
@@ -46,10 +46,10 @@ type LogBatchEntry struct {
 	Entries *[][]byte
 }
 
-func NewLogEntry(offset uint64, entry *[]byte) LogEntry {
+func NewLogEntry(offset uint64, entry []byte) LogEntry {
 	return LogEntry{
 		Offset:   offset,
-		ByteSize: len(*entry),
+		ByteSize: len(entry),
 		Entry:    entry,
 	}
 }

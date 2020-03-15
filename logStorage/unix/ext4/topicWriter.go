@@ -41,11 +41,11 @@ func (t *TopicWrite) WriteBatchToTopic(entry *[][]byte) (int, error) {
 	return n, nil
 }
 
-func (t *TopicWrite) WriteToTopic(entry *[]byte) (int, error) {
+func (t *TopicWrite) WriteToTopic(entry []byte) (int, error) {
 	t.currentOffset = t.currentOffset + 1
 	logEntry := &logStorage.LogEntry{
 		Offset:   t.currentOffset,
-		ByteSize: len(*entry),
+		ByteSize: len(entry),
 		Entry:    entry,
 	}
 	n, err := t.logFile.WriteToFile(logEntry)

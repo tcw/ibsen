@@ -18,12 +18,12 @@ service Ibsen {
 
     rpc readFromBeginning (Topic) returns (stream Entry) {
     }
-    rpc readBatchFromBeginning (Topic) returns (stream EntryBatch) {
+    rpc readBatchFromBeginning (TopicBatch) returns (stream EntryBatch) {
 
     }
     rpc readFromOffset (TopicOffset) returns (stream Entry) {
     }
-    rpc readBatchFromOffset (TopicOffset) returns (stream EntryBatch) {
+    rpc readBatchFromOffset (TopicBatchOffset) returns (stream EntryBatch) {
     }
 
     rpc listTopics (Empty) returns (stream Topic) {
@@ -52,9 +52,20 @@ message Topic {
     string name = 1;
 }
 
+message TopicBatch {
+    string name = 1;
+    uint32 batchSize = 2;
+}
+
 message TopicOffset {
     string topicName = 1;
     uint64 offset = 2;
+}
+
+message TopicBatchOffset {
+    string topicName = 1;
+    uint64 offset = 2;
+    uint32 batchSize = 3;
 }
 
 message TopicMessage {
