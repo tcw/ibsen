@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"github.com/tcw/ibsen/logStorage/unix/ext4"
-	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -153,11 +153,31 @@ func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 }
 func (ibsen *IbsenHttpServer) listTopic(w http.ResponseWriter, r *http.Request) {
-	ibsen.Storage.ListTopics()
+	topics, err := ibsen.Storage.ListTopics()
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	_, err = w.Write([]byte("[" + strings.Join(topics, ",") + "]"))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
 }
 func (ibsen *IbsenHttpServer) createTopic(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "Not yet implemented")
+	vars := mux.Vars(r)
+	_, err := ibsen.Storage.Create(vars["topic"])
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 func (ibsen *IbsenHttpServer) dropTopic(w http.ResponseWriter, r *http.Request) {
-	io.WriteString(w, "Not yet implemented")
+	vars := mux.Vars(r)
+	_, err := ibsen.Storage.Drop(vars["topic"])
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
