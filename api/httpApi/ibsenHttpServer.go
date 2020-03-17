@@ -1,17 +1,13 @@
-package http
+package httpApi
 
 import (
 	"bufio"
-	"context"
 	"encoding/base64"
-	"flag"
 	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"github.com/tcw/ibsen/logStorage/unix/ext4"
 	"log"
 	"net/http"
-	"os"
-	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,38 +17,25 @@ import (
 )
 
 type IbsenHttpServer struct {
-	Port            uint16
-	StorageRootPath string
-	MaxBlockSize    int64
-	IbsenServer     *http.Server
-	Storage         *ext4.LogStorage
+	Port        uint16
+	IbsenServer *http.Server
+	Storage     *ext4.LogStorage
 }
 
-func NewIbsenHttpServer() *IbsenHttpServer {
+func NewIbsenHttpServer(storage *ext4.LogStorage) *IbsenHttpServer {
 	server := IbsenHttpServer{
-		Port:            5001,
-		StorageRootPath: "",
-		MaxBlockSize:    1024 * 1024 * 10,
+		Port:    5001,
+		Storage: storage,
 	}
-	storage, err := ext4.NewLogStorage(server.StorageRootPath, server.MaxBlockSize)
-	if err != nil {
-		log.Fatal("unable to start ibsen server with ext4 storage")
-	}
-	server.Storage = storage
 	return &server
 }
 
-func (ibsen *IbsenHttpServer) startHttpServer() {
-	var wait time.Duration
-	flag.DurationVar(&wait, "graceful-timeout", time.Second*15,
-		"the duration for which the server gracefully wait for existing connections to finish - e.g. 15s or 1m")
-	flag.Parse()
-
+func (ibsen *IbsenHttpServer) StartHttpServer() *http.Server {
 	r := mux.NewRouter()
 	r.HandleFunc("/write/{topic}", ibsen.writeEntry).Methods("POST")
 	r.HandleFunc("/read/{topic}/{offset}", ibsen.readEntry).Methods("GET")
-	r.HandleFunc("/create/{topic}", ibsen.createTopic).Methods("GET")
-	r.HandleFunc("/drop/{topic}", ibsen.dropTopic).Methods("GET")
+	r.HandleFunc("/create/{topic}", ibsen.createTopic).Methods("POST")
+	r.HandleFunc("/drop/{topic}", ibsen.dropTopic).Methods("POST")
 	r.HandleFunc("/list/topic", ibsen.listTopic).Methods("GET")
 
 	srv := &http.Server{
@@ -68,37 +51,17 @@ func (ibsen *IbsenHttpServer) startHttpServer() {
 			log.Println(err)
 		}
 	}()
-
-	//Todo: move to ibsen root package
-	c := make(chan os.Signal, 1)
-	// We'll accept graceful shutdowns when quit via SIGINT (Ctrl+C)
-	// SIGKILL, SIGQUIT or SIGTERM (Ctrl+/) will not be caught.
-	signal.Notify(c, os.Interrupt)
-
-	// Block until we receive our signal.
-	<-c
-
-	// Create a deadline to wait for.
-	ctx, cancel := context.WithTimeout(context.Background(), wait)
-	defer cancel()
-	// Doesn't block if no connections, but will otherwise wait
-	// until the timeout deadline.
-	srv.Shutdown(ctx)
-	// Optionally, you could run srv.Shutdown in a goroutine and block on
-	// <-ctx.Done() if your application should wait for other services
-	// to finalize based on context cancellation.
-	log.Println("shutting down")
-	os.Exit(0)
+	return srv
 }
 
 func sendMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, w http.ResponseWriter) {
 	for {
 		entry := <-logChan
 		bytes := base64.StdEncoding.EncodeToString(entry.Entry)
-		_, err := w.Write([]byte(`{"offset":` + strconv.FormatUint(entry.Offset, 10) + `,"entry": ` + bytes + "}\n"))
+		_, err := w.Write([]byte(`{"offset":` + strconv.FormatUint(entry.Offset, 10) + `,"entry": "` + bytes + `""}\n`))
 		if err != nil {
-			return
 			w.WriteHeader(http.StatusInternalServerError)
+			return
 		}
 		wg.Done()
 	}

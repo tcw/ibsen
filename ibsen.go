@@ -1,20 +1,26 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	grpcApi "github.com/tcw/ibsen/api/grpc/golangApi"
+	"github.com/tcw/ibsen/api/httpApi"
+	"github.com/tcw/ibsen/logStorage/unix/ext4"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
 	"runtime/pprof"
 	"syscall"
+	"time"
 )
 
 var (
 	storagePath    = flag.String("s", "", "Where to store logs")
-	grpcPort       = flag.Int("p", 50001, "grpc port (default 50001)")
+	grpcPort       = flag.Int("gp", 50001, "grpc port (default 50001)")
+	httpPort       = flag.Int("hp", 5001, "httpApi port (default 5001)")
 	maxBlockSizeMB = flag.Int("b", 100, "Max size for each log block")
 	cpuprofile     = flag.String("cpu", "", "write cpu profile to `file`")
 	memprofile     = flag.String("mem", "", "write memory profile to `file`")
@@ -31,6 +37,7 @@ var (
 )
 
 var ibsenGrpcServer *grpcApi.IbsenGrpcServer
+var httpServer *http.Server
 
 func main() {
 
@@ -49,20 +56,26 @@ func main() {
 		}
 	}
 
-	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer()
-	ibsenGrpcServer.StorageRootPath = *storagePath
-	ibsenGrpcServer.Port = uint16(*grpcPort)
-	ibsenGrpcServer.MaxBlockSize = int64(*maxBlockSizeMB) * 1024 * 1024
-	err := ibsenGrpcServer.ValidateConfig()
-	if len(err) > 0 {
+	storage, err := ext4.NewLogStorage(*storagePath, int64(*maxBlockSizeMB)*1024*1024)
+	if err != nil {
 		log.Println(err)
+		return
 	}
 
+	ibsenHttpServer := httpApi.NewIbsenHttpServer(storage)
+	ibsenHttpServer.Port = uint16(*httpPort)
+
+	httpServer = ibsenHttpServer.StartHttpServer()
+
+	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage)
+	ibsenGrpcServer.Port = uint16(*grpcPort)
+
 	fmt.Print(ibsenFiglet)
-	fmt.Printf("Ibsen server started on port %d\n", ibsenGrpcServer.Port)
+	fmt.Printf("Ibsen grpc server started on port %d\n", ibsenGrpcServer.Port)
+	fmt.Printf("Ibsen http/1.1 server started on port %d\n", ibsenHttpServer.Port)
 	var err2 error
 	err2 = ibsenGrpcServer.StartGRPC()
-	if err != nil {
+	if err != nil { //Todo: fix
 		log.Fatal(err2)
 	}
 }
@@ -93,6 +106,12 @@ func shutdownCleanly() {
 	fmt.Println("\nIbsen finished server cleanup")
 	ibsenGrpcServer.Storage.Close()
 	ibsenGrpcServer.IbsenServer.GracefulStop()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
+	defer cancel()
+	httpServer.Shutdown(ctx)
+
+	log.Println("shutting down")
+	os.Exit(0)
 }
 
 func signalHandler(signal os.Signal) {

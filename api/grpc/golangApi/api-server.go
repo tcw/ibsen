@@ -2,7 +2,6 @@ package golangApi
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"github.com/tcw/ibsen/logStorage/unix/ext4"
@@ -20,34 +19,22 @@ type server struct {
 }
 
 type IbsenGrpcServer struct {
-	Port            uint16
-	CertFile        string
-	KeyFile         string
-	UseTls          bool
-	StorageRootPath string
-	MaxBlockSize    int64
-	IbsenServer     *grpc.Server
-	Storage         *ext4.LogStorage
+	Port        uint16
+	CertFile    string
+	KeyFile     string
+	UseTls      bool
+	IbsenServer *grpc.Server
+	Storage     *ext4.LogStorage
 }
 
-func NewIbsenGrpcServer() *IbsenGrpcServer {
+func NewIbsenGrpcServer(storage *ext4.LogStorage) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
-		Port:            50001,
-		CertFile:        "",
-		KeyFile:         "",
-		UseTls:          false,
-		StorageRootPath: "",
-		MaxBlockSize:    1024 * 1024 * 10,
+		Port:     50001,
+		CertFile: "",
+		KeyFile:  "",
+		UseTls:   false,
+		Storage:  storage,
 	}
-}
-
-func (igs *IbsenGrpcServer) ValidateConfig() []error {
-	var configErrors []error
-	if igs.StorageRootPath == "" {
-		err := errors.New("missing storage root path")
-		configErrors = append(configErrors, err)
-	}
-	return configErrors
 }
 
 func (igs *IbsenGrpcServer) StartGRPC() error {
@@ -67,15 +54,10 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 	}
 	grpcServer := grpc.NewServer(opts...)
 
-	storage, err := ext4.NewLogStorage(igs.StorageRootPath, igs.MaxBlockSize)
-	if err != nil {
-		grpcServer.GracefulStop()
-		return err
-	}
 	igs.IbsenServer = grpcServer
-	igs.Storage = storage
+
 	RegisterIbsenServer(grpcServer, &server{
-		logStorage: *storage,
+		logStorage: *igs.Storage,
 	})
 
 	return grpcServer.Serve(lis)
