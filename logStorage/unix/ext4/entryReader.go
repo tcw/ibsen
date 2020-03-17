@@ -277,12 +277,12 @@ func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry, wg *sync.Wa
 			log.Println("entry incorrect")
 			return errors.New("entry incorrect")
 		}
+		wg.Add(1)
 		c <- &logStorage.LogEntry{
 			Offset:   offset,
 			ByteSize: int(size),
 			Entry:    entry,
 		}
-		wg.Add(1)
 	}
 }
 

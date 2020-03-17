@@ -58,7 +58,8 @@ func sendMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, w http.R
 	for {
 		entry := <-logChan
 		bytes := base64.StdEncoding.EncodeToString(entry.Entry)
-		_, err := w.Write([]byte(`{"offset":` + strconv.FormatUint(entry.Offset, 10) + `,"entry": "` + bytes + `""}\n`))
+		ndjson := `{"offset": ` + strconv.FormatUint(entry.Offset, 10) + `,"entry": "` + bytes + `"}\n`
+		_, err := w.Write([]byte(ndjson))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -100,20 +101,27 @@ func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) 
 	vars := mux.Vars(r)
 	logChan := make(chan *logStorage.LogEntry)
 	var wg sync.WaitGroup
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/x-ndjson")
 	go sendMessage(logChan, &wg, w)
 	offset, err := strconv.ParseUint(vars["offset"], 10, 64)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	err = ibsen.Storage.ReadFromNotIncluding(logChan, &wg, vars["topic"], offset)
+
+	if offset == 0 {
+		err = ibsen.Storage.ReadFromBeginning(logChan, &wg, vars["topic"])
+	} else {
+		err = ibsen.Storage.ReadFromNotIncluding(logChan, &wg, vars["topic"], offset)
+	}
+
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	wg.Wait()
-	w.WriteHeader(http.StatusOK)
+	w.(http.Flusher).Flush()
 }
 func (ibsen *IbsenHttpServer) listTopic(w http.ResponseWriter, r *http.Request) {
 	topics, err := ibsen.Storage.ListTopics()
