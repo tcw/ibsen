@@ -139,7 +139,7 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 	return n, nil
 }
 
-func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic string) error {
+func (e LogStorage) ReadFromBeginning(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, topic string) error {
 	reader, err := NewTopicRead(e.rootPath, topic)
 	if err != nil {
 		return err
@@ -151,7 +151,7 @@ func (e LogStorage) ReadFromBeginning(logChan chan *logStorage.LogEntry, wg *syn
 	return nil
 }
 
-func (e LogStorage) ReadFromNotIncluding(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, topic string, offset uint64) error {
+func (e LogStorage) ReadFromNotIncluding(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, topic string, offset uint64) error {
 	reader, err := NewTopicRead(e.rootPath, topic)
 	if err != nil {
 		return err

@@ -120,7 +120,7 @@ func TestLogStorage_Write_Read(t *testing.T) {
 	if n == 0 {
 		t.Fail()
 	}
-	logChan := make(chan *logStorage.LogEntry)
+	logChan := make(chan logStorage.LogEntry)
 	var wg sync.WaitGroup
 
 	go func() {
@@ -210,7 +210,7 @@ func TestLogStorage_ReadFromNotIncluding(t *testing.T) {
 	if n == 0 {
 		t.Fail()
 	}
-	logChan := make(chan *logStorage.LogEntry)
+	logChan := make(chan logStorage.LogEntry)
 	var wg sync.WaitGroup
 
 	go func() {

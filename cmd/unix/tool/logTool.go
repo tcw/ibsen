@@ -46,7 +46,7 @@ func main() {
 		}
 		if isDir {
 			dir, topic := path.Split(abs)
-			logChannel := make(chan *logStorage.LogEntry)
+			logChannel := make(chan logStorage.LogEntry)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg)
 			reader, err := ext4.NewTopicRead(dir, topic)
@@ -73,10 +73,10 @@ func main() {
 			log.Println(err)
 			return
 		}
-		logChannel := make(chan *logStorage.LogEntry)
+		logChannel := make(chan logStorage.LogEntry)
 		var wg sync.WaitGroup
 		go writeToStdOut(logChannel, &wg)
-		err = logReader.ReadLogFromBeginning(logChannel, &wg)
+		err = logReader.ReadLogToEnd(logChannel, &wg)
 		if err != nil {
 			fmt.Println("Absolute:", abs)
 		}
@@ -89,7 +89,7 @@ func main() {
 
 }
 
-func writeToStdOut(c chan *logStorage.LogEntry, wg *sync.WaitGroup) {
+func writeToStdOut(c chan logStorage.LogEntry, wg *sync.WaitGroup) {
 	for {
 		entry := <-c
 		base64Payload := base64.StdEncoding.EncodeToString(entry.Entry)

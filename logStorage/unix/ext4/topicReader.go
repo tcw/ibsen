@@ -33,7 +33,7 @@ func NewTopicRead(rootPath string, topicName string) (TopicRead, error) {
 	return topicRead, nil
 }
 
-func (t *TopicRead) ReadFromBeginning(c chan *logStorage.LogEntry, wg *sync.WaitGroup) error {
+func (t *TopicRead) ReadFromBeginning(c chan logStorage.LogEntry, wg *sync.WaitGroup) error {
 	var currenteBlock uint = 0
 
 	for {
@@ -44,7 +44,7 @@ func (t *TopicRead) ReadFromBeginning(c chan *logStorage.LogEntry, wg *sync.Wait
 		if reader == nil {
 			return nil
 		}
-		err = reader.ReadLogFromBeginning(c, wg)
+		err = reader.ReadLogToEnd(c, wg)
 		if err != nil {
 			return err
 		}
@@ -56,7 +56,7 @@ func (t *TopicRead) ReadFromBeginning(c chan *logStorage.LogEntry, wg *sync.Wait
 	}
 }
 
-func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, offset uint64) error {
+func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, offset uint64) error {
 	blockIndexContainingOffset, err := t.findBlockIndexContainingOffset(offset)
 	if err != nil {
 		return err
@@ -65,7 +65,7 @@ func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEn
 	if err != nil {
 		return err
 	}
-	err = reader.ReadLogFromOffsetNotIncluding(logChan, offset) // Todo: add waitgroup
+	err = reader.ReadLogFromOffsetNotIncluding(logChan, wg, offset)
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan *logStorage.LogEn
 		if isNextblock == nil {
 			return nil
 		}
-		err = reader.ReadLogFromBeginning(logChan, wg)
+		err = reader.ReadLogToEnd(logChan, wg)
 		if err != nil {
 			return err
 		}
@@ -136,7 +136,7 @@ func (t *TopicRead) ReadBatchFromBeginning(c chan logStorage.LogEntryBatch, wg *
 		if reader == nil {
 			return nil
 		}
-		partial, hasSent, err := reader.ReadLogToEnd(entriesBytes, c, wg, batchSize)
+		partial, hasSent, err := reader.ReadLogInBatchesToEnd(entriesBytes, c, wg, batchSize)
 		if err != nil {
 			return err
 		}
@@ -175,7 +175,7 @@ func (t *TopicRead) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogE
 			logChan <- logStorage.LogEntryBatch{Entries: entriesBytes}
 			return nil
 		}
-		entries, hasSent, err := reader.ReadLogToEnd(entriesBytes, logChan, wg, batchSize)
+		entries, hasSent, err := reader.ReadLogInBatchesToEnd(entriesBytes, logChan, wg, batchSize)
 		if hasSent {
 			entriesBytes = nil
 		}

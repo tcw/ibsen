@@ -54,7 +54,7 @@ func (ibsen *IbsenHttpServer) StartHttpServer() *http.Server {
 	return srv
 }
 
-func sendMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, w http.ResponseWriter) {
+func sendMessage(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, w http.ResponseWriter) {
 	for {
 		entry := <-logChan
 		bytes := base64.StdEncoding.EncodeToString(entry.Entry)
@@ -99,7 +99,7 @@ func (ibsen *IbsenHttpServer) writeEntry(w http.ResponseWriter, r *http.Request)
 
 func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	logChan := make(chan *logStorage.LogEntry)
+	logChan := make(chan logStorage.LogEntry)
 	var wg sync.WaitGroup
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/x-ndjson")

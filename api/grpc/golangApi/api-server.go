@@ -130,7 +130,7 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 }
 
 func (s server) ReadFromBeginning(topic *Topic, outStream Ibsen_ReadFromBeginningServer) error {
-	logChan := make(chan *logStorage.LogEntry)
+	logChan := make(chan logStorage.LogEntry)
 	var wg sync.WaitGroup
 	go sendMessage(logChan, &wg, outStream)
 	err := s.logStorage.ReadFromBeginning(logChan, &wg, topic.Name)
@@ -141,7 +141,7 @@ func (s server) ReadFromBeginning(topic *Topic, outStream Ibsen_ReadFromBeginnin
 	return nil
 }
 
-func sendMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadFromBeginningServer) {
+func sendMessage(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadFromBeginningServer) {
 	for {
 		entry := <-logChan
 		err := outStream.Send(&Entry{
@@ -184,7 +184,7 @@ func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup,
 }
 
 func (s server) ReadFromOffset(topicOffset *TopicOffset, outStream Ibsen_ReadFromOffsetServer) error {
-	logChan := make(chan *logStorage.LogEntry)
+	logChan := make(chan logStorage.LogEntry)
 	var wg sync.WaitGroup
 	go sendMessage(logChan, &wg, outStream)
 	err := s.logStorage.ReadFromNotIncluding(logChan, &wg, topicOffset.TopicName, topicOffset.Offset)

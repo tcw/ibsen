@@ -103,14 +103,14 @@ func (lw *LogFile) ReadLogBlockFromOffsetNotIncluding(logChan chan logStorage.Lo
 		return logStorage.LogEntryBatch{}, false, err
 	}
 
-	partialBatch, hasSent, err := lw.ReadLogToEnd(nil, logChan, wg, batchSize)
+	partialBatch, hasSent, err := lw.ReadLogInBatchesToEnd(nil, logChan, wg, batchSize)
 	if err != nil {
 		return logStorage.LogEntryBatch{}, false, err
 	}
 	return partialBatch, hasSent, nil
 }
 
-func (lw *LogFile) ReadLogToEnd(partialBatch []logStorage.LogEntry, logChan chan logStorage.LogEntryBatch,
+func (lw *LogFile) ReadLogInBatchesToEnd(partialBatch []logStorage.LogEntry, logChan chan logStorage.LogEntryBatch,
 	wg *sync.WaitGroup, batchSize int) (logStorage.LogEntryBatch, bool, error) {
 
 	hasSent := false
@@ -172,75 +172,20 @@ func (lw *LogFile) ReadLogToEnd(partialBatch []logStorage.LogEntry, logChan chan
 	}
 }
 
-// Todo: use same approach as over
-func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan *logStorage.LogEntry, excludingOffset uint64) error {
-	var offsetFound = false
-	skippedFirst := false
-
-	for {
-		bytes := make([]byte, 8)
-		n, err := lw.LogFile.Read(bytes)
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			log.Println(err)
-			return err
-		}
-		if n != 8 {
-			log.Println("offset incorrect")
-			return errors.New("offset incorrect")
-		}
-		offset := fromLittleEndian(bytes)
-
-		n, err2 := lw.LogFile.Read(bytes)
-		if n != 8 {
-			log.Println("byte size incorrect")
-			return errors.New("byte size incorrect")
-		}
-		size := fromLittleEndian(bytes)
-		if err2 != nil {
-			log.Println(err)
-			return err2
-		}
-
-		if !offsetFound {
-			if excludingOffset != offset {
-				_, err := lw.LogFile.Seek(int64(size), 1)
-				if err != nil {
-					return err
-				}
-				continue
-			} else {
-				offsetFound = true
-			}
-		}
-
-		if offsetFound {
-			entry := make([]byte, size)
-			n, err3 := lw.LogFile.Read(entry)
-			if err3 != nil {
-				log.Println(err)
-			}
-			if n != int(size) {
-				log.Println("entry incorrect")
-				return errors.New("entry incorrect")
-			}
-			if skippedFirst {
-				c <- &logStorage.LogEntry{
-					Offset:   offset,
-					ByteSize: int(size),
-					Entry:    entry,
-				}
-			} else {
-				skippedFirst = true
-				continue
-			}
-		}
+func (lw *LogFile) ReadLogFromOffsetNotIncluding(c chan logStorage.LogEntry, wg *sync.WaitGroup, offset uint64) error {
+	err := lw.FastForwardToOffset(int64(offset))
+	if err != nil {
+		return err
 	}
+
+	err = lw.ReadLogToEnd(c, wg)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry, wg *sync.WaitGroup) error {
+func (lw *LogFile) ReadLogToEnd(c chan logStorage.LogEntry, wg *sync.WaitGroup) error {
 	reader := bufio.NewReader(lw.LogFile)
 	bytes := make([]byte, 8)
 	for {
@@ -278,7 +223,7 @@ func (lw *LogFile) ReadLogFromBeginning(c chan *logStorage.LogEntry, wg *sync.Wa
 			return errors.New("entry incorrect")
 		}
 		wg.Add(1)
-		c <- &logStorage.LogEntry{
+		c <- logStorage.LogEntry{
 			Offset:   offset,
 			ByteSize: int(size),
 			Entry:    entry,
