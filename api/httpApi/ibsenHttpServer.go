@@ -58,7 +58,7 @@ func sendMessage(logChan chan *logStorage.LogEntry, wg *sync.WaitGroup, w http.R
 	for {
 		entry := <-logChan
 		bytes := base64.StdEncoding.EncodeToString(entry.Entry)
-		ndjson := `{"offset": ` + strconv.FormatUint(entry.Offset, 10) + `,"entry": "` + bytes + `"}\n`
+		ndjson := `{"offset": ` + strconv.FormatUint(entry.Offset, 10) + `,"entry": "` + bytes + "\"}\n"
 		_, err := w.Write([]byte(ndjson))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
