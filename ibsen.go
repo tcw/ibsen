@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/google/uuid"
 	grpcApi "github.com/tcw/ibsen/api/grpc/golangApi"
 	"github.com/tcw/ibsen/api/httpApi"
 	"github.com/tcw/ibsen/logStorage/unix/ext4"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"syscall"
@@ -18,8 +20,10 @@ import (
 )
 
 var (
+	ibsenId        = uuid.New().String()
 	storagePath    = flag.String("s", "", "Where to store logs")
-	grpcPort       = flag.Int("gp", 50001, "grpc port (default 50001)")
+	useHttp        = flag.Bool("h", false, "Use http 1.1 instead of gRPC")
+	grpcPort       = flag.Int("p", 50001, "grpc port (default 50001)")
 	httpPort       = flag.Int("hp", 5001, "httpApi port (default 5001)")
 	maxBlockSizeMB = flag.Int("b", 100, "Max size for each log block")
 	cpuprofile     = flag.String("cpu", "", "write cpu profile to `file`")
@@ -38,12 +42,31 @@ var (
 
 var ibsenGrpcServer *grpcApi.IbsenGrpcServer
 var httpServer *http.Server
+var writeLock string
+var done chan bool = make(chan bool)
+var doneCleanup chan bool = make(chan bool)
+var locked chan bool = make(chan bool)
 
 func main() {
 
 	flag.Parse()
 
 	go initSignals()
+
+	if *storagePath == "" {
+		log.Fatal("Storage path is mandatory (use: -s <path>)")
+	}
+
+	abs, err2 := filepath.Abs(*storagePath)
+	if err2 != nil {
+		log.Fatal(err2)
+	}
+	storagePath = &abs
+	writeLock = abs + string(os.PathSeparator) + ".writeLock"
+	fmt.Printf("Waiting to acquire lock on file [%s]\n", writeLock)
+	go acuqireLock(writeLock, done, doneCleanup, locked)
+
+	<-locked
 
 	if *cpuprofile != "" {
 		f, err := os.Create(*cpuprofile)
@@ -62,21 +85,60 @@ func main() {
 		return
 	}
 
-	ibsenHttpServer := httpApi.NewIbsenHttpServer(storage)
-	ibsenHttpServer.Port = uint16(*httpPort)
+	if *useHttp {
+		ibsenHttpServer := httpApi.NewIbsenHttpServer(storage)
+		ibsenHttpServer.Port = uint16(*httpPort)
+		fmt.Printf("Ibsen http/1.1 server started on port %d\n", ibsenHttpServer.Port)
+		fmt.Print(ibsenFiglet)
+		httpServer = ibsenHttpServer.StartHttpServer()
+	} else {
+		ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage)
+		ibsenGrpcServer.Port = uint16(*grpcPort)
+		fmt.Printf("Ibsen grpc server started on port %d\n", ibsenGrpcServer.Port)
+		fmt.Print(ibsenFiglet)
+		var err2 error
+		err2 = ibsenGrpcServer.StartGRPC()
+		if err2 != nil {
+			log.Fatal(err2)
+		}
+	}
+	<-doneCleanup
+}
 
-	httpServer = ibsenHttpServer.StartHttpServer()
+func acuqireLock(lockFile string, done chan bool, doneCleanUp chan bool, locked chan bool) {
+	for {
+		file, err := os.OpenFile(lockFile,
+			os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 
-	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage)
-	ibsenGrpcServer.Port = uint16(*grpcPort)
-
-	fmt.Print(ibsenFiglet)
-	fmt.Printf("Ibsen grpc server started on port %d\n", ibsenGrpcServer.Port)
-	fmt.Printf("Ibsen http/1.1 server started on port %d\n", ibsenHttpServer.Port)
-	var err2 error
-	err2 = ibsenGrpcServer.StartGRPC()
-	if err != nil { //Todo: fix
-		log.Fatal(err2)
+		if err != nil {
+			log.Println("Unable to open file", err)
+			time.Sleep(time.Second * 3)
+			continue
+		}
+		_, err = file.Write([]byte(ibsenId))
+		if err != nil {
+			log.Println("unable to write ibsen id to file", err)
+			time.Sleep(time.Second * 3)
+			continue
+		}
+		fmt.Printf("Got file lock with ibsen id [%s]\n", ibsenId)
+		locked <- true
+		b := <-done
+		if b {
+			fmt.Println("starting file lock removal")
+		}
+		err = file.Close()
+		if err != nil {
+			fmt.Println(err)
+		}
+		fmt.Println("closed lock file")
+		err = os.Remove(lockFile)
+		if err != nil {
+			fmt.Println(err)
+		}
+		fmt.Printf("Removed file lock with ibsen id [%s]\n", ibsenId)
+		doneCleanUp <- true
+		break
 	}
 }
 
@@ -103,20 +165,24 @@ func shutdownCleanly() {
 		}
 	}
 
-	fmt.Println("\nIbsen finished server cleanup")
-	ibsenGrpcServer.Storage.Close()
-	ibsenGrpcServer.IbsenServer.GracefulStop()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
-	defer cancel()
-	httpServer.Shutdown(ctx)
+	if *useHttp {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
+		defer cancel()
+		err := httpServer.Shutdown(ctx)
+		if err != nil {
+			fmt.Println(err)
+		}
+	} else {
+		ibsenGrpcServer.IbsenServer.GracefulStop()
+		fmt.Println("shutdown gRPC server")
+	}
+	done <- true
 
-	log.Println("shutting down")
-	os.Exit(0)
 }
 
 func signalHandler(signal os.Signal) {
 	fmt.Printf("\nCaught signal: %+v", signal)
-	fmt.Println("\nWait Ibsen to shutdown...")
+	fmt.Println("\nWait for Ibsen to shutdown...")
 
 	switch signal {
 
@@ -133,8 +199,6 @@ func signalHandler(signal os.Signal) {
 		shutdownCleanly()
 
 	default:
-		fmt.Println("- unknown system signal sent to Ibsen")
+		fmt.Printf("- unhandled system signal sent to Ibsen [%s], starting none graseful shutdown", signal.String())
 	}
-
-	os.Exit(0)
 }

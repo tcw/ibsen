@@ -40,7 +40,7 @@ func NewIbsenGrpcServer(storage *ext4.LogStorage) *IbsenGrpcServer {
 func (igs *IbsenGrpcServer) StartGRPC() error {
 	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", igs.Port))
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		return err
 	}
 	var opts []grpc.ServerOption
 	if igs.UseTls {
@@ -48,7 +48,7 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 		absKey := testdata.Path(igs.KeyFile)
 		creds, err := credentials.NewServerTLSFromFile(absCert, absKey)
 		if err != nil {
-			log.Fatalf("Failed to generate credentials %v", err)
+			return err
 		}
 		opts = []grpc.ServerOption{grpc.Creds(creds)}
 	}
@@ -141,48 +141,6 @@ func (s server) ReadFromBeginning(topic *Topic, outStream Ibsen_ReadFromBeginnin
 	return nil
 }
 
-func sendMessage(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadFromBeginningServer) {
-	for {
-		entry := <-logChan
-		err := outStream.Send(&Entry{
-			Offset:  entry.Offset,
-			Payload: entry.Entry,
-		})
-		wg.Done()
-		if err != nil {
-			log.Println(err)
-			return
-		}
-	}
-}
-
-func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadBatchFromBeginningServer) {
-	var grpcEntry []*Entry
-	for {
-		entry := <-logChan
-		fmt.Printf("sendBatchMessage: %d\n", entry.Size())
-		entries := entry.Entries
-		fmt.Printf("sendBatchMessage: %d -> %d\n", entries[0].Offset, entries[len(entries)-1].Offset)
-		if entries == nil {
-			continue
-		}
-		for _, v := range entries {
-			grpcEntry = append(grpcEntry, &Entry{
-				Offset:  v.Offset,
-				Payload: v.Entry,
-			})
-		}
-		err := outStream.Send(&EntryBatch{
-			Entries: grpcEntry,
-		})
-		if err != nil {
-			log.Println(err)
-		}
-		wg.Done()
-		grpcEntry = nil
-	}
-}
-
 func (s server) ReadFromOffset(topicOffset *TopicOffset, outStream Ibsen_ReadFromOffsetServer) error {
 	logChan := make(chan logStorage.LogEntry)
 	var wg sync.WaitGroup
@@ -235,4 +193,46 @@ func (s server) ListTopicsWithOffset(context.Context, *Empty) (*TopicOffsets, er
 
 func (s server) Close() {
 	s.logStorage.Close()
+}
+
+func sendMessage(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadFromBeginningServer) {
+	for {
+		entry := <-logChan
+		err := outStream.Send(&Entry{
+			Offset:  entry.Offset,
+			Payload: entry.Entry,
+		})
+		wg.Done()
+		if err != nil {
+			log.Println(err)
+			return
+		}
+	}
+}
+
+func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadBatchFromBeginningServer) {
+	var grpcEntry []*Entry
+	for {
+		entry := <-logChan
+		fmt.Printf("sendBatchMessage: %d\n", entry.Size())
+		entries := entry.Entries
+		fmt.Printf("sendBatchMessage: %d -> %d\n", entries[0].Offset, entries[len(entries)-1].Offset)
+		if entries == nil {
+			continue
+		}
+		for _, v := range entries {
+			grpcEntry = append(grpcEntry, &Entry{
+				Offset:  v.Offset,
+				Payload: v.Entry,
+			})
+		}
+		err := outStream.Send(&EntryBatch{
+			Entries: grpcEntry,
+		})
+		if err != nil {
+			log.Println(err)
+		}
+		wg.Done()
+		grpcEntry = nil
+	}
 }
