@@ -214,9 +214,9 @@ func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup,
 	var grpcEntry []*Entry
 	for {
 		entry := <-logChan
-		fmt.Printf("sendBatchMessage: %d\n", entry.Size())
+		log.Printf("sendBatchMessage: %d\n", entry.Size())
 		entries := entry.Entries
-		fmt.Printf("sendBatchMessage: %d -> %d\n", entries[0].Offset, entries[len(entries)-1].Offset)
+		log.Printf("sendBatchMessage: %d -> %d\n", entries[0].Offset, entries[len(entries)-1].Offset)
 		if entries == nil {
 			continue
 		}

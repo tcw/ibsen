@@ -14,34 +14,34 @@ import (
 )
 
 var (
-	verbose = flag.Bool("v", false, "Verbose")
-	topic   = flag.String("t", "", "Read log topic directory")
-	file    = flag.String("f", "", "Read log file")
+	topic = flag.String("t", "", "Read log topic directory")
+	file  = flag.String("f", "", "Read log file")
 )
 
 func main() {
 
 	flag.Parse()
+
 	if *topic != "" {
 		abs, err := filepath.Abs(*topic)
 		if err != nil {
-			fmt.Println("Absolute:", abs)
+			log.Println("Absolute:", abs)
 		}
 		f, err := os.OpenFile(abs,
 			os.O_RDONLY, 0400)
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return
 		}
 		stat, err := f.Stat()
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return
 		}
 		isDir := stat.IsDir()
 		err = f.Close()
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return
 		}
 		if isDir {
@@ -59,14 +59,14 @@ func main() {
 			}
 			wg.Wait()
 		} else {
-			fmt.Println("Not a dir")
+			log.Println("Not a dir")
 		}
-
 	}
+
 	if *file != "" {
 		abs, err := filepath.Abs(*file)
 		if err != nil {
-			fmt.Println("Absolute:", abs)
+			log.Println("Absolute:", abs)
 		}
 		logReader, err := ext4.NewLogReader(abs)
 		if err != nil {
@@ -78,7 +78,7 @@ func main() {
 		go writeToStdOut(logChannel, &wg)
 		err = logReader.ReadLogToEnd(logChannel, &wg)
 		if err != nil {
-			fmt.Println("Absolute:", abs)
+			log.Println(err)
 		}
 		err = logReader.CloseLogReader()
 		if err != nil {
@@ -86,14 +86,13 @@ func main() {
 		}
 		wg.Wait()
 	}
-
 }
 
 func writeToStdOut(c chan logStorage.LogEntry, wg *sync.WaitGroup) {
 	for {
 		entry := <-c
 		base64Payload := base64.StdEncoding.EncodeToString(entry.Entry)
-		fmt.Printf("%d\t%d\t%s\n", entry.Offset, entry.ByteSize, base64Payload)
+		fmt.Printf("%d\t%s\n", entry.Offset, base64Payload)
 		wg.Done()
 	}
 }

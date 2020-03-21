@@ -15,10 +15,11 @@ import (
 )
 
 var (
-	verbose     = flag.Bool("v", false, "Verbose")
-	writeTopic  = flag.String("w", "", "Write to Topic")
-	readTopic   = flag.String("r", "", "Read from Topic")
-	createTopic = flag.String("c", "", "Create Topic")
+	verbose          = flag.Bool("v", false, "Verbose")
+	writeTopic       = flag.String("w", "", "Write to Topic")
+	readTopic        = flag.String("r", "", "Read from Topic")
+	createTopic      = flag.String("c", "", "Create Topic")
+	timeOutInMinutes = flag.Int("t", 5, "Minutes before time out")
 )
 
 func main() {
@@ -31,7 +32,7 @@ func main() {
 	defer conn.Close()
 	c := grpcApi.NewIbsenClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeOutInMinutes))
 	defer cancel()
 
 	if *createTopic != "" {
@@ -39,13 +40,13 @@ func main() {
 			Name: *createTopic,
 		})
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 		}
 		if *verbose {
 			if topic.Created {
-				fmt.Printf("Created Topic [%s]", *createTopic)
+				log.Printf("Created Topic [%s]", *createTopic)
 			} else {
-				fmt.Println("Topic", *createTopic, " already exists!")
+				log.Println("Topic", *createTopic, " already exists!")
 			}
 		}
 	}
@@ -96,7 +97,7 @@ func main() {
 			log.Println(text)
 			bytes, err := base64.StdEncoding.DecodeString(text)
 			if err != nil {
-				fmt.Println(err)
+				log.Println(err)
 				return
 			}
 			mes := grpcApi.TopicMessage{
@@ -105,14 +106,14 @@ func main() {
 			}
 			err = r.Send(&mes)
 			if err != nil {
-				fmt.Println(err)
+				log.Println(err)
 				return
 			}
 		}
 
 		_, err = r.CloseAndRecv()
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return
 		}
 	}

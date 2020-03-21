@@ -191,7 +191,7 @@ func (e LogStorage) Close() {
 	for _, v := range e.topicWriters {
 		err := v.Close()
 		if err != nil {
-			fmt.Println("unable to close writers cleanly")
+			log.Println("unable to close writers cleanly")
 		}
 	}
 }

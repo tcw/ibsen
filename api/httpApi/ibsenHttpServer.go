@@ -3,7 +3,6 @@ package httpApi
 import (
 	"bufio"
 	"encoding/base64"
-	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"github.com/tcw/ibsen/logStorage/unix/ext4"
 	"log"
@@ -58,7 +57,7 @@ func sendMessage(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, w http.Re
 	for {
 		entry := <-logChan
 		bytes := base64.StdEncoding.EncodeToString(entry.Entry)
-		ndjson := `{"offset": ` + strconv.FormatUint(entry.Offset, 10) + `,"entry": "` + bytes + "\"}\n"
+		ndjson := `[` + strconv.FormatUint(entry.Offset, 10) + `, "` + bytes + "\"]\n"
 		_, err := w.Write([]byte(ndjson))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -82,7 +81,7 @@ func (ibsen *IbsenHttpServer) writeEntry(w http.ResponseWriter, r *http.Request)
 		log.Println(text)
 		bytes, err := base64.StdEncoding.DecodeString(text)
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return
 		}
 		//Todo: use batch write

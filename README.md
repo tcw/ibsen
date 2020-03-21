@@ -20,5 +20,5 @@ GRPC_GO_LOG_VERBOSITY_LEVEL=99 GRPC_GO_LOG_SEVERITY_LEVEL=info
 
 
 if os.Getenv("DEBUG") == "true" {
-		fmt.Printf("worker [%d] - created hash [%d] from word [%s]\n", id, h.Sum32(), word)
+		log.Printf("worker [%d] - created hash [%d] from word [%s]\n", id, h.Sum32(), word)
 	}

@@ -25,6 +25,7 @@ var (
 	entryTestSize   = flag.Int("es", 100, "Each message will contain n bytes")
 	readTopic       = flag.String("r", "", "Read Topic from beginning")
 	readBatchTopic  = flag.String("rb", "", "Read Topic from beginning in batches")
+	b64Output       = flag.Bool("o64", false, "Print entry output as base64")
 )
 
 func main() {
@@ -50,7 +51,7 @@ func main() {
 			Name: *useTestTopic,
 		})
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return
 		}
 
@@ -75,7 +76,7 @@ func main() {
 		for i := 0; i < *batches; i++ {
 			_, err = c.WriteBatch(ctx, &mes)
 			if err != nil {
-				fmt.Println("error writing batch")
+				log.Println("error writing batch")
 			}
 		}
 		return
@@ -86,7 +87,7 @@ func main() {
 			Name: *useTestTopic,
 		})
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return
 		}
 		r, err := c.WriteStream(ctx)
@@ -110,13 +111,13 @@ func main() {
 		for i := 0; i < *numberOfEntries; i++ {
 			err = r.Send(&mes)
 			if err != nil {
-				fmt.Println("sent ", i, " messages", err)
+				log.Println("sent ", i, " messages", err)
 				return
 			}
 		}
 		_, err = r.CloseAndRecv()
 		if err != nil {
-			fmt.Println(err)
+			log.Println(err)
 			return
 		}
 	}
@@ -178,17 +179,21 @@ func main() {
 			if in == nil {
 				continue
 			}
-			fmt.Println(len(in.Entries))
-			//entries := in.Entries
-			/*for _, v := range entries {
-				payLoadBase64 := base64.StdEncoding.EncodeToString(v.Payload)
-				line := fmt.Sprintf("%d\t%s\n", v.Offset, payLoadBase64)
-				_, err = writer.Write([]byte(line))
+			log.Println(len(in.Entries))
+			entries := in.Entries
+			for _, v := range entries {
+				if *b64Output {
+					payLoadBase64 := base64.StdEncoding.EncodeToString(v.Payload)
+					line := fmt.Sprintf("%d\t%s\n", v.Offset, payLoadBase64)
+					_, err = writer.Write([]byte(line))
+				} else {
+					_, err = writer.Write(v.Payload)
+				}
 				if err != nil {
 					log.Println(err)
 					return
 				}
-			}*/
+			}
 		}
 	}
 
