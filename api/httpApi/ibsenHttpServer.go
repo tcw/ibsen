@@ -53,20 +53,6 @@ func (ibsen *IbsenHttpServer) StartHttpServer() *http.Server {
 	return srv
 }
 
-func sendMessage(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, w http.ResponseWriter) {
-	for {
-		entry := <-logChan
-		bytes := base64.StdEncoding.EncodeToString(entry.Entry)
-		ndjson := `[` + strconv.FormatUint(entry.Offset, 10) + `, "` + bytes + "\"]\n"
-		_, err := w.Write([]byte(ndjson))
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		wg.Done()
-	}
-}
-
 func (ibsen *IbsenHttpServer) writeEntry(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 
@@ -78,22 +64,15 @@ func (ibsen *IbsenHttpServer) writeEntry(w http.ResponseWriter, r *http.Request)
 	scanner.Buffer(buf, maxCapacity)
 	for scanner.Scan() {
 		text := scanner.Text()
-		log.Println(text)
-		bytes, err := base64.StdEncoding.DecodeString(text)
-		if err != nil {
-			log.Println(err)
-			return
-		}
 		//Todo: use batch write
-		_, err = ibsen.Storage.Write(&logStorage.TopicMessage{
+		_, err := ibsen.Storage.Write(&logStorage.TopicMessage{
 			Topic:   vars["topic"],
-			Message: bytes,
+			Message: []byte(text),
 		})
 		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+			log.Println(err)
 		}
 	}
-	w.WriteHeader(http.StatusOK)
 }
 
 func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +95,7 @@ func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
 		return
 	}
 	wg.Wait()
@@ -130,24 +109,36 @@ func (ibsen *IbsenHttpServer) listTopic(w http.ResponseWriter, r *http.Request) 
 	}
 	_, err = w.Write([]byte("[" + strings.Join(topics, ",") + "]"))
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
 	}
 }
 func (ibsen *IbsenHttpServer) createTopic(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	_, err := ibsen.Storage.Create(vars["topic"])
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
 }
 func (ibsen *IbsenHttpServer) dropTopic(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
+	w.WriteHeader(http.StatusOK)
 	_, err := ibsen.Storage.Drop(vars["topic"])
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		log.Println(err)
 	}
-	w.WriteHeader(http.StatusOK)
+}
+
+func sendMessage(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, w http.ResponseWriter) {
+	for {
+		entry := <-logChan
+		bytes := base64.StdEncoding.EncodeToString(entry.Entry)
+		ndjson := `[` + strconv.FormatUint(entry.Offset, 10) + `, "` + bytes + "\"]\n"
+		_, err := w.Write([]byte(ndjson))
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		wg.Done()
+	}
 }

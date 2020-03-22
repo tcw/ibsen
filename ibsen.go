@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"github.com/google/uuid"
 	grpcApi "github.com/tcw/ibsen/api/grpc/golangApi"
 	"github.com/tcw/ibsen/api/httpApi"
@@ -14,17 +15,18 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"strconv"
 	"syscall"
 	"time"
 )
 
 var (
 	ibsenId        = uuid.New().String()
-	storagePath    = flag.String("s", "", "Where to store logs")
-	useHttp        = flag.Bool("h", false, "Use http 1.1 instead of gRPC")
-	grpcPort       = flag.Int("p", 50001, "grpc port (default 50001)")
-	httpPort       = flag.Int("hp", 5001, "httpApi port (default 5001)")
-	maxBlockSizeMB = flag.Int("b", 100, "Max size for each log block in MB")
+	storagePath    = flag.String("s", EnvOrString("STORAGE_PATH", ""), "Where to store logs")
+	useHttp        = flag.Bool("h", EnvOrBool("USE_HTTP", false), "Use http 1.1 instead of gRPC")
+	grpcPort       = flag.Int("p", EnvOrInt("GRPC_PORT", 50001), "grpc port (default 50001)")
+	httpPort       = flag.Int("hp", EnvOrInt("HTTP_PORT", 5001), "httpApi port (default 5001)")
+	maxBlockSizeMB = flag.Int("b", EnvOrInt("MAX_FILE_BLOCK_SIZE_MB", 100), "Max size for each log block in MB")
 	cpuprofile     = flag.String("cpu", "", "write cpu profile to `file`")
 	memprofile     = flag.String("mem", "", "write memory profile to `file`")
 	ibsenFiglet    = `
@@ -36,7 +38,7 @@ var (
                           |_____|_.__/|___/\___|_| |_|
 
 	'One should not read to devour, but to see what can be applied.'
-	 Henrik Ibsen
+	 Henrik Ibsen (1828–1906)
 
 `
 )
@@ -51,6 +53,7 @@ var locked chan bool = make(chan bool)
 func main() {
 
 	flag.Parse()
+	log.Printf("app.config %v\n", getConfig(flag.CommandLine))
 
 	go initSignals()
 
@@ -90,13 +93,13 @@ func main() {
 		ibsenHttpServer := httpApi.NewIbsenHttpServer(storage)
 		ibsenHttpServer.Port = uint16(*httpPort)
 		log.Printf("Ibsen http/1.1 server started on port [%d]\n", ibsenHttpServer.Port)
-		log.Print(ibsenFiglet)
+		fmt.Print(ibsenFiglet)
 		httpServer = ibsenHttpServer.StartHttpServer()
 	} else {
 		ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage)
 		ibsenGrpcServer.Port = uint16(*grpcPort)
 		log.Printf("Ibsen grpc server started on port [%d]\n", ibsenGrpcServer.Port)
-		log.Print(ibsenFiglet)
+		fmt.Print(ibsenFiglet)
 		var err2 error
 		err2 = ibsenGrpcServer.StartGRPC()
 		if err2 != nil {
@@ -197,7 +200,44 @@ func signalHandler(signal os.Signal) {
 		shutdownCleanly()
 
 	default:
-		log.Printf("- unhandled system signal sent to Ibsen [%s], starting none graceful shutdown", signal.String())
-		syscall.Exit(0)
+		log.Printf("Unexpected system signal [%s] sent to Ibsen. Trying to gracefully shutdown, without any garanties...", signal.String())
+		shutdownCleanly()
 	}
+}
+
+func EnvOrString(key string, defaultVal string) string {
+	if val, ok := os.LookupEnv(key); ok {
+		return val
+	}
+	return defaultVal
+}
+
+func EnvOrInt(key string, defaultVal int) int {
+	if val, ok := os.LookupEnv(key); ok {
+		v, err := strconv.Atoi(val)
+		if err != nil {
+			log.Fatalf("LookupEnvOrInt[%s]: %v", key, err)
+		}
+		return v
+	}
+	return defaultVal
+}
+
+func EnvOrBool(key string, defaultVal bool) bool {
+	if val, ok := os.LookupEnv(key); ok {
+		v, err := strconv.ParseBool(val)
+		if err != nil {
+			log.Fatalf("LookupEnvOrInt[%s]: %v", key, err)
+		}
+		return v
+	}
+	return defaultVal
+}
+
+func getConfig(fs *flag.FlagSet) []string {
+	cfg := make([]string, 0, 10)
+	fs.VisitAll(func(f *flag.Flag) {
+		cfg = append(cfg, fmt.Sprintf("%s:%q", f.Name, f.Value.String()))
+	})
+	return cfg
 }

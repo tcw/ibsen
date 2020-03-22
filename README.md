@@ -29,7 +29,17 @@ GRPC_GO_LOG_VERBOSITY_LEVEL=99 GRPC_GO_LOG_SEVERITY_LEVEL=info
 
 ```shell script
 docker build -t ibsen .
-docker run -it --rm --name ibsen ibsen
+
+```
+
+```shell script
+docker run --name ibsen_peer -e USE_HTTP=true -p 5001:5001 ibsen
+
+```
+
+```shell script
+docker run --name ibsen_solveig -p 50001:50001 ibsen
+
 ```
 
 
