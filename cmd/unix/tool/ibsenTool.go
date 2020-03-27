@@ -49,7 +49,7 @@ func main() {
 			logChannel := make(chan logStorage.LogEntry)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg)
-			reader, err := ext4.NewTopicRead(dir, topic)
+			reader, err := ext4.NewTopicRead(dir, topic, nil)
 			if err != nil {
 				log.Fatal(err)
 			}

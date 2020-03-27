@@ -10,7 +10,8 @@ import (
 	"sync"
 )
 
-func registerTopics(rootPath string, maxBlockSize int64) ([]*TopicWrite, error) {
+//Todo deadlock mutex
+func registerTopics(rootPath string, maxBlockSize int64, topicBlockNotifier chan string) ([]*TopicWrite, error) {
 	topics, err := ListTopics(rootPath)
 	var topicWriters []*TopicWrite
 	if err != nil {
@@ -18,7 +19,7 @@ func registerTopics(rootPath string, maxBlockSize int64) ([]*TopicWrite, error) 
 	}
 	for _, topic := range topics {
 
-		topicWrite, err := NewTopicWrite(rootPath, topic, maxBlockSize)
+		topicWrite, err := NewTopicWrite(rootPath, topic, maxBlockSize, topicBlockNotifier)
 		if err != nil {
 			return nil, err
 		}
@@ -34,29 +35,59 @@ type LogFile struct {
 }
 
 type LogStorage struct {
-	rootPath     string
-	maxBlockSize int64
-	wgTopic      sync.WaitGroup
-	topicWriters map[string]*TopicWrite
-	mu           sync.Mutex
+	rootPath            string
+	maxBlockSize        int64
+	wgTopic             sync.WaitGroup
+	topicWriters        map[string]*TopicWrite
+	topicBlocks         map[string][]int64
+	topicBlocksNotifier chan string
+	mu                  sync.Mutex
+}
+
+func topicBlockRegister(storage *LogStorage) {
+	for {
+		topic := <-storage.topicBlocksNotifier
+		if topic == "all" {
+			topics, err := ListTopics(storage.rootPath)
+			if err != nil {
+				log.Fatal(err)
+			}
+			for _, top := range topics {
+				sorted, err := listBlocksSorted(top)
+				if err != nil {
+					log.Fatal(err)
+				}
+				storage.topicBlocks[top] = sorted
+			}
+		} else {
+			sorted, err := listBlocksSorted(topic)
+			if err != nil {
+				log.Fatal(err)
+			}
+			storage.topicBlocks[topic] = sorted
+		}
+
+	}
 }
 
 func NewLogStorage(rootPath string, maxBlockSize int64) (*LogStorage, error) {
 	storage := &LogStorage{
-		rootPath:     rootPath,
-		maxBlockSize: maxBlockSize,
-		topicWriters: make(map[string]*TopicWrite),
+		rootPath:            rootPath,
+		maxBlockSize:        maxBlockSize,
+		topicWriters:        make(map[string]*TopicWrite),
+		topicBlocks:         make(map[string][]int64),
+		topicBlocksNotifier: make(chan string),
 	}
 
-	storage.mu.Lock()
-	topics, err := registerTopics(rootPath, maxBlockSize)
+	topics, err := registerTopics(rootPath, maxBlockSize, storage.topicBlocksNotifier)
 	for _, v := range topics {
 		storage.topicWriters[v.name] = v
 	}
 	if err != nil {
 		log.Fatal("Unable to register topics")
 	}
-	storage.mu.Unlock()
+	go topicBlockRegister(storage)
+	storage.topicBlocksNotifier <- "all"
 	return storage, nil
 }
 
@@ -74,7 +105,7 @@ func (e LogStorage) Create(topic string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	topicWrite, err2 := NewTopicWrite(e.rootPath, topic, e.maxBlockSize)
+	topicWrite, err2 := NewTopicWrite(e.rootPath, topic, e.maxBlockSize, e.topicBlocksNotifier)
 	if err2 != nil {
 		return false, err2
 	}
@@ -140,7 +171,7 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 }
 
 func (e LogStorage) ReadFromBeginning(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, topic string) error {
-	reader, err := NewTopicRead(e.rootPath, topic)
+	reader, err := NewTopicRead(e.rootPath, topic, &e.topicBlocks)
 	if err != nil {
 		return err
 	}
@@ -152,7 +183,7 @@ func (e LogStorage) ReadFromBeginning(logChan chan logStorage.LogEntry, wg *sync
 }
 
 func (e LogStorage) ReadFromNotIncluding(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, topic string, offset uint64) error {
-	reader, err := NewTopicRead(e.rootPath, topic)
+	reader, err := NewTopicRead(e.rootPath, topic, &e.topicBlocks)
 	if err != nil {
 		return err
 	}
@@ -164,7 +195,7 @@ func (e LogStorage) ReadFromNotIncluding(logChan chan logStorage.LogEntry, wg *s
 }
 
 func (e LogStorage) ReadBatchFromBeginning(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int) error {
-	reader, err := NewTopicRead(e.rootPath, topic)
+	reader, err := NewTopicRead(e.rootPath, topic, &e.topicBlocks)
 	if err != nil {
 		return err
 	}
@@ -176,7 +207,7 @@ func (e LogStorage) ReadBatchFromBeginning(logChan chan logStorage.LogEntryBatch
 }
 
 func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64, batchSize int) error {
-	reader, err := NewTopicRead(e.rootPath, topic)
+	reader, err := NewTopicRead(e.rootPath, topic, &e.topicBlocks)
 	if err != nil {
 		return err
 	}

@@ -7,29 +7,18 @@ import (
 )
 
 type TopicRead struct {
-	rootPath          string
-	name              string
-	topicPath         string
+	blockReg          *BlockRegistry
 	currentOffset     uint64
-	sortedBlocks      []uint64
 	currentBlockIndex uint
 }
 
-func ListTopics(rootPath string) ([]string, error) {
-	return listUnhiddenDirectories(rootPath)
-}
-
-func NewTopicRead(rootPath string, topicName string) (TopicRead, error) {
+func NewTopicRead(rootPath string, topicName string, topicBlocksSorted *map[string][]int64) (TopicRead, error) {
 	topicRead := TopicRead{
 		rootPath:  rootPath,
 		name:      topicName,
 		topicPath: rootPath + separator + topicName,
 	}
-	sorted, err := listBlocksSorted(topicRead.topicPath)
-	if err != nil {
-		return TopicRead{}, err
-	}
-	topicRead.sortedBlocks = sorted
+	topicRead.sortedBlocks = topicBlocksSorted
 	return topicRead, nil
 }
 
@@ -91,27 +80,29 @@ func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan logStorage.LogEnt
 }
 
 func (t *TopicRead) findBlockIndexContainingOffset(offset uint64) (uint, error) {
-	if len(t.sortedBlocks) == 0 {
+	sortedBlocks := (*t.sortedBlocks)[t.name]
+	if len(sortedBlocks) == 0 {
 		return 0, errors.New("no block")
 	}
-	if len(t.sortedBlocks) == 1 {
+	if len(sortedBlocks) == 1 {
 		return 0, nil
 	}
 
-	for i, v := range t.sortedBlocks {
-		if v > offset {
+	for i, v := range sortedBlocks {
+		if v > int64(offset) {
 			return uint(i - 1), nil
 		}
 	}
-	return uint(len(t.sortedBlocks) - 1), nil
+	return uint(len(sortedBlocks) - 1), nil
 }
 
 //Todo: Create common cache with writer
 func (t *TopicRead) createBlockReader(blockIndex uint) (*LogFile, error) {
-	if uint(len(t.sortedBlocks)) <= blockIndex {
+	sortedBlocks := (*t.sortedBlocks)[t.name]
+	if uint(len(sortedBlocks)) <= blockIndex {
 		return nil, nil
 	}
-	blockName := createBlockFileName(t.sortedBlocks[blockIndex])
+	blockName := createBlockFileName(sortedBlocks[blockIndex])
 	reader, err := NewLogReader(t.rootPath + separator + t.name + separator + blockName)
 	if err != nil {
 		return nil, err
