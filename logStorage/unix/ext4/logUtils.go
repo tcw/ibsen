@@ -18,6 +18,9 @@ const separator = string(os.PathSeparator)
 
 func findCurrentOffset(blockFileName string) (uint64, error) {
 	var offsetFound uint64 = 0
+	if !doesFileExist(blockFileName) {
+		return offsetFound, nil
+	}
 	file, err := os.OpenFile(blockFileName,
 		os.O_RDONLY, 0400)
 	defer file.Close()
@@ -56,11 +59,14 @@ func findCurrentOffset(blockFileName string) (uint64, error) {
 }
 
 func blockSizeFromFilename(filename string) (int64, error) {
+	if !doesFileExist(filename) {
+		return 0, nil
+	}
 	file, err := os.OpenFile(filename,
 		os.O_RDONLY, 0400)
 	fi, err := file.Stat()
 	if err != nil {
-		log.Println(err)
+		return 0, err
 	}
 	err = file.Close()
 	if err != nil {
@@ -83,7 +89,12 @@ func createBlockFileName(blockName int64) string {
 
 func doesTopicExist(rootPath string, topicName string) bool {
 	_, err := os.Stat(rootPath + separator + topicName)
-	return !os.IsNotExist(err)
+	return os.IsExist(err)
+}
+
+func doesFileExist(path string) bool {
+	_, err := os.Stat(path)
+	return os.IsExist(err)
 }
 
 func createTopic(rootPath string, topicName string) (bool, error) {
@@ -119,11 +130,16 @@ func listUnhiddenDirectories(root string) ([]string, error) {
 func listFilesInDirectory(dir string) ([]string, error) {
 	var files []string
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		files = append(files, path)
+		if path != dir {
+			files = append(files, path)
+		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	if files == nil {
+		files = make([]string, 0)
 	}
 	return files, nil
 }

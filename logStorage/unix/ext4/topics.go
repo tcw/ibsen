@@ -1,17 +1,20 @@
 package ext4
 
 import (
+	"errors"
 	"os"
 )
 
 type TopicRegister struct {
 	topicsRootPath string
-	topics         []string
+	topics         map[string]*BlockRegistry
+	maxBlockSize   int64
 }
 
-func newTopics(rootPath string) (TopicRegister, error) {
-	var topics []string
+func newTopics(rootPath string, maxBlockSize int64) (TopicRegister, error) {
+	var topics = map[string]*BlockRegistry{}
 	register := TopicRegister{
+		maxBlockSize:   maxBlockSize,
 		topicsRootPath: rootPath,
 		topics:         topics,
 	}
@@ -27,7 +30,13 @@ func (tr *TopicRegister) UpdateTopicsFromStorage() error {
 	if err != nil {
 		return err
 	}
-	tr.topics = directories
+	for _, topic := range directories {
+		registry, err := NewBlockRegistry(tr.topicsRootPath, topic, tr.maxBlockSize)
+		if err != nil {
+			return err
+		}
+		tr.topics[topic] = &registry
+	}
 	return nil
 }
 
@@ -39,7 +48,12 @@ func (tr *TopicRegister) CreateTopic(topic string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	tr.topics = append(tr.topics, topic)
+	registry, err := NewBlockRegistry(tr.topicsRootPath, topic, tr.maxBlockSize)
+	if err != nil {
+		return false, err
+	}
+
+	tr.topics[topic] = &registry
 	return true, nil
 }
 
@@ -54,27 +68,15 @@ func (tr *TopicRegister) DropTopic(topic string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	var deletedFromTopics []string
-	for _, v := range tr.topics {
-		if v != topic {
-			deletedFromTopics = append(deletedFromTopics, v)
-		}
-	}
-	tr.topics = deletedFromTopics
+	delete(tr.topics, topic)
 	return true, nil
 }
 
-func (tr *TopicRegister) ListTopics() {
-
+func (tr *TopicRegister) ListTopics() ([]string, error) {
+	return nil, errors.New("not implemented")
 }
 
 func (tr *TopicRegister) doesTopicExist(topic string) bool {
-	exists := false
-	for _, v := range tr.topics {
-		if v == topic {
-			exists = true
-			break
-		}
-	}
+	_, exists := tr.topics[topic]
 	return exists
 }

@@ -24,10 +24,10 @@ type IbsenGrpcServer struct {
 	KeyFile     string
 	UseTls      bool
 	IbsenServer *grpc.Server
-	Storage     *ext4.LogStorage
+	Storage     ext4.LogStorage
 }
 
-func NewIbsenGrpcServer(storage *ext4.LogStorage) *IbsenGrpcServer {
+func NewIbsenGrpcServer(storage ext4.LogStorage) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
 		Port:     50001,
 		CertFile: "",
@@ -57,7 +57,7 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 	igs.IbsenServer = grpcServer
 
 	RegisterIbsenServer(grpcServer, &server{
-		logStorage: *igs.Storage,
+		logStorage: igs.Storage,
 	})
 
 	return grpcServer.Serve(lis)

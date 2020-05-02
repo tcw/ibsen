@@ -110,16 +110,20 @@ func TestLogStorage_Write_Read(t *testing.T) {
 	if !create {
 		t.Failed()
 	}
-	n, err := storage.Write(&logStorage.TopicMessage{
-		Topic:   testTopic1,
-		Message: []byte("hello"),
-	})
-	if err != nil {
-		t.Error(err)
+
+	for i := 0; i < 100000; i++ {
+		n, err := storage.Write(&logStorage.TopicMessage{
+			Topic:   testTopic1,
+			Message: []byte("hello1hello1hello1hello1hello1hello1hello1hello1"),
+		})
+		if err != nil {
+			t.Error(err)
+		}
+		if n == 0 {
+			t.Fail()
+		}
 	}
-	if n == 0 {
-		t.Fail()
-	}
+
 	logChan := make(chan logStorage.LogEntry)
 	var wg sync.WaitGroup
 
@@ -130,10 +134,14 @@ func TestLogStorage_Write_Read(t *testing.T) {
 		}
 	}()
 
-	entry := <-logChan
-	if entry.Offset != 1 {
-		t.Fail()
+	for i := 1; i < 100001; i++ {
+		entry := <-logChan
+		if entry.Offset != uint64(i) {
+			t.Log("expected ", i, " actual ", entry.Offset)
+			t.FailNow()
+		}
 	}
+	print("done")
 }
 
 func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {

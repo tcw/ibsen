@@ -41,7 +41,6 @@ type LogEntry struct {
 }
 
 type LogBatchEntry struct {
-	Offset  uint64
 	Entries *[][]byte
 }
 
