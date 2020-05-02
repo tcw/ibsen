@@ -43,7 +43,12 @@ func (e LogStorage) Write(topicMessage *logStorage.TopicMessage) (int, error) {
 }
 
 func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int, error) {
-	return 0, nil
+	registry := e.topicRegister.topics[topicMessage.Topic]
+	err := registry.WriteBatch(topicMessage.Message)
+	if err != nil {
+		return 0, err
+	}
+	return 1, nil
 }
 
 func (e LogStorage) ReadFromBeginning(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, topic string) error {
@@ -63,6 +68,14 @@ func (e LogStorage) ReadFromNotIncluding(logChan chan logStorage.LogEntry, wg *s
 }
 
 func (e LogStorage) ReadBatchFromBeginning(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int) error {
+	read, err := NewTopicRead(e.topicRegister.topicsRootPath, topic, e.topicRegister.maxBlockSize)
+	if err != nil {
+		return err
+	}
+	err = read.ReadBatchFromBeginning(logChan, wg, batchSize)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

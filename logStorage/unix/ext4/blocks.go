@@ -3,7 +3,6 @@ package ext4
 import (
 	"errors"
 	"fmt"
-	"github.com/tcw/ibsen/logStorage"
 	"os"
 	"sort"
 	"strconv"
@@ -155,7 +154,7 @@ func (br *BlockRegistry) newBlockWriter() (*os.File, error) {
 	return f, nil
 }
 
-func (br *BlockRegistry) WriteBatch(logEntry *logStorage.LogBatchEntry) error {
+func (br *BlockRegistry) WriteBatch(logEntry *[][]byte) error {
 	if br.currentBlockSize > br.maxBlockSize {
 		br.createNewBlock()
 	}
@@ -174,9 +173,9 @@ func (br *BlockRegistry) WriteBatch(logEntry *logStorage.LogBatchEntry) error {
 	return nil
 }
 
-func (br *BlockRegistry) writeBatchToFile(file *os.File, logEntry *logStorage.LogBatchEntry) error {
+func (br *BlockRegistry) writeBatchToFile(file *os.File, logEntry *[][]byte) error {
 	var bytes []byte
-	for _, v := range *logEntry.Entries {
+	for _, v := range *logEntry {
 		br.incrementCurrentOffset(1)
 		bytes = append(bytes, offsetToLittleEndian(br.currentOffset)...)
 		bytes = append(bytes, byteSizeToLittleEndian(len(v))...)

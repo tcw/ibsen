@@ -95,7 +95,40 @@ func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan logStorage.LogEnt
 }
 
 func (t *TopicRead) ReadBatchFromBeginning(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int) error {
-	return EndOfBlock
+	blockIndex := 0
+	var entriesBytes []logStorage.LogEntry
+	for {
+		filename, err := t.blockReg.GetBlockFilename(blockIndex)
+		if err != nil && err != EndOfBlock {
+			return err
+		}
+		if err == EndOfBlock && entriesBytes != nil {
+			wg.Add(1)
+			c <- logStorage.LogEntryBatch{Entries: entriesBytes}
+			return nil
+		}
+		if err == EndOfBlock {
+			return nil
+		}
+		read, err := OpenFileForRead(filename)
+		if err != nil {
+			read.Close()
+			return err
+		}
+		partial, hasSent, err := ReadLogInBatchesToEnd(read, entriesBytes, c, wg, batchSize)
+		if err != nil {
+			return err
+		}
+		if hasSent {
+			entriesBytes = nil
+		}
+		entriesBytes = append(entriesBytes, partial.Entries...)
+		err = read.Close()
+		if err != nil {
+			return err
+		}
+		blockIndex = blockIndex + 1
+	}
 }
 
 func (t *TopicRead) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, offset uint64, batchSize int) error {
