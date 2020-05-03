@@ -25,7 +25,11 @@ func NewTopicRead(rootPath string, topicName string, maxBlockSize int64) (*Topic
 }
 
 func (t *TopicRead) ReadFromBeginning(c chan logStorage.LogEntry, wg *sync.WaitGroup) error {
-	blockIndex := 0
+	return t.ReadFromBlock(c, wg, 0)
+}
+
+func (t *TopicRead) ReadFromBlock(c chan logStorage.LogEntry, wg *sync.WaitGroup, block int) error {
+	blockIndex := block
 	for {
 		filename, err := t.blockReg.GetBlockFilename(blockIndex)
 		if err != nil && err != EndOfBlock {
@@ -67,35 +71,15 @@ func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan logStorage.LogEnt
 	if err != nil {
 		return err
 	}
-
-	blockIndex = blockIndex + 1
-	for {
-		filename, err := t.blockReg.GetBlockFilename(blockIndex)
-		if err != nil && err != EndOfBlock {
-			return err
-		}
-		if err == EndOfBlock {
-			return nil
-		}
-		read, err := OpenFileForRead(filename)
-		if err != nil {
-			read.Close()
-			return err
-		}
-		err = ReadLogToEnd(read, logChan, wg)
-		if err != nil {
-			read.Close()
-			return err
-		}
-		err = read.Close()
-		if err != nil {
-			return err
-		}
-	}
+	return t.ReadFromBlock(logChan, wg, blockIndex+1)
 }
 
 func (t *TopicRead) ReadBatchFromBeginning(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int) error {
-	blockIndex := 0
+	return t.ReadBatchFromBlock(c, wg, batchSize, 0)
+}
+
+func (t *TopicRead) ReadBatchFromBlock(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, block int) error {
+	blockIndex := block
 	var entriesBytes []logStorage.LogEntry
 	for {
 		filename, err := t.blockReg.GetBlockFilename(blockIndex)
@@ -132,5 +116,19 @@ func (t *TopicRead) ReadBatchFromBeginning(c chan logStorage.LogEntryBatch, wg *
 }
 
 func (t *TopicRead) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, offset uint64, batchSize int) error {
-	return EndOfBlock
+	currentBlockIndex, err := t.blockReg.findBlockIndexContainingOffset(offset)
+	if err != nil {
+		return err
+	}
+	blockIndex := int(currentBlockIndex)
+	blockFileName, err := t.blockReg.GetBlockFilename(blockIndex)
+	if err != nil {
+		return err
+	}
+	file, err := OpenFileForRead(blockFileName)
+	err = ReadLogBlockFromOffsetNotIncluding(file, logChan, wg, offset, batchSize)
+	if err != nil {
+		return err
+	}
+	return t.ReadBatchFromBlock(logChan, wg, batchSize, blockIndex+1)
 }

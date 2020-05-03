@@ -64,6 +64,14 @@ func (e LogStorage) ReadFromBeginning(logChan chan logStorage.LogEntry, wg *sync
 }
 
 func (e LogStorage) ReadFromNotIncluding(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, topic string, offset uint64) error {
+	read, err := NewTopicRead(e.topicRegister.topicsRootPath, topic, e.topicRegister.maxBlockSize)
+	if err != nil {
+		return err
+	}
+	err = read.ReadLogFromOffsetNotIncluding(logChan, wg, offset)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -80,6 +88,14 @@ func (e LogStorage) ReadBatchFromBeginning(logChan chan logStorage.LogEntryBatch
 }
 
 func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64, batchSize int) error {
+	read, err := NewTopicRead(e.topicRegister.topicsRootPath, topic, e.topicRegister.maxBlockSize)
+	if err != nil {
+		return err
+	}
+	err = read.ReadBatchFromOffsetNotIncluding(logChan, wg, offset, batchSize)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

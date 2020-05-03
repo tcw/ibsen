@@ -93,18 +93,20 @@ func FastForwardToOffset(file *os.File, offset int64) error {
 	}
 }
 
-func ReadLogBlockFromOffsetNotIncluding(file *os.File, logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, offset uint64, batchSize int) (logStorage.LogEntryBatch, bool, error) {
+func ReadLogBlockFromOffsetNotIncluding(file *os.File, logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, offset uint64, batchSize int) error {
 
 	err := FastForwardToOffset(file, int64(offset))
 	if err != nil {
-		return logStorage.LogEntryBatch{}, false, err
+		return err
 	}
 
-	partialBatch, hasSent, err := ReadLogInBatchesToEnd(file, nil, logChan, wg, batchSize)
+	partialBatch, _, err := ReadLogInBatchesToEnd(file, nil, logChan, wg, batchSize)
 	if err != nil {
-		return logStorage.LogEntryBatch{}, false, err
+		return err
 	}
-	return partialBatch, hasSent, nil
+	wg.Add(1)
+	logChan <- logStorage.LogEntryBatch{Entries: partialBatch.Entries}
+	return nil
 }
 
 func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, logChan chan logStorage.LogEntryBatch,
