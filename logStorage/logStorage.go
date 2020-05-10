@@ -43,11 +43,3 @@ type LogEntry struct {
 type LogBatchEntry struct {
 	Entries *[][]byte
 }
-
-func NewLogEntry(offset uint64, entry []byte) LogEntry {
-	return LogEntry{
-		Offset:   offset,
-		ByteSize: len(entry),
-		Entry:    entry,
-	}
-}

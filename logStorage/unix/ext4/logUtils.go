@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -75,38 +74,18 @@ func blockSizeFromFilename(filename string) (int64, error) {
 	return fi.Size(), nil
 }
 
-func blockSize(file *os.File) int64 {
-	fi, err := file.Stat()
-	if err != nil {
-		log.Println(err)
-	}
-	return fi.Size()
-}
-
 func createBlockFileName(blockName int64) string {
 	return fmt.Sprintf("%020d.log", blockName)
 }
 
 func doesTopicExist(rootPath string, topicName string) bool {
 	_, err := os.Stat(rootPath + separator + topicName)
-	return os.IsExist(err)
+	return !os.IsNotExist(err)
 }
 
 func doesFileExist(path string) bool {
 	_, err := os.Stat(path)
-	return os.IsExist(err)
-}
-
-func createTopic(rootPath string, topicName string) (bool, error) {
-	exist := doesTopicExist(rootPath, topicName)
-	if exist {
-		return false, nil
-	}
-	err := os.Mkdir(rootPath+separator+topicName, 0777) //Todo: more restrictive
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	return !os.IsNotExist(err)
 }
 
 func listUnhiddenDirectories(root string) ([]string, error) {
@@ -144,14 +123,8 @@ func listFilesInDirectory(dir string) ([]string, error) {
 	return files, nil
 }
 
-func listBlocksSorted(topicPath string) ([]int64, error) {
-
+func filesToBlocks(files []string) ([]int64, error) {
 	var blocks []int64
-	files, err := listFilesInDirectory(topicPath)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
 	for _, file := range files {
 		splitFileName := strings.Split(file, ".")
 		if len(splitFileName) != 2 {
@@ -161,12 +134,11 @@ func listBlocksSorted(topicPath string) ([]int64, error) {
 			splitPath := strings.Split(splitFileName[0], separator)
 			parseUint, err := strconv.ParseInt(splitPath[len(splitPath)-1], 10, 64)
 			if err != nil {
-				log.Println("Invalid block format")
+				return nil, err
 			}
 			blocks = append(blocks, parseUint)
 		}
 	}
-	sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
 	return blocks, nil
 }
 
@@ -184,5 +156,4 @@ func byteSizeToLittleEndian(number int) []byte {
 
 func fromLittleEndian(bytes []byte) uint64 {
 	return binary.LittleEndian.Uint64(bytes)
-
 }

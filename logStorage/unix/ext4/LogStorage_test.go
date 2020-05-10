@@ -297,3 +297,20 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 		t.Fail()
 	}
 }
+
+func TestLogStorage_Corruption(t *testing.T) {
+	dir := createTestDir(t)
+	defer os.RemoveAll(dir)
+	storage, err := NewLogStorage(dir, oneMB)
+	if err != nil {
+		t.Error(err)
+	}
+	create, err := storage.Create(testTopic1)
+	if err != nil {
+		t.Error(err)
+	}
+	if !create {
+		t.Fail()
+	}
+	//Todo: correction check
+}

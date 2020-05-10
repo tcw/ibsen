@@ -22,11 +22,10 @@ var _ logStorage.LogStorage = LogStorage{} // Verify that T implements I.
 
 func (e LogStorage) Create(topic string) (bool, error) {
 	return e.topicRegister.CreateTopic(topic)
-
 }
 
 func (e LogStorage) Drop(topic string) (bool, error) {
-	return e.topicRegister.CreateTopic(topic)
+	return e.topicRegister.DropTopic(topic)
 }
 
 func (e LogStorage) ListTopics() ([]string, error) {

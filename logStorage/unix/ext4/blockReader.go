@@ -21,40 +21,6 @@ func OpenFileForRead(fileName string) (*os.File, error) {
 	return f, nil
 }
 
-func ReadCurrentOffset(file *os.File) (uint64, error) {
-	var offsetFound uint64 = 0
-
-	for {
-		bytes := make([]byte, 8)
-		n, err := file.Read(bytes)
-		if err == io.EOF {
-			return offsetFound, nil
-		}
-		if err != nil {
-			return offsetFound, errors.New("error")
-		}
-		if n != 8 {
-			log.Println("offset incorrect")
-		}
-		offsetFound = fromLittleEndian(bytes)
-
-		n, err2 := file.Read(bytes)
-		if n != 8 {
-			log.Println("offset incorrect")
-		}
-		size := fromLittleEndian(bytes)
-		if err2 != nil {
-			log.Println(err2)
-			return 0, err2
-		}
-		_, err = file.Seek(int64(size), 1)
-		if err != nil {
-			println(err)
-			return 0, err
-		}
-	}
-}
-
 func FastForwardToOffset(file *os.File, offset int64) error {
 	var offsetFound int64 = -1
 	for {

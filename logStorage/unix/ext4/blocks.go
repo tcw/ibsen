@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strconv"
-	"strings"
 )
 
 type BlockRegistry struct {
@@ -44,19 +42,9 @@ func (br *BlockRegistry) updateBlocksFromStorage() error {
 		br.currentBlockSize = 0
 		br.currentOffset = 0
 	}
-	for _, file := range files {
-		splitFileName := strings.Split(file, ".")
-		if len(splitFileName) != 2 {
-			continue
-		}
-		if splitFileName[1] == "log" {
-			splitPath := strings.Split(splitFileName[0], separator)
-			parseUint, err := strconv.ParseInt(splitPath[len(splitPath)-1], 10, 64)
-			if err != nil {
-				return err
-			}
-			blocks = append(blocks, parseUint)
-		}
+	blocks, err2 := filesToBlocks(files)
+	if err2 != nil {
+		return err2
 	}
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
 	br.blocks = blocks

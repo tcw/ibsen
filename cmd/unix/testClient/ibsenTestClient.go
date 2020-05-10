@@ -179,7 +179,6 @@ func main() {
 			if in == nil {
 				continue
 			}
-			log.Println(len(in.Entries))
 			entries := in.Entries
 			for _, v := range entries {
 				if *b64Output {

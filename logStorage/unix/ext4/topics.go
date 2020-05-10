@@ -1,7 +1,6 @@
 package ext4
 
 import (
-	"errors"
 	"os"
 )
 
@@ -73,7 +72,11 @@ func (tr *TopicRegister) DropTopic(topic string) (bool, error) {
 }
 
 func (tr *TopicRegister) ListTopics() ([]string, error) {
-	return nil, errors.New("not implemented")
+	topics := make([]string, 0, len(tr.topics))
+	for k := range tr.topics {
+		topics = append(topics, k)
+	}
+	return topics, nil
 }
 
 func (tr *TopicRegister) doesTopicExist(topic string) bool {
