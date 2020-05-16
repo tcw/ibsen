@@ -10,8 +10,6 @@ import (
 	"strings"
 )
 
-var crc32q = crc32.MakeTable(crc32.Castagnoli)
-
 func performCorruptionCheck(rootPath string) error {
 	topics, err := listUnhiddenDirectories(rootPath)
 	if err != nil {
@@ -57,9 +55,9 @@ func correctFile(filename string, safePoint int) error {
 		return err
 	}
 	buffer := make([]byte, 4096)
-	var totalbytesRead int = 0
+	var totalBytesRead int = 0
 	for {
-		bytesread, err := file.Read(buffer)
+		bytesRead, err := file.Read(buffer)
 		if err != nil {
 			if err != io.EOF {
 				fmt.Println(err)
@@ -67,9 +65,9 @@ func correctFile(filename string, safePoint int) error {
 				return err
 			}
 		}
-		totalbytesRead = totalbytesRead + bytesread
-		if totalbytesRead > safePoint {
-			f.Write(buffer[0 : (totalbytesRead-safePoint)-1])
+		totalBytesRead = totalBytesRead + bytesRead
+		if totalBytesRead > safePoint {
+			f.Write(buffer[0 : (totalBytesRead-safePoint)-1])
 		} else {
 			f.Write(buffer)
 		}
@@ -83,9 +81,10 @@ func checkForCorruption(file *os.File) (int, error) {
 	var currentOffset int64 = -1
 	var lastSafePoint int = 0
 	for {
-		bytes := make([]byte, 8)
+		offsetBytes := make([]byte, 8)
+		byteSizeBytes := make([]byte, 8)
 		checksum := make([]byte, 4)
-		n, err := io.ReadFull(file, bytes)
+		n, err := io.ReadFull(file, offsetBytes)
 		if err == io.EOF {
 			return lastSafePoint, nil
 		}
@@ -95,7 +94,7 @@ func checkForCorruption(file *os.File) (int, error) {
 		if n != 8 {
 			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
 		}
-		offset := int64(fromLittleEndian(bytes))
+		offset := int64(fromLittleEndian(offsetBytes))
 		if currentOffset != -1 {
 			if currentOffset+1 != offset {
 				return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
@@ -103,20 +102,42 @@ func checkForCorruption(file *os.File) (int, error) {
 		}
 		currentOffset = offset
 
-		n, err2 := io.ReadFull(file, bytes)
-		if n != 8 {
-			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
-		}
-		size := fromLittleEndian(bytes)
+		n, err2 := io.ReadFull(file, checksum)
 		if err2 != nil {
 			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
 		}
+		if n != 4 {
+			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
+		}
+		checksumValue := fromLittleEndianToUint32(checksum)
 
-		entry := make([]byte, size)
-		n, err3 := io.ReadFull(file, entry)
+		n, err3 := io.ReadFull(file, byteSizeBytes)
 		if err3 != nil {
 			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
 		}
+		if n != 8 {
+			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
+		}
+		size := fromLittleEndian(byteSizeBytes)
+
+		entryBytes := make([]byte, size)
+		n, err4 := io.ReadFull(file, entryBytes)
+		if err4 != nil {
+			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
+		}
+		if n != int(size) {
+			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
+		}
+
+		record := append(offsetBytes, byteSizeBytes...)
+		record = append(record, entryBytes...)
+
+		recordChecksum := crc32.Checksum(record, crc32q)
+
+		if recordChecksum != checksumValue {
+			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset, illegal checksum %d", currentOffset))
+		}
+
 		lastSafePoint = lastSafePoint + 20 + int(size)
 	}
 }
