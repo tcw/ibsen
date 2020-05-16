@@ -36,6 +36,7 @@ type TopicBatchMessage struct {
 
 type LogEntry struct {
 	Offset   uint64
+	Crc      uint32
 	ByteSize int
 	Entry    []byte
 }

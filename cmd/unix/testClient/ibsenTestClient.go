@@ -108,6 +108,8 @@ func main() {
 			TopicName:      *useTestTopic,
 			MessagePayload: []byte(string(b)),
 		}
+
+		fmt.Printf("Sending message : %s\n", string(b))
 		for i := 0; i < *numberOfEntries; i++ {
 			err = r.Send(&mes)
 			if err != nil {

@@ -3,6 +3,7 @@ package ext4
 import (
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"sort"
 )
@@ -17,6 +18,8 @@ type BlockRegistry struct {
 }
 
 var EndOfBlock = errors.New("End of block")
+
+var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
 func NewBlockRegistry(rootPath string, topic string, maxBlockSize int64) (BlockRegistry, error) {
 	registry := BlockRegistry{
@@ -165,9 +168,7 @@ func (br *BlockRegistry) writeBatchToFile(file *os.File, logEntry *[][]byte) err
 	var bytes []byte
 	for _, v := range *logEntry {
 		br.incrementCurrentOffset(1)
-		bytes = append(bytes, offsetToLittleEndian(br.currentOffset)...)
-		bytes = append(bytes, byteSizeToLittleEndian(len(v))...)
-		bytes = append(bytes, v...)
+		bytes = append(bytes, createByteEntry(br, v)...)
 	}
 	n, err := file.Write(bytes)
 	br.incrementCurrentByteSize(n)
@@ -198,12 +199,24 @@ func (br *BlockRegistry) Write(entry []byte) error {
 
 func (br *BlockRegistry) writeToFile(file *os.File, entry []byte) error {
 	br.incrementCurrentOffset(1)
-	bytes := append(offsetToLittleEndian(br.currentOffset), byteSizeToLittleEndian(len(entry))...)
-	bytes = append(bytes, entry...)
+	bytes := createByteEntry(br, entry)
 	n, err := file.Write(bytes)
 	if err != nil {
 		return err
 	}
 	br.incrementCurrentByteSize(n)
 	return nil
+}
+
+func createByteEntry(br *BlockRegistry, entry []byte) []byte {
+	offset := offsetToLittleEndian(br.currentOffset)
+	byteSize := byteSizeToLittleEndian(len(entry))
+	checksum := crc32.Checksum(offset, crc32q)
+	checksum = crc32.Update(checksum, crc32q, byteSize)
+	checksum = crc32.Update(checksum, crc32q, entry)
+	check := uint32ToLittleEndian(checksum)
+	bytes := append(offset, check...)
+	bytes = append(bytes, byteSize...)
+	bytes = append(bytes, entry...)
+	return bytes
 }

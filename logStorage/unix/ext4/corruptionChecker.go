@@ -3,11 +3,14 @@ package ext4
 import (
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"sort"
 	"strings"
 )
+
+var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
 func performCorruptionCheck(rootPath string) error {
 	topics, err := listUnhiddenDirectories(rootPath)
@@ -81,7 +84,8 @@ func checkForCorruption(file *os.File) (int, error) {
 	var lastSafePoint int = 0
 	for {
 		bytes := make([]byte, 8)
-		n, err := file.Read(bytes)
+		checksum := make([]byte, 4)
+		n, err := io.ReadFull(file, bytes)
 		if err == io.EOF {
 			return lastSafePoint, nil
 		}
@@ -99,7 +103,7 @@ func checkForCorruption(file *os.File) (int, error) {
 		}
 		currentOffset = offset
 
-		n, err2 := file.Read(bytes)
+		n, err2 := io.ReadFull(file, bytes)
 		if n != 8 {
 			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
 		}
@@ -107,10 +111,12 @@ func checkForCorruption(file *os.File) (int, error) {
 		if err2 != nil {
 			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
 		}
-		_, err = file.Seek(int64(size), 1)
-		if err != nil {
+
+		entry := make([]byte, size)
+		n, err3 := io.ReadFull(file, entry)
+		if err3 != nil {
 			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
 		}
-		lastSafePoint = lastSafePoint + 16 + int(size)
+		lastSafePoint = lastSafePoint + 20 + int(size)
 	}
 }

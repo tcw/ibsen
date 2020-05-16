@@ -28,7 +28,8 @@ func FastForwardToOffset(file *os.File, offset int64) error {
 			return nil
 		}
 		bytes := make([]byte, 8)
-		n, err := file.Read(bytes)
+		checksum := make([]byte, 4)
+		n, err := io.ReadFull(file, bytes)
 		if err == io.EOF {
 			return errors.New("no offset in block")
 		}
@@ -40,17 +41,25 @@ func FastForwardToOffset(file *os.File, offset int64) error {
 			return errors.New("offset incorrect")
 		}
 		offsetFound = int64(fromLittleEndian(bytes))
+		n, err2 := io.ReadFull(file, checksum)
+		if err2 != nil {
+			return errors.New("error")
+		}
+		if n != 4 {
+			log.Println("byte size incorrect")
+			return errors.New("byte size incorrect")
+		}
 
-		n, err2 := file.Read(bytes)
+		n, err3 := io.ReadFull(file, bytes)
+		if err3 != nil {
+			log.Println(err3)
+			return err3
+		}
 		if n != 8 {
-			log.Println("offset incorrect")
-			return errors.New("offset incorrect")
+			log.Println("byte size incorrect")
+			return errors.New("byte size incorrect")
 		}
 		size := fromLittleEndian(bytes)
-		if err2 != nil {
-			log.Println(err2)
-			return err2
-		}
 		_, err = file.Seek(int64(size), 1)
 		if err != nil {
 			println(err)
@@ -81,6 +90,7 @@ func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, lo
 	hasSent := false
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
+	checksum := make([]byte, 4)
 	var entryBatch []logStorage.LogEntry
 	if partialBatch != nil {
 		entryBatch = append(entryBatch, partialBatch...)
@@ -95,7 +105,6 @@ func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, lo
 		}
 
 		n, err := io.ReadFull(reader, bytes)
-
 		if err == io.EOF {
 			return logStorage.LogEntryBatch{Entries: entryBatch}, hasSent, nil
 		}
@@ -109,21 +118,33 @@ func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, lo
 		}
 		offset := int64(fromLittleEndian(bytes))
 
-		n, err2 := io.ReadFull(reader, bytes)
+		n, err2 := io.ReadFull(reader, checksum)
+		if err2 != nil {
+			log.Println(err2)
+			return logStorage.LogEntryBatch{}, false, err2
+		}
+		if n != 4 {
+			log.Println("crc size incorrect")
+			return logStorage.LogEntryBatch{}, false, errors.New("crc size incorrect")
+		}
+		checksumValue := fromLittleEndianToUint32(bytes)
+
+		n, err3 := io.ReadFull(reader, bytes)
+		if err3 != nil {
+			log.Println(err3)
+			return logStorage.LogEntryBatch{}, false, err3
+		}
 		if n != 8 {
 			log.Println("entry size incorrect")
 			return logStorage.LogEntryBatch{}, false, errors.New("entry size incorrect")
 		}
 		size := fromLittleEndian(bytes)
-		if err2 != nil {
-			log.Println(err2)
-			return logStorage.LogEntryBatch{}, false, err2
-		}
+
 		entry := make([]byte, size)
-		n, err3 := io.ReadFull(reader, entry)
-		if err3 != nil {
-			log.Println(err3)
-			return logStorage.LogEntryBatch{}, false, err3
+		n, err4 := io.ReadFull(reader, entry)
+		if err4 != nil {
+			log.Println(err4)
+			return logStorage.LogEntryBatch{}, false, err4
 		}
 		if n != int(size) {
 			log.Println("entry incorrect")
@@ -131,6 +152,7 @@ func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, lo
 		}
 		entryBatch = append(entryBatch, logStorage.LogEntry{
 			Offset:   uint64(offset),
+			Crc:      checksumValue,
 			ByteSize: int(size),
 			Entry:    entry,
 		})
@@ -153,6 +175,7 @@ func ReadLogFromOffsetNotIncluding(file *os.File, c chan logStorage.LogEntry, wg
 func ReadLogToEnd(file *os.File, c chan logStorage.LogEntry, wg *sync.WaitGroup) error {
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
+	checksum := make([]byte, 4)
 	for {
 		n, err := io.ReadFull(reader, bytes)
 		if err == io.EOF {
@@ -167,21 +190,31 @@ func ReadLogToEnd(file *os.File, c chan logStorage.LogEntry, wg *sync.WaitGroup)
 			return errors.New("offset incorrect")
 		}
 		offset := fromLittleEndian(bytes)
-		n, err2 := io.ReadFull(reader, bytes)
+		n, err2 := io.ReadFull(reader, checksum)
+		if n != 4 {
+			log.Println("entry size incorrect")
+			return errors.New("entry size incorrect")
+		}
+		checksumValue := fromLittleEndianToUint32(checksum)
+		if err2 != nil {
+			log.Println(err2)
+			return err2
+		}
+		n, err3 := io.ReadFull(reader, bytes)
 		if n != 8 {
 			log.Println("entry size incorrect")
 			return errors.New("entry size incorrect")
 		}
 		size := fromLittleEndian(bytes)
-		if err2 != nil {
-			log.Println(err2)
-			return err2
-		}
-		entry := make([]byte, size)
-		n, err3 := io.ReadFull(reader, entry)
 		if err3 != nil {
 			log.Println(err3)
 			return err3
+		}
+		entry := make([]byte, size)
+		n, err4 := io.ReadFull(reader, entry)
+		if err4 != nil {
+			log.Println(err4)
+			return err4
 		}
 		if n != int(size) {
 			log.Println("entry incorrect")
@@ -190,6 +223,7 @@ func ReadLogToEnd(file *os.File, c chan logStorage.LogEntry, wg *sync.WaitGroup)
 		wg.Add(1)
 		c <- logStorage.LogEntry{
 			Offset:   offset,
+			Crc:      checksumValue,
 			ByteSize: int(size),
 			Entry:    entry,
 		}

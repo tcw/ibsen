@@ -154,6 +154,16 @@ func byteSizeToLittleEndian(number int) []byte {
 	return bytes
 }
 
+func uint32ToLittleEndian(number uint32) []byte {
+	bytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(bytes, number)
+	return bytes
+}
+
 func fromLittleEndian(bytes []byte) uint64 {
 	return binary.LittleEndian.Uint64(bytes)
+}
+
+func fromLittleEndianToUint32(bytes []byte) uint32 {
+	return binary.LittleEndian.Uint32(bytes)
 }
