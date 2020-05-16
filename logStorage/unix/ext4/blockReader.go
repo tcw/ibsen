@@ -10,15 +10,58 @@ import (
 	"sync"
 )
 
-func OpenFileForRead(fileName string) (*os.File, error) {
-
-	f, err := os.OpenFile(fileName,
-		os.O_RDONLY, 0400)
+//Todo: refactor duplications
+func findLastOffset(blockFileName string) (int64, error) {
+	var offsetFound int64 = -1
+	file, err := OpenFileForRead(blockFileName)
 	if err != nil {
-		log.Println(err)
-		return nil, err
+		return 0, err
 	}
-	return f, nil
+	defer file.Close()
+	for {
+		bytes := make([]byte, 8)
+		checksum := make([]byte, 4)
+		n, err := io.ReadFull(file, bytes)
+		if err == io.EOF {
+			return offsetFound, nil
+		}
+
+		if err == io.EOF {
+			return offsetFound, errors.New("no offset in block")
+		}
+		if err != nil {
+			return offsetFound, errors.New("error")
+		}
+		if n != 8 {
+			log.Println("offset incorrect")
+			return offsetFound, errors.New("offset incorrect")
+		}
+		offsetFound = int64(fromLittleEndian(bytes))
+		n, err2 := io.ReadFull(file, checksum)
+		if err2 != nil {
+			return offsetFound, errors.New("error")
+		}
+		if n != 4 {
+			log.Println("byte size incorrect")
+			return offsetFound, errors.New("byte size incorrect")
+		}
+
+		n, err3 := io.ReadFull(file, bytes)
+		if err3 != nil {
+			log.Println(err3)
+			return offsetFound, err3
+		}
+		if n != 8 {
+			log.Println("byte size incorrect")
+			return offsetFound, errors.New("byte size incorrect")
+		}
+		size := fromLittleEndian(bytes)
+		_, err = file.Seek(int64(size), 1)
+		if err != nil {
+			println(err)
+			return offsetFound, err
+		}
+	}
 }
 
 func FastForwardToOffset(file *os.File, offset int64) error {
@@ -96,7 +139,6 @@ func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, lo
 		entryBatch = append(entryBatch, partialBatch...)
 	}
 	for {
-
 		if entryBatch != nil && len(entryBatch)%batchSize == 0 {
 			wg.Add(1)
 			logChan <- logStorage.LogEntryBatch{Entries: entryBatch}

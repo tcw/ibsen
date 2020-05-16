@@ -44,6 +44,7 @@ func (br *BlockRegistry) updateBlocksFromStorage() error {
 		blocks = []int64{0}
 		br.currentBlockSize = 0
 		br.currentOffset = 0
+		return nil
 	}
 	blocks, err2 := filesToBlocks(files)
 	if err2 != nil {
@@ -56,11 +57,11 @@ func (br *BlockRegistry) updateBlocksFromStorage() error {
 		return err
 	}
 	br.currentBlockSize = blockSize
-	offset, err := findCurrentOffset(br.CurrentBlockFileName())
+	offset, err := findLastOffset(br.CurrentBlockFileName())
 	if err != nil {
 		return err
 	}
-	br.currentOffset = offset
+	br.currentOffset = uint64(offset)
 	return nil
 }
 
