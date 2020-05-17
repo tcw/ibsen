@@ -312,5 +312,47 @@ func TestLogStorage_Corruption(t *testing.T) {
 	if !create {
 		t.Fail()
 	}
-	//Todo: correction check
+	_, err = storage.Write(&logStorage.TopicMessage{
+		Topic:   testTopic1,
+		Message: []byte("hello1hello1hello1hello1hello1hello1hello1hello1"),
+	})
+	if err != nil {
+		t.Error(err)
+	}
+	_, err = storage.Write(&logStorage.TopicMessage{
+		Topic:   testTopic1,
+		Message: []byte("hello1hello1hello1hello1hello1hello1hello1hello1"),
+	})
+	if err != nil {
+		t.Error(err)
+	}
+	topics := storage.topicRegister.topics
+	blockFileName := topics[testTopic1].CurrentBlockFileName()
+	file, err := OpenFileForReadWrite(blockFileName)
+	corruption, err := checkForCorruption(file)
+	if err != nil {
+		t.Error(err, corruption)
+	}
+
+	_, err = file.WriteAt([]byte("ooo"), 100)
+	if err != nil {
+		t.Error(err)
+	}
+	file.Sync()
+	file.Close()
+	file, err = OpenFileForReadWrite(blockFileName)
+	corruption, err = checkForCorruption(file)
+	if err == nil {
+		t.Error("Did not detect corruption")
+	}
+	file.Close()
+	err = correctFile(blockFileName, corruption)
+	if err != nil {
+		t.Error(err)
+	}
+	file, err = OpenFileForReadWrite(blockFileName)
+	corruption, err = checkForCorruption(file)
+	if err != nil {
+		t.Error(err, corruption)
+	}
 }

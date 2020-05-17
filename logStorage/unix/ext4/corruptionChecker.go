@@ -40,6 +40,7 @@ func performCorruptionCheck(rootPath string) error {
 }
 
 func correctFile(filename string, safePoint int) error {
+	orgFileName := filename
 	corruptFile := strings.Replace(filename, ".log", ".corrupt", -1)
 	err2 := os.Rename(filename, corruptFile)
 	if err2 != nil {
@@ -49,9 +50,8 @@ func correctFile(filename string, safePoint int) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(file.Name(),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
+	correctedFile, err3 := OpenFileForWrite(orgFileName)
+	if err3 != nil {
 		return err
 	}
 	buffer := make([]byte, 4096)
@@ -60,19 +60,20 @@ func correctFile(filename string, safePoint int) error {
 		bytesRead, err := file.Read(buffer)
 		if err != nil {
 			if err != io.EOF {
-				fmt.Println(err)
-			} else {
 				return err
+			} else {
+				return nil
 			}
 		}
 		totalBytesRead = totalBytesRead + bytesRead
 		if totalBytesRead > safePoint {
-			f.Write(buffer[0 : (totalBytesRead-safePoint)-1])
+			correctedFile.Write(buffer[0:(totalBytesRead - safePoint)])
 		} else {
-			f.Write(buffer)
+			correctedFile.Write(buffer)
 		}
 	}
-	f.Close()
+	correctedFile.Sync()
+	correctedFile.Close()
 	file.Close()
 	return nil
 }

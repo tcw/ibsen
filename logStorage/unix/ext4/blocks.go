@@ -137,20 +137,11 @@ func (br *BlockRegistry) createBlockFileName(offset int64) string {
 	return fmt.Sprintf("%020d.log", offset)
 }
 
-func (br *BlockRegistry) newBlockWriter() (*os.File, error) {
-	f, err := os.OpenFile(br.CurrentBlockFileName(),
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return nil, err
-	}
-	return f, nil
-}
-
 func (br *BlockRegistry) WriteBatch(logEntry *[][]byte) error {
 	if br.currentBlockSize > br.maxBlockSize {
 		br.createNewBlock()
 	}
-	writer, err := br.newBlockWriter()
+	writer, err := OpenFileForWrite(br.CurrentBlockFileName())
 	if err != nil {
 		return err
 	}
@@ -183,7 +174,7 @@ func (br *BlockRegistry) Write(entry []byte) error {
 	if br.currentBlockSize > br.maxBlockSize {
 		br.createNewBlock()
 	}
-	writer, err := br.newBlockWriter()
+	writer, err := OpenFileForWrite(br.CurrentBlockFileName())
 	if err != nil {
 		return err
 	}

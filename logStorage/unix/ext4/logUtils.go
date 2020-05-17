@@ -14,6 +14,24 @@ import (
 
 const separator = string(os.PathSeparator)
 
+func OpenFileForReadWrite(fileName string) (*os.File, error) {
+	f, err := os.OpenFile(fileName,
+		os.O_CREATE|os.O_RDWR, 0700)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func OpenFileForWrite(fileName string) (*os.File, error) {
+	f, err := os.OpenFile(fileName,
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
 func OpenFileForRead(fileName string) (*os.File, error) {
 	if !doesFileExist(fileName) {
 		return nil, errors.New(fmt.Sprintf("File %s does not exist", fileName))
