@@ -36,19 +36,11 @@ type TopicBatchMessage struct {
 
 type LogEntry struct {
 	Offset   uint64
+	Crc      uint32
 	ByteSize int
 	Entry    []byte
 }
 
 type LogBatchEntry struct {
-	Offset  uint64
 	Entries *[][]byte
-}
-
-func NewLogEntry(offset uint64, entry []byte) LogEntry {
-	return LogEntry{
-		Offset:   offset,
-		ByteSize: len(entry),
-		Entry:    entry,
-	}
 }

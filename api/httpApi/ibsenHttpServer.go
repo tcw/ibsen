@@ -18,10 +18,10 @@ import (
 type IbsenHttpServer struct {
 	Port        uint16
 	IbsenServer *http.Server
-	Storage     *ext4.LogStorage
+	Storage     ext4.LogStorage
 }
 
-func NewIbsenHttpServer(storage *ext4.LogStorage) *IbsenHttpServer {
+func NewIbsenHttpServer(storage ext4.LogStorage) *IbsenHttpServer {
 	server := IbsenHttpServer{
 		Port:    5001,
 		Storage: storage,
