@@ -50,7 +50,7 @@ var done chan bool = make(chan bool)
 var doneCleanup chan bool = make(chan bool)
 var locked chan bool = make(chan bool)
 
-func main() {
+func mainOld() {
 
 	flag.Parse()
 	log.Printf("app.config %v\n", getConfig(flag.CommandLine))
