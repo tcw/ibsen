@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"bufio"
@@ -28,7 +28,7 @@ var (
 	b64Output       = flag.Bool("o64", false, "Print entry output as base64")
 )
 
-func main() {
+func mainOld() {
 
 	// go tool pprof --pdf ibsen cpu.pprof > callgraph.pdf
 	// evince callgraph.pdf

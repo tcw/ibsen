@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"bufio"
@@ -22,7 +22,7 @@ var (
 	timeOutInMinutes = flag.Int("t", 5, "Minutes before time out")
 )
 
-func main() {
+func mainOld2() {
 
 	flag.Parse()
 	conn, err := grpc.Dial("localhost:50001", grpc.WithInsecure(), grpc.WithBlock())

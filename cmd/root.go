@@ -3,30 +3,19 @@ package cmd
 import (
 	"fmt"
 	"github.com/spf13/cobra"
+	"log"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
 var (
 	storagePath    string
 	useHttp        bool
-	grpcPort       int
-	httpPort       int
+	serverPort     int
 	maxBlockSizeMB int
-	cpuprofile     bool
-	memprofile     bool
-	ibsenFiglet    = `
-                           _____ _                    
-                          |_   _| |                   
-                            | | | |__  ___  ___ _ __  
-                            | | | '_ \/ __|/ _ \ '_ \ 
-                           _| |_| |_) \__ \  __/ | | |
-                          |_____|_.__/|___/\___|_| |_|
-
-	'One should not read to devour, but to see what can be applied.'
-	 Henrik Ibsen (1828–1906)
-
-`
+	cpuprofile     string
+	memprofile     string
 
 	rootCmd = &cobra.Command{
 		Use:   "ibsen",
@@ -36,7 +25,7 @@ var (
 	}
 
 	cmdServer = &cobra.Command{
-		Use:   "start [from directory]",
+		Use:   "server [from directory]",
 		Short: "start",
 		Long:  `start`,
 	}
@@ -47,7 +36,11 @@ var (
 		Long:  `start`,
 		Args:  cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Echo: " + strings.Join(args, " "))
+			absolutePath, err2 := filepath.Abs(args[1])
+			if err2 != nil {
+				log.Fatal(err2)
+			}
+			fmt.Println("Echo: " + absolutePath)
 		},
 	}
 
@@ -122,13 +115,23 @@ func Execute() {
 
 func init() {
 
-	rootCmd.PersistentFlags().StringVarP(&storagePath, "path", "p", "", "config file (default is current directory)")
-	rootCmd.PersistentFlags().BoolVarP(&useHttp, "http", "u", false, "config file (default is current directory)")
-	rootCmd.PersistentFlags().BoolVarP(&cpuprofile, "cpuprofile", "c", false, "config file (default is current directory)")
-	rootCmd.PersistentFlags().BoolVarP(&memprofile, "memprofile", "m", false, "config file (default is current directory)")
-	rootCmd.PersistentFlags().IntVarP(&grpcPort, "grpcPort", "g", 50001, "config file (default is current directory)")
-	rootCmd.PersistentFlags().IntVarP(&httpPort, "httpPort", "h", 5001, "config file (default is current directory)")
-	rootCmd.PersistentFlags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "b", 100, "config file (default is current directory)")
+	rootCmd.PersistentFlags().BoolVarP(&useHttp, "http1.1", "u", false, "config file (default is current directory)")
+	rootCmd.PersistentFlags().IntVarP(&serverPort, "port", "p", 50001, "config file (default is current directory)")
+	cmdServer.PersistentFlags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "b", 100, "config file (default is current directory)")
+	rootCmd.PersistentFlags().StringVarP(&cpuprofile, "cpuprofile", "c", "", "config file (default is current directory)")
+	rootCmd.PersistentFlags().StringVarP(&memprofile, "memprofile", "m", "", "config file (default is current directory)")
+	err := rootCmd.PersistentFlags().MarkHidden("cpuprofile")
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = rootCmd.PersistentFlags().MarkHidden("memprofile")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if useHttp && serverPort == 50001 {
+		serverPort = 5001
+	}
 
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdCat, cmdCheck)
 	cmdServer.AddCommand(cmdServerStart)
