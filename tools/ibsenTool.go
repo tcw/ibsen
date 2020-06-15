@@ -2,7 +2,6 @@ package tools
 
 import (
 	"encoding/base64"
-	"flag"
 	"fmt"
 	"github.com/tcw/ibsen/logStorage"
 	"github.com/tcw/ibsen/logStorage/unix/ext4"
@@ -13,17 +12,10 @@ import (
 	"sync"
 )
 
-var (
-	topic = flag.String("t", "", "Read log topic directory")
-	file  = flag.String("f", "", "Read log file")
-)
+func ReadTopic(readPath string) {
 
-func main() {
-
-	flag.Parse()
-
-	if *topic != "" {
-		abs, err := filepath.Abs(*topic)
+	if readPath != "" {
+		abs, err := filepath.Abs(readPath)
 		if err != nil {
 			log.Println("Absolute:", abs)
 		}
@@ -59,29 +51,20 @@ func main() {
 			}
 			wg.Wait()
 		} else {
-			log.Println("Not a dir")
+			logChannel := make(chan logStorage.LogEntry)
+			var wg sync.WaitGroup
+			go writeToStdOut(logChannel, &wg)
+			openFile, err := ext4.OpenFileForRead(readPath)
+			err = ext4.ReadLogToEnd(openFile, logChannel, &wg)
+			if err != nil {
+				log.Println(err)
+			}
+			err = openFile.Close()
+			if err != nil {
+				println(err)
+			}
+			wg.Wait()
 		}
-	}
-
-	if *file != "" {
-		abs, err := filepath.Abs(*file)
-		if err != nil {
-			log.Println("Absolute:", abs)
-		}
-
-		logChannel := make(chan logStorage.LogEntry)
-		var wg sync.WaitGroup
-		go writeToStdOut(logChannel, &wg)
-		openFile, err := ext4.OpenFileForRead(*file)
-		err = ext4.ReadLogToEnd(openFile, logChannel, &wg)
-		if err != nil {
-			log.Println(err)
-		}
-		err = openFile.Close()
-		if err != nil {
-			println(err)
-		}
-		wg.Wait()
 	}
 }
 

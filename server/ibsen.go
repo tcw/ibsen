@@ -41,13 +41,14 @@ var ibsenFiglet = `
 type IbsenServer struct {
 	DataPath     string
 	UseHttp      bool
+	Host         string
 	Port         int
 	MaxBlockSize int
 	CpuProfile   string
 	MemProfile   string
 }
 
-func (ibs *IbsenServer) start() {
+func (ibs *IbsenServer) Start() {
 	go ibs.initSignals()
 	waitForWriteLock(ibs.DataPath)
 
@@ -143,7 +144,7 @@ func (ibs *IbsenServer) initSignals() {
 	ibs.signalHandler(<-captureSignal)
 }
 
-func (ibs *IbsenServer) shutdownCleanly() {
+func (ibs *IbsenServer) ShutdownCleanly() {
 	if ibs.CpuProfile != "" {
 		pprof.StopCPUProfile()
 	}
@@ -182,22 +183,25 @@ func (ibs *IbsenServer) signalHandler(signal os.Signal) {
 	switch signal {
 
 	case syscall.SIGHUP:
-		ibs.shutdownCleanly()
+		ibs.ShutdownCleanly()
 
 	case syscall.SIGINT:
-		ibs.shutdownCleanly()
+		ibs.ShutdownCleanly()
 
 	case syscall.SIGTERM:
-		ibs.shutdownCleanly()
+		ibs.ShutdownCleanly()
 
 	case syscall.SIGQUIT:
-		ibs.shutdownCleanly()
+		ibs.ShutdownCleanly()
 
 	case syscall.SIGABRT:
-		ibs.shutdownCleanly()
+		ibs.ShutdownCleanly()
+
+	case syscall.SIGSEGV:
+		ibs.ShutdownCleanly()
 
 	default:
 		log.Printf("Unexpected system signal [%s] sent to Ibsen. Trying to gracefully shutdown, without any garanties...", signal.String())
-		ibs.shutdownCleanly()
+		ibs.ShutdownCleanly()
 	}
 }
