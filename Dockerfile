@@ -13,4 +13,4 @@ FROM scratch
 COPY --from=builder /bin/* /bin/
 COPY --from=builder /data /data
 
-CMD ["/bin/ibsen","-s","/data"]
+CMD ["/bin/ibsen","server","start","/data"]

@@ -14,7 +14,6 @@ import (
 )
 
 var (
-	storagePath    string
 	useHttp        bool
 	host           string
 	serverPort     int
@@ -24,22 +23,25 @@ var (
 
 	rootCmd = &cobra.Command{
 		Use:   "ibsen",
-		Short: "Ibsen is a kurbernetes friendly streaming platform",
+		Short: "Ibsen is a kubernetes friendly streaming platform",
 		Long: `Ibsen builds on the shoulders of giants. Taking advantage of the recent advances in 
 			distributed block storage and unix's philosophy of simplicity'`,
+		TraverseChildren: true,
 	}
 
 	cmdServer = &cobra.Command{
-		Use:   "server",
-		Short: "server",
-		Long:  `server`,
+		Use:              "server",
+		Short:            "server",
+		Long:             `server`,
+		TraverseChildren: true,
 	}
 
 	cmdServerStart = &cobra.Command{
-		Use:   "start [data directory]",
-		Short: "start",
-		Long:  `start`,
-		Args:  cobra.MinimumNArgs(1),
+		Use:              "start [data directory]",
+		Short:            "start",
+		Long:             `start`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			absolutePath, err2 := filepath.Abs(args[0])
 			if err2 != nil {
@@ -47,10 +49,10 @@ var (
 			}
 			ibsenServer := server.IbsenServer{
 				DataPath:     absolutePath,
-				UseHttp:      false,
-				Host:         "localhost",
-				Port:         50001,
-				MaxBlockSize: 100,
+				UseHttp:      useHttp,
+				Host:         host,
+				Port:         serverPort,
+				MaxBlockSize: maxBlockSizeMB,
 				CpuProfile:   "",
 				MemProfile:   "",
 			}
@@ -129,15 +131,7 @@ var (
 )
 
 func startClient() client.IbsenClient {
-	serverHost, err := rootCmd.Flags().GetString("host")
-	if err != nil {
-		log.Fatal(err)
-	}
-	serverPort, err := rootCmd.Flags().GetInt("port")
-	if err != nil {
-		log.Fatal(err)
-	}
-	return client.Start(serverHost + ":" + strconv.Itoa(serverPort))
+	return client.Start(host + ":" + strconv.Itoa(serverPort))
 }
 
 func Execute() {
@@ -150,17 +144,18 @@ func Execute() {
 
 func init() {
 
-	rootCmd.PersistentFlags().BoolVarP(&useHttp, "http1.1", "u", false, "config file (default is current directory)")
-	rootCmd.PersistentFlags().IntVarP(&serverPort, "port", "p", 50001, "config file (default is current directory)")
-	rootCmd.PersistentFlags().StringVarP(&host, "host", "l", "localhost", "config file (default is current directory)")
-	cmdServer.PersistentFlags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "b", 100, "config file (default is current directory)")
-	rootCmd.PersistentFlags().StringVarP(&cpuprofile, "cpuprofile", "c", "", "config file (default is current directory)")
-	rootCmd.PersistentFlags().StringVarP(&memprofile, "memprofile", "m", "", "config file (default is current directory)")
-	err := rootCmd.PersistentFlags().MarkHidden("cpuprofile")
+	cmdServer.Flags().BoolVarP(&useHttp, "http", "u", true, "config file (default is current directory)")
+	cmdServer.Flags().Lookup("http").NoOptDefVal = "true"
+	rootCmd.Flags().IntVarP(&serverPort, "port", "p", 50001, "config file (default is current directory)")
+	rootCmd.Flags().StringVarP(&host, "host", "l", "localhost", "config file (default is current directory)")
+	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "b", 100, "config file (default is current directory)")
+	cmdServer.Flags().StringVarP(&cpuprofile, "cpuprofile", "c", "", "config file (default is current directory)")
+	cmdServer.Flags().StringVarP(&memprofile, "memprofile", "m", "", "config file (default is current directory)")
+	err := cmdServer.Flags().MarkHidden("cpuprofile")
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = rootCmd.PersistentFlags().MarkHidden("memprofile")
+	err = cmdServer.Flags().MarkHidden("memprofile")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -168,7 +163,6 @@ func init() {
 	if useHttp && serverPort == 50001 {
 		serverPort = 5001
 	}
-
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdCat, cmdCheck)
 	cmdServer.AddCommand(cmdServerStart)
 	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientWrite, cmdClientBench)

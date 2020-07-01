@@ -7,7 +7,4 @@ if [ ! -f "$FILE" ]; then
 fi
 go test ./...
 go fmt
-#go build -o bin/ibsenTool ./cmd/unix/tool
-#go build -o bin/ibsenTestClient ./cmd/unix/testClient
-#go build -o bin/ibsenClient ./cmd/unix/client
 go build -o bin/ibsen
