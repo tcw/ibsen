@@ -8,28 +8,29 @@ service Ibsen {
     }
     rpc drop (Topic) returns (TopicStatus) {
     }
+    rpc listTopics (Empty) returns (Topics) {
+    }
+    rpc listTopicsWithOffset (Empty) returns (TopicOffsets) {
+    }
 
     rpc write (TopicMessage) returns (Status) {
     }
     rpc writeBatch (TopicBatchMessage) returns (Status) {
     }
-    rpc writeStream (stream TopicMessage) returns (Status) {
+    rpc writeStream (stream TopicMessage) returns (stream Status) {
     }
 
     rpc readFromBeginning (Topic) returns (stream Entry) {
     }
     rpc readBatchFromBeginning (TopicBatch) returns (stream EntryBatch) {
-
     }
+
     rpc readFromOffset (TopicOffset) returns (stream Entry) {
     }
     rpc readBatchFromOffset (TopicBatchOffset) returns (stream EntryBatch) {
     }
 
-    rpc listTopics (Empty) returns (Topics) {
-    }
-    rpc listTopicsWithOffset (Empty) returns (TopicOffsets) {
-    }
+
 }
 
 message EntryBatch {

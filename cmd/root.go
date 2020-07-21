@@ -18,12 +18,13 @@ var (
 	host           string
 	serverPort     int
 	maxBlockSizeMB int
+	toBase64       bool
 	cpuprofile     string
 	memprofile     string
 
 	rootCmd = &cobra.Command{
 		Use:   "ibsen",
-		Short: "Ibsen is a kubernetes friendly streaming platform",
+		Short: "Ibsen is a simple log streaming system",
 		Long: `Ibsen builds on the shoulders of giants. Taking advantage of the recent advances in 
 			distributed block storage and unix's philosophy of simplicity'`,
 		TraverseChildren: true,
@@ -74,14 +75,22 @@ var (
 	}
 
 	cmdClientRead = &cobra.Command{
-		Use:              "read [topic]",
+		Use:              "read [topic] <offset>",
 		Short:            "read",
 		Long:             `read`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			ibsenClient := startClient()
-			ibsenClient.ReadTopic(args[0])
+			if len(args) > 1 {
+				offset, err := strconv.ParseUint(args[1], 10, 64)
+				if err != nil {
+					fmt.Printf("Illegal offset [%s]", args[1])
+				}
+				ibsenClient.ReadTopicFromNotIncludingOffset(args[0], offset)
+			} else {
+				ibsenClient.ReadTopic(args[0])
+			}
 		},
 	}
 
@@ -122,7 +131,7 @@ var (
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			tools.ReadTopic(args[0])
+			tools.ReadTopic(args[0], toBase64)
 		},
 	}
 
@@ -160,6 +169,7 @@ func init() {
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "b", 100, "config file (default is current directory)")
 	cmdServer.Flags().StringVarP(&cpuprofile, "cpuprofile", "c", "", "config file (default is current directory)")
 	cmdServer.Flags().StringVarP(&memprofile, "memprofile", "m", "", "config file (default is current directory)")
+	cmdCat.Flags().BoolVarP(&toBase64, "base64", "b", false, "Convert messages to base64")
 	err := cmdServer.Flags().MarkHidden("cpuprofile")
 	if err != nil {
 		log.Fatal(err)

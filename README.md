@@ -45,11 +45,8 @@ docker run --name ibsen_solveig -p 50001:50001 ibsen
 
 ## Todo
 
-* Correctness checking
-* Update block creation 
 * Java client
-* Pure unix command writer
 * More tests
-* Create docker image
-* ibsenTool must use block read write
 * Readme
+* In-memory 
+* Easy embeddable

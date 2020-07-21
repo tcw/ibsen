@@ -129,8 +129,18 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 			log.Printf("Failed writing input stream for offset %d, error: %s", offset, err)
 			return err
 		}
+		err = inStream.Send(&Status{
+			Entries: 1,
+			Current: &Offset{
+				Id: offset,
+			},
+		})
+		if err != nil {
+			log.Printf("Failed sending status message to client %d, error: %s", offset, err)
+			return err
+		}
 	}
-	return inStream.SendAndClose(&Status{Entries: int32(sum)})
+	return nil
 }
 
 func (s server) ReadFromBeginning(topic *Topic, outStream Ibsen_ReadFromBeginningServer) error {

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -72,6 +73,36 @@ func (ic *IbsenClient) ReadTopic(topic string) {
 	}
 }
 
+func (ic *IbsenClient) ReadTopicFromNotIncludingOffset(topic string, offset uint64) {
+	entryStream, err := ic.Client.ReadFromOffset(ic.Ctx, &grpcApi.TopicOffset{
+		TopicName: topic,
+		Offset:    offset,
+	})
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	stdout := os.Stdout
+	writer := bufio.NewWriter(stdout)
+	defer stdout.Close()
+	for {
+		in, err := entryStream.Recv()
+		if err == io.EOF {
+			err := writer.Flush()
+			if err != nil {
+				log.Fatal("flush error")
+			}
+			return
+		}
+		line := fmt.Sprintf("%d\t%s\n", in.Offset, in.Payload)
+		_, err = writer.Write([]byte(line))
+		if err != nil {
+			log.Println(err)
+			return
+		}
+	}
+}
+
 func (ic *IbsenClient) WriteTopic(topic string) {
 	r, err := ic.Client.WriteStream(ic.Ctx)
 	if err != nil {
@@ -94,14 +125,16 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 			MessagePayload: []byte(text),
 		}
 		err = r.Send(&mes)
+		recv, err := r.Recv() //TODO: do async
 		if err != nil {
 			log.Println(err)
 			return
 		}
+		fmt.Printf("Confirmed offset %s\n", strconv.FormatUint(recv.Current.Id, 10))
 	}
-	_, err = r.CloseAndRecv()
+	err = r.CloseSend()
 	if err != nil {
-		log.Println(err)
+		fmt.Println(err)
 		return
 	}
 }
