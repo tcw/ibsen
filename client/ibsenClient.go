@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc"
 	"io"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
 	"time"
@@ -137,4 +138,36 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 		fmt.Println(err)
 		return
 	}
+}
+
+func (ic *IbsenClient) WriteTestDataToTopic(topic string, entrySize int) {
+	r, err := ic.Client.WriteStream(ic.Ctx)
+	if err != nil {
+		log.Fatalf("could not greet: %v", err)
+	}
+
+	entry := createTestValues(entrySize)
+
+	err = r.Send(&grpcApi.TopicMessage{
+		TopicName:      topic,
+		MessagePayload: entry,
+	})
+
+	err = r.CloseSend()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+
+func createTestValues(entrySizeBytes int) []byte {
+	rand.Seed(time.Now().UnixNano())
+
+	var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
+
+	b := make([]rune, entrySizeBytes)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+	}
+	return []byte(string(b))
 }
