@@ -30,16 +30,9 @@ var (
 	}
 
 	cmdServer = &cobra.Command{
-		Use:              "server",
+		Use:              "server [data directory]",
 		Short:            "server",
 		Long:             `server`,
-		TraverseChildren: true,
-	}
-
-	cmdServerStart = &cobra.Command{
-		Use:              "start [data directory]",
-		Short:            "start",
-		Long:             `start`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
@@ -61,27 +54,31 @@ var (
 	}
 
 	cmdClient = &cobra.Command{
-		Use:   "client [from directory]",
-		Short: "client",
-		Long:  `client`,
+		Use:              "client",
+		Short:            "client",
+		Long:             `client`,
+		TraverseChildren: true,
 	}
 
 	cmdClientCreate = &cobra.Command{
-		Use:   "create [topic]",
-		Short: "create",
-		Long:  `create`,
-		Args:  cobra.MinimumNArgs(1),
+		Use:              "create [topic]",
+		Short:            "create",
+		Long:             `create`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("creating topic %s", args[0])
 			ibsenClient := startClient()
 			ibsenClient.CreateTopic(args[0])
 		},
 	}
 
 	cmdClientRead = &cobra.Command{
-		Use:   "read [topic]",
-		Short: "read",
-		Long:  `read`,
-		Args:  cobra.MinimumNArgs(1),
+		Use:              "read [topic]",
+		Short:            "read",
+		Long:             `read`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			ibsenClient := startClient()
 			ibsenClient.ReadTopic(args[0])
@@ -89,10 +86,11 @@ var (
 	}
 
 	cmdClientWrite = &cobra.Command{
-		Use:   "write [topic]",
-		Short: "write",
-		Long:  `write`,
-		Args:  cobra.MinimumNArgs(1),
+		Use:              "write [topic]",
+		Short:            "write",
+		Long:             `write`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			ibsenClient := startClient()
 			ibsenClient.WriteTopic(args[0])
@@ -100,30 +98,40 @@ var (
 	}
 
 	cmdClientBench = &cobra.Command{
-		Use:   "bench",
-		Short: "bench",
-		Long:  `benchmark`,
-		Args:  cobra.MinimumNArgs(1),
+		Use:              "bench",
+		Short:            "bench",
+		Long:             `benchmark`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Echo: " + strings.Join(args, " "))
 		},
 	}
 
+	cmdFile = &cobra.Command{
+		Use:              "files",
+		Short:            "files",
+		Long:             `files`,
+		TraverseChildren: true,
+	}
+
 	cmdCat = &cobra.Command{
-		Use:   "cat [from file/directory]",
-		Short: "cat",
-		Long:  `cat`,
-		Args:  cobra.MinimumNArgs(1),
+		Use:              "cat [from file/directory]",
+		Short:            "cat",
+		Long:             `cat`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			tools.ReadTopic(args[0])
 		},
 	}
 
 	cmdCheck = &cobra.Command{
-		Use:   "check [from directory]",
-		Short: "check",
-		Long:  `check`,
-		Args:  cobra.MinimumNArgs(1),
+		Use:              "check [from directory]",
+		Short:            "check",
+		Long:             `check`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Echo: " + strings.Join(args, " "))
 		},
@@ -131,7 +139,8 @@ var (
 )
 
 func startClient() client.IbsenClient {
-	return client.Start(host + ":" + strconv.Itoa(serverPort))
+	target := host + ":" + strconv.Itoa(serverPort)
+	return client.Start(target)
 }
 
 func Execute() {
@@ -144,7 +153,7 @@ func Execute() {
 
 func init() {
 
-	cmdServer.Flags().BoolVarP(&useHttp, "http", "u", true, "config file (default is current directory)")
+	cmdServer.Flags().BoolVarP(&useHttp, "http", "u", false, "config file (default is current directory)")
 	cmdServer.Flags().Lookup("http").NoOptDefVal = "true"
 	rootCmd.Flags().IntVarP(&serverPort, "port", "p", 50001, "config file (default is current directory)")
 	rootCmd.Flags().StringVarP(&host, "host", "l", "localhost", "config file (default is current directory)")
@@ -163,7 +172,7 @@ func init() {
 	if useHttp && serverPort == 50001 {
 		serverPort = 5001
 	}
-	rootCmd.AddCommand(cmdServer, cmdClient, cmdCat, cmdCheck)
-	cmdServer.AddCommand(cmdServerStart)
+	rootCmd.AddCommand(cmdServer, cmdClient, cmdFile)
+	cmdFile.AddCommand(cmdCat, cmdCheck)
 	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientWrite, cmdClientBench)
 }

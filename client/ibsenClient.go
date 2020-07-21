@@ -30,7 +30,6 @@ func Start(target string) IbsenClient {
 		Client: client,
 		Ctx:    ctx,
 	}
-
 }
 
 func (ic *IbsenClient) CreateTopic(topic string) bool {
@@ -87,6 +86,9 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 	scanner.Buffer(buf, maxCapacity)
 	for scanner.Scan() {
 		text := scanner.Text()
+		if text == "" {
+			continue
+		}
 		mes := grpcApi.TopicMessage{
 			TopicName:      topic,
 			MessagePayload: []byte(text),
@@ -97,7 +99,6 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 			return
 		}
 	}
-
 	_, err = r.CloseAndRecv()
 	if err != nil {
 		log.Println(err)

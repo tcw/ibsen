@@ -32,13 +32,13 @@ func (e LogStorage) ListTopics() ([]string, error) {
 	return e.topicRegister.ListTopics()
 }
 
-func (e LogStorage) Write(topicMessage *logStorage.TopicMessage) (int, error) {
+func (e LogStorage) Write(topicMessage *logStorage.TopicMessage) (uint64, error) {
 	registry := e.topicRegister.topics[topicMessage.Topic]
-	err := registry.Write(topicMessage.Message)
+	offset, err := registry.Write(topicMessage.Message)
 	if err != nil {
-		return 0, err
+		return offset, err
 	}
-	return 1, nil
+	return offset, nil
 }
 
 func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int, error) {

@@ -197,9 +197,6 @@ func (ibs *IbsenServer) signalHandler(signal os.Signal) {
 	case syscall.SIGABRT:
 		ibs.ShutdownCleanly()
 
-	case syscall.SIGSEGV:
-		ibs.ShutdownCleanly()
-
 	default:
 		log.Printf("Unexpected system signal [%s] sent to Ibsen. Trying to gracefully shutdown, without any garanties...", signal.String())
 		ibs.ShutdownCleanly()

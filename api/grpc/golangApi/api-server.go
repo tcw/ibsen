@@ -80,17 +80,17 @@ func (s server) Drop(ctx context.Context, topic *Topic) (*TopicStatus, error) {
 }
 
 func (s server) Write(ctx context.Context, topicMessage *TopicMessage) (*Status, error) {
-	_, err := s.logStorage.Write(&logStorage.TopicMessage{
+	offset, err := s.logStorage.Write(&logStorage.TopicMessage{
 		Topic:   topicMessage.TopicName,
 		Message: topicMessage.MessagePayload,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Status{ //Todo return real offset
+	return &Status{
 		Entries: 1,
 		Current: &Offset{
-			Id: 0,
+			Id: offset,
 		},
 	}, nil
 }
@@ -116,13 +116,17 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 			break
 		}
 		if err != nil {
+			log.Printf("Failed reading input stream, error: %s", err)
 			return err
 		}
-		sum, err = s.logStorage.Write(&logStorage.TopicMessage{
+		log.Printf("Writing message: %s", string(in.MessagePayload))
+		offset, err := s.logStorage.Write(&logStorage.TopicMessage{
 			Topic:   in.TopicName,
 			Message: in.MessagePayload,
 		})
+		sum = sum + 1
 		if err != nil {
+			log.Printf("Failed writing input stream for offset %d, error: %s", offset, err)
 			return err
 		}
 	}
