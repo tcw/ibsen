@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc"
 	"io"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"strconv"
@@ -20,13 +21,14 @@ type IbsenClient struct {
 }
 
 func Start(target string) IbsenClient {
-	conn, err := grpc.Dial(target, grpc.WithInsecure(), grpc.WithBlock())
+	conn, err := grpc.Dial(target, grpc.WithInsecure(), grpc.WithBlock(),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)))
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
 
 	client := grpcApi.NewIbsenClient(conn)
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(5)*time.Second) //Todo: Handle cancel
+	ctx, _ := context.WithTimeout(context.Background(), time.Duration(30)*time.Second) //Todo: Handle cancel
 
 	return IbsenClient{
 		Client: client,
@@ -140,24 +142,30 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 	}
 }
 
-func (ic *IbsenClient) WriteTestDataToTopic(topic string, entrySize int) {
+func (ic *IbsenClient) WriteTestDataToTopic(topic string, entryByteSize int, entries int) {
 	r, err := ic.Client.WriteStream(ic.Ctx)
 	if err != nil {
 		log.Fatalf("could not greet: %v", err)
 	}
 
-	entry := createTestValues(entrySize)
+	entry := createTestValues(entryByteSize)
 
-	err = r.Send(&grpcApi.TopicMessage{
-		TopicName:      topic,
-		MessagePayload: entry,
-	})
-
+	for i := 0; i < entries; i++ {
+		err = r.Send(&grpcApi.TopicMessage{
+			TopicName:      topic,
+			MessagePayload: entry,
+		})
+	}
 	err = r.CloseSend()
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
+	recv, err := r.Recv()
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Printf("Current offset is %d, wrote %d entries", recv.Current.Id, recv.Entries)
 }
 
 func createTestValues(entrySizeBytes int) []byte {

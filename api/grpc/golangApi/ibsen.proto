@@ -1,6 +1,10 @@
 syntax = "proto3";
 
 option go_package = "/api/grpc/golangApi";
+option java_multiple_files = true;
+option java_package = "github.com.tcw.ibsen";
+option java_outer_classname = "IbsenProto";
+option objc_class_prefix = "IBSEN";
 
 service Ibsen {
 

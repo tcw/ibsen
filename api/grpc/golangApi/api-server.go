@@ -109,7 +109,8 @@ func (s server) WriteBatch(ctx context.Context, tbm *TopicBatchMessage) (*Status
 }
 
 func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
-	var sum int
+	var sum int32
+	var lastOffset uint64
 	for {
 		in, err := inStream.Recv()
 		if err == io.EOF {
@@ -119,26 +120,27 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 			log.Printf("Failed reading input stream, error: %s", err)
 			return err
 		}
-		log.Printf("Writing message: %s", string(in.MessagePayload))
 		offset, err := s.logStorage.Write(&logStorage.TopicMessage{
 			Topic:   in.TopicName,
 			Message: in.MessagePayload,
 		})
 		sum = sum + 1
+		lastOffset = offset
 		if err != nil {
 			log.Printf("Failed writing input stream for offset %d, error: %s", offset, err)
 			return err
 		}
-		err = inStream.Send(&Status{
-			Entries: 1,
-			Current: &Offset{
-				Id: offset,
-			},
-		})
-		if err != nil {
-			log.Printf("Failed sending status message to client %d, error: %s", offset, err)
-			return err
-		}
+
+	}
+	err := inStream.Send(&Status{
+		Entries: sum,
+		Current: &Offset{
+			Id: lastOffset,
+		},
+	})
+	if err != nil {
+		log.Printf("Failed sending status message to client %d, error: %s", lastOffset, err)
+		return err
 	}
 	return nil
 }

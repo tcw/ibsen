@@ -19,6 +19,8 @@ var (
 	serverPort     int
 	maxBlockSizeMB int
 	toBase64       bool
+	entryByteSize  int
+	entries        int
 	cpuprofile     string
 	memprofile     string
 
@@ -106,14 +108,15 @@ var (
 		},
 	}
 
-	cmdClientBench = &cobra.Command{
-		Use:              "bench",
+	cmdClientTestData = &cobra.Command{
+		Use:              "bench [topic]",
 		Short:            "bench",
 		Long:             `benchmark`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Echo: " + strings.Join(args, " "))
+			ibsenClient := startClient()
+			ibsenClient.WriteTestDataToTopic(args[0], entryByteSize, entries)
 		},
 	}
 
@@ -170,6 +173,8 @@ func init() {
 	cmdServer.Flags().StringVarP(&cpuprofile, "cpuprofile", "c", "", "config file (default is current directory)")
 	cmdServer.Flags().StringVarP(&memprofile, "memprofile", "m", "", "config file (default is current directory)")
 	cmdCat.Flags().BoolVarP(&toBase64, "base64", "b", false, "Convert messages to base64")
+	cmdClientTestData.Flags().IntVarP(&entryByteSize, "entrysize", "s", 100, "Test data entry size in bytes")
+	cmdClientTestData.Flags().IntVarP(&entries, "entries", "e", 100000, "Number of entries in test data")
 	err := cmdServer.Flags().MarkHidden("cpuprofile")
 	if err != nil {
 		log.Fatal(err)
@@ -184,5 +189,5 @@ func init() {
 	}
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdFile)
 	cmdFile.AddCommand(cmdCat, cmdCheck)
-	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientWrite, cmdClientBench)
+	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientWrite, cmdClientTestData)
 }
