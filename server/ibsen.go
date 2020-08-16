@@ -113,11 +113,13 @@ func acquireLock(lockFile string, done chan bool, doneCleanUp chan bool, locked 
 			os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
 
 		if err != nil {
+			log.Printf("Unable to acquire lock due to error: %s", err.Error())
 			time.Sleep(time.Second * 3)
 			continue
 		}
 		_, err = file.Write([]byte(ibsenId))
 		if err != nil {
+			log.Printf("Unable to acquire lock due to error: %s", err.Error())
 			time.Sleep(time.Second * 3)
 			continue
 		}
