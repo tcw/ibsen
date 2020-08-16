@@ -1,4 +1,4 @@
-package golangApi
+package grpcApi
 
 import (
 	"context"

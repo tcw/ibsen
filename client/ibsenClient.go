@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	grpcApi "github.com/tcw/ibsen/api/grpc/golangApi"
+	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"google.golang.org/grpc"
 	"io"
 	"log"

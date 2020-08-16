@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/uuid"
-	grpcApi "github.com/tcw/ibsen/api/grpc/golangApi"
+	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/api/httpApi"
 	"github.com/tcw/ibsen/logStorage/unix/ext4"
 	"log"
