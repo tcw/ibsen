@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/api/httpApi"
+	"github.com/tcw/ibsen/logStorage"
 	"github.com/tcw/ibsen/logStorage/unix/ext4"
 	"log"
 	"net/http"
@@ -87,7 +88,7 @@ func useCpuProfiling(cpuProfile string) {
 	}
 }
 
-func (ibs *IbsenServer) startHTTPServer(storage ext4.LogStorage) {
+func (ibs *IbsenServer) startHTTPServer(storage logStorage.LogStorage) {
 	ibsenHttpServer := httpApi.NewIbsenHttpServer(storage)
 	ibsenHttpServer.Port = uint16(ibs.Port)
 	log.Printf("Ibsen http/1.1 server started on port [%d]\n", ibsenHttpServer.Port)
@@ -95,7 +96,7 @@ func (ibs *IbsenServer) startHTTPServer(storage ext4.LogStorage) {
 	httpServer = ibsenHttpServer.StartHttpServer()
 }
 
-func (ibs *IbsenServer) startGRPCServer(storage ext4.LogStorage) {
+func (ibs *IbsenServer) startGRPCServer(storage logStorage.LogStorage) {
 	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage)
 	ibsenGrpcServer.Port = uint16(ibs.Port)
 	log.Printf("Ibsen grpc server started on port [%d]\n", ibsenGrpcServer.Port)

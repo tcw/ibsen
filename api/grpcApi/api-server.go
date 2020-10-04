@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/tcw/ibsen/logStorage"
-	"github.com/tcw/ibsen/logStorage/unix/ext4"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/testdata"
@@ -15,7 +14,7 @@ import (
 )
 
 type server struct {
-	logStorage ext4.LogStorage
+	logStorage logStorage.LogStorage
 }
 
 type IbsenGrpcServer struct {
@@ -24,10 +23,10 @@ type IbsenGrpcServer struct {
 	KeyFile     string
 	UseTls      bool
 	IbsenServer *grpc.Server
-	Storage     ext4.LogStorage
+	Storage     logStorage.LogStorage
 }
 
-func NewIbsenGrpcServer(storage ext4.LogStorage) *IbsenGrpcServer {
+func NewIbsenGrpcServer(storage logStorage.LogStorage) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
 		Port:     50001,
 		CertFile: "",

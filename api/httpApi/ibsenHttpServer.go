@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/base64"
 	"github.com/tcw/ibsen/logStorage"
-	"github.com/tcw/ibsen/logStorage/unix/ext4"
 	"log"
 	"net/http"
 	"strconv"
@@ -18,10 +17,10 @@ import (
 type IbsenHttpServer struct {
 	Port        uint16
 	IbsenServer *http.Server
-	Storage     ext4.LogStorage
+	Storage     logStorage.LogStorage
 }
 
-func NewIbsenHttpServer(storage ext4.LogStorage) *IbsenHttpServer {
+func NewIbsenHttpServer(storage logStorage.LogStorage) *IbsenHttpServer {
 	server := IbsenHttpServer{
 		Port:    5001,
 		Storage: storage,

@@ -14,6 +14,7 @@ type LogStorage interface {
 	ReadFromNotIncluding(logChan chan LogEntry, wg *sync.WaitGroup, topic string, offset uint64) error
 	ReadBatchFromOffsetNotIncluding(logChan chan LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64, batchSize int) error
 	ListTopics() ([]string, error)
+	Close()
 }
 
 type LogEntryBatch struct {
