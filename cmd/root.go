@@ -165,16 +165,28 @@ func Execute() {
 
 func init() {
 
-	cmdServer.Flags().BoolVarP(&useHttp, "http", "u", false, "config file (default is current directory)")
+	useHttp, _ = strconv.ParseBool(getenv("IBSEN_HTTP", "false"))
+	if useHttp {
+		serverPort = 5001
+	} else {
+		serverPort = 50001
+	}
+	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(serverPort)))
+	host = getenv("IBSEN_HOST", "localhost")
+	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "100"))
+	entryByteSize, _ = strconv.Atoi(getenv("IBSEN_ENTRY_SIZE", "100"))
+	entries, _ = strconv.Atoi(getenv("IBSEN_ENTRIES", "100000"))
+
+	cmdServer.Flags().BoolVarP(&useHttp, "http", "u", useHttp, "config file (default is current directory)")
 	cmdServer.Flags().Lookup("http").NoOptDefVal = "true"
-	rootCmd.Flags().IntVarP(&serverPort, "port", "p", 50001, "config file (default is current directory)")
+	rootCmd.Flags().IntVarP(&serverPort, "port", "p", serverPort, "config file (default is current directory)")
 	rootCmd.Flags().StringVarP(&host, "host", "l", "localhost", "config file (default is current directory)")
-	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "b", 100, "config file (default is current directory)")
+	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "b", maxBlockSizeMB, "config file (default is current directory)")
 	cmdServer.Flags().StringVarP(&cpuprofile, "cpuprofile", "c", "", "config file (default is current directory)")
 	cmdServer.Flags().StringVarP(&memprofile, "memprofile", "m", "", "config file (default is current directory)")
 	cmdCat.Flags().BoolVarP(&toBase64, "base64", "b", false, "Convert messages to base64")
-	cmdClientTestData.Flags().IntVarP(&entryByteSize, "entrysize", "s", 100, "Test data entry size in bytes")
-	cmdClientTestData.Flags().IntVarP(&entries, "entries", "e", 100000, "Number of entries in test data")
+	cmdClientTestData.Flags().IntVarP(&entryByteSize, "entrysize", "s", entryByteSize, "Test data entry size in bytes")
+	cmdClientTestData.Flags().IntVarP(&entries, "entries", "e", entries, "Number of entries in test data")
 	err := cmdServer.Flags().MarkHidden("cpuprofile")
 	if err != nil {
 		log.Fatal(err)
@@ -184,10 +196,15 @@ func init() {
 		log.Fatal(err)
 	}
 
-	if useHttp && serverPort == 50001 {
-		serverPort = 5001
-	}
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdFile)
 	cmdFile.AddCommand(cmdCat, cmdCheck)
 	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientWrite, cmdClientTestData)
+}
+
+func getenv(key, fallback string) string {
+	value := os.Getenv(key)
+	if len(value) == 0 {
+		return fallback
+	}
+	return value
 }
