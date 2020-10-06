@@ -166,12 +166,8 @@ func Execute() {
 func init() {
 
 	useHttp, _ = strconv.ParseBool(getenv("IBSEN_HTTP", "false"))
-	if useHttp {
-		serverPort = 5001
-	} else {
-		serverPort = 50001
-	}
-	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(serverPort)))
+
+	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(5001)))
 	host = getenv("IBSEN_HOST", "localhost")
 	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "100"))
 	entryByteSize, _ = strconv.Atoi(getenv("IBSEN_ENTRY_SIZE", "100"))
@@ -179,6 +175,9 @@ func init() {
 
 	cmdServer.Flags().BoolVarP(&useHttp, "http", "u", useHttp, "config file (default is current directory)")
 	cmdServer.Flags().Lookup("http").NoOptDefVal = "true"
+	if !useHttp && serverPort == 5001 {
+		serverPort = 50001
+	}
 	rootCmd.Flags().IntVarP(&serverPort, "port", "p", serverPort, "config file (default is current directory)")
 	rootCmd.Flags().StringVarP(&host, "host", "l", "localhost", "config file (default is current directory)")
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "b", maxBlockSizeMB, "config file (default is current directory)")
