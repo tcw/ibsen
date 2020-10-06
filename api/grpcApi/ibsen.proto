@@ -8,99 +8,57 @@ option objc_class_prefix = "IBSEN";
 
 service Ibsen {
 
-    rpc create (Topic) returns (TopicStatus) {
+    rpc create (Topic) returns (CreateStatus) {
     }
-    rpc drop (Topic) returns (TopicStatus) {
+    rpc drop (Topic) returns (DropStatus) {
     }
-    rpc listTopics (Empty) returns (Topics) {
-    }
-    rpc listTopicsWithOffset (Empty) returns (TopicOffsets) {
+    rpc status (Empty) returns (TopicsStatus) {
     }
 
-    rpc write (TopicMessage) returns (Status) {
+    rpc write (InputEntries) returns (WriteStatus) {
     }
-    rpc writeBatch (TopicBatchMessage) returns (Status) {
+    rpc writeStream (stream InputEntries) returns (stream WriteStatus) {
     }
-    rpc writeStream (stream TopicMessage) returns (stream Status) {
+    rpc read (ReadParams) returns (stream OutputEntries) {
     }
-
-    rpc readFromBeginning (Topic) returns (stream Entry) {
-    }
-    rpc readBatchFromBeginning (TopicBatch) returns (stream EntryBatch) {
-    }
-
-    rpc readFromOffset (TopicOffset) returns (stream Entry) {
-    }
-    rpc readBatchFromOffset (TopicBatchOffset) returns (stream EntryBatch) {
-    }
-
-
 }
 
-message EntryBatch {
-    repeated Entry entries = 1;
-}
-
-message TopicStatus {
-    bool created = 1;
-}
-
-message Empty {
-
-}
-
-message Offset {
-    uint64 id = 1;
-}
-
-message Topics {
-    repeated string name = 1;
+message TopicsStatus {
+    repeated Topic topics = 1;
 }
 
 message Topic {
     string name = 1;
-}
-
-message TopicBatch {
-    string name = 1;
-    uint32 batchSize = 2;
-}
-
-message TopicOffset {
-    string topicName = 1;
     uint64 offset = 2;
 }
 
-message TopicOffsets {
-    repeated TopicOffset topicOffset = 1;
+message CreateStatus{
+    bool created = 1;
 }
 
-message TopicBatchOffset {
+message DropStatus{
+    bool dropped = 1;
+}
+
+message WriteStatus{
+    int64 wrote = 1;
+}
+
+message Empty {
+}
+
+message ReadParams {
     string topicName = 1;
     uint64 offset = 2;
     uint32 batchSize = 3;
 }
 
-message TopicMessage {
+message InputEntries {
     string topicName = 1;
-    bytes messagePayload = 2;
+    repeated bytes entries = 2;
 }
 
-message TopicBatchMessage {
-    string topicName = 1;
-    repeated bytes messagePayload = 2;
-}
-
-message Message {
-    bytes payload = 1;
-}
-
-message Entry {
+message OutputEntries {
     uint64 offset = 1;
-    bytes payload = 2;
-}
-
-message Status {
-    int32 entries = 1;
-    Offset current = 2;
+    repeated bytes entries = 2;
 }

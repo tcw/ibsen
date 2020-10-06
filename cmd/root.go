@@ -89,9 +89,9 @@ var (
 				if err != nil {
 					fmt.Printf("Illegal offset [%s]", args[1])
 				}
-				ibsenClient.ReadTopicFromNotIncludingOffset(args[0], offset)
+				ibsenClient.ReadTopic(args[0], offset, 1000)
 			} else {
-				ibsenClient.ReadTopic(args[0])
+				ibsenClient.ReadTopic(args[0], 0, 1000)
 			}
 		},
 	}

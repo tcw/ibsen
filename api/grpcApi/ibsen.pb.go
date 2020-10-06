@@ -24,195 +24,48 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.ProtoPackageIsVersion3 // please upgrade the proto package
 
-type EntryBatch struct {
-	Entries              []*Entry `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+type TopicsStatus struct {
+	Topics               []*Topic `protobuf:"bytes,1,rep,name=topics,proto3" json:"topics,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
 }
 
-func (m *EntryBatch) Reset()         { *m = EntryBatch{} }
-func (m *EntryBatch) String() string { return proto.CompactTextString(m) }
-func (*EntryBatch) ProtoMessage()    {}
-func (*EntryBatch) Descriptor() ([]byte, []int) {
+func (m *TopicsStatus) Reset()         { *m = TopicsStatus{} }
+func (m *TopicsStatus) String() string { return proto.CompactTextString(m) }
+func (*TopicsStatus) ProtoMessage()    {}
+func (*TopicsStatus) Descriptor() ([]byte, []int) {
 	return fileDescriptor_c3e5c14afe4be539, []int{0}
 }
 
-func (m *EntryBatch) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_EntryBatch.Unmarshal(m, b)
+func (m *TopicsStatus) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_TopicsStatus.Unmarshal(m, b)
 }
-func (m *EntryBatch) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_EntryBatch.Marshal(b, m, deterministic)
+func (m *TopicsStatus) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_TopicsStatus.Marshal(b, m, deterministic)
 }
-func (m *EntryBatch) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_EntryBatch.Merge(m, src)
+func (m *TopicsStatus) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_TopicsStatus.Merge(m, src)
 }
-func (m *EntryBatch) XXX_Size() int {
-	return xxx_messageInfo_EntryBatch.Size(m)
+func (m *TopicsStatus) XXX_Size() int {
+	return xxx_messageInfo_TopicsStatus.Size(m)
 }
-func (m *EntryBatch) XXX_DiscardUnknown() {
-	xxx_messageInfo_EntryBatch.DiscardUnknown(m)
+func (m *TopicsStatus) XXX_DiscardUnknown() {
+	xxx_messageInfo_TopicsStatus.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_EntryBatch proto.InternalMessageInfo
+var xxx_messageInfo_TopicsStatus proto.InternalMessageInfo
 
-func (m *EntryBatch) GetEntries() []*Entry {
+func (m *TopicsStatus) GetTopics() []*Topic {
 	if m != nil {
-		return m.Entries
-	}
-	return nil
-}
-
-type TopicStatus struct {
-	Created              bool     `protobuf:"varint,1,opt,name=created,proto3" json:"created,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *TopicStatus) Reset()         { *m = TopicStatus{} }
-func (m *TopicStatus) String() string { return proto.CompactTextString(m) }
-func (*TopicStatus) ProtoMessage()    {}
-func (*TopicStatus) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{1}
-}
-
-func (m *TopicStatus) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_TopicStatus.Unmarshal(m, b)
-}
-func (m *TopicStatus) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_TopicStatus.Marshal(b, m, deterministic)
-}
-func (m *TopicStatus) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TopicStatus.Merge(m, src)
-}
-func (m *TopicStatus) XXX_Size() int {
-	return xxx_messageInfo_TopicStatus.Size(m)
-}
-func (m *TopicStatus) XXX_DiscardUnknown() {
-	xxx_messageInfo_TopicStatus.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_TopicStatus proto.InternalMessageInfo
-
-func (m *TopicStatus) GetCreated() bool {
-	if m != nil {
-		return m.Created
-	}
-	return false
-}
-
-type Empty struct {
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *Empty) Reset()         { *m = Empty{} }
-func (m *Empty) String() string { return proto.CompactTextString(m) }
-func (*Empty) ProtoMessage()    {}
-func (*Empty) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{2}
-}
-
-func (m *Empty) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_Empty.Unmarshal(m, b)
-}
-func (m *Empty) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_Empty.Marshal(b, m, deterministic)
-}
-func (m *Empty) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_Empty.Merge(m, src)
-}
-func (m *Empty) XXX_Size() int {
-	return xxx_messageInfo_Empty.Size(m)
-}
-func (m *Empty) XXX_DiscardUnknown() {
-	xxx_messageInfo_Empty.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_Empty proto.InternalMessageInfo
-
-type Offset struct {
-	Id                   uint64   `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *Offset) Reset()         { *m = Offset{} }
-func (m *Offset) String() string { return proto.CompactTextString(m) }
-func (*Offset) ProtoMessage()    {}
-func (*Offset) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{3}
-}
-
-func (m *Offset) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_Offset.Unmarshal(m, b)
-}
-func (m *Offset) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_Offset.Marshal(b, m, deterministic)
-}
-func (m *Offset) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_Offset.Merge(m, src)
-}
-func (m *Offset) XXX_Size() int {
-	return xxx_messageInfo_Offset.Size(m)
-}
-func (m *Offset) XXX_DiscardUnknown() {
-	xxx_messageInfo_Offset.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_Offset proto.InternalMessageInfo
-
-func (m *Offset) GetId() uint64 {
-	if m != nil {
-		return m.Id
-	}
-	return 0
-}
-
-type Topics struct {
-	Name                 []string `protobuf:"bytes,1,rep,name=name,proto3" json:"name,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *Topics) Reset()         { *m = Topics{} }
-func (m *Topics) String() string { return proto.CompactTextString(m) }
-func (*Topics) ProtoMessage()    {}
-func (*Topics) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{4}
-}
-
-func (m *Topics) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_Topics.Unmarshal(m, b)
-}
-func (m *Topics) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_Topics.Marshal(b, m, deterministic)
-}
-func (m *Topics) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_Topics.Merge(m, src)
-}
-func (m *Topics) XXX_Size() int {
-	return xxx_messageInfo_Topics.Size(m)
-}
-func (m *Topics) XXX_DiscardUnknown() {
-	xxx_messageInfo_Topics.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_Topics proto.InternalMessageInfo
-
-func (m *Topics) GetName() []string {
-	if m != nil {
-		return m.Name
+		return m.Topics
 	}
 	return nil
 }
 
 type Topic struct {
 	Name                 string   `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Offset               uint64   `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -222,7 +75,7 @@ func (m *Topic) Reset()         { *m = Topic{} }
 func (m *Topic) String() string { return proto.CompactTextString(m) }
 func (*Topic) ProtoMessage()    {}
 func (*Topic) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{5}
+	return fileDescriptor_c3e5c14afe4be539, []int{1}
 }
 
 func (m *Topic) XXX_Unmarshal(b []byte) error {
@@ -250,140 +103,162 @@ func (m *Topic) GetName() string {
 	return ""
 }
 
-type TopicBatch struct {
-	Name                 string   `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	BatchSize            uint32   `protobuf:"varint,2,opt,name=batchSize,proto3" json:"batchSize,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *TopicBatch) Reset()         { *m = TopicBatch{} }
-func (m *TopicBatch) String() string { return proto.CompactTextString(m) }
-func (*TopicBatch) ProtoMessage()    {}
-func (*TopicBatch) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{6}
-}
-
-func (m *TopicBatch) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_TopicBatch.Unmarshal(m, b)
-}
-func (m *TopicBatch) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_TopicBatch.Marshal(b, m, deterministic)
-}
-func (m *TopicBatch) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TopicBatch.Merge(m, src)
-}
-func (m *TopicBatch) XXX_Size() int {
-	return xxx_messageInfo_TopicBatch.Size(m)
-}
-func (m *TopicBatch) XXX_DiscardUnknown() {
-	xxx_messageInfo_TopicBatch.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_TopicBatch proto.InternalMessageInfo
-
-func (m *TopicBatch) GetName() string {
-	if m != nil {
-		return m.Name
-	}
-	return ""
-}
-
-func (m *TopicBatch) GetBatchSize() uint32 {
-	if m != nil {
-		return m.BatchSize
-	}
-	return 0
-}
-
-type TopicOffset struct {
-	TopicName            string   `protobuf:"bytes,1,opt,name=topicName,proto3" json:"topicName,omitempty"`
-	Offset               uint64   `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *TopicOffset) Reset()         { *m = TopicOffset{} }
-func (m *TopicOffset) String() string { return proto.CompactTextString(m) }
-func (*TopicOffset) ProtoMessage()    {}
-func (*TopicOffset) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{7}
-}
-
-func (m *TopicOffset) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_TopicOffset.Unmarshal(m, b)
-}
-func (m *TopicOffset) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_TopicOffset.Marshal(b, m, deterministic)
-}
-func (m *TopicOffset) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TopicOffset.Merge(m, src)
-}
-func (m *TopicOffset) XXX_Size() int {
-	return xxx_messageInfo_TopicOffset.Size(m)
-}
-func (m *TopicOffset) XXX_DiscardUnknown() {
-	xxx_messageInfo_TopicOffset.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_TopicOffset proto.InternalMessageInfo
-
-func (m *TopicOffset) GetTopicName() string {
-	if m != nil {
-		return m.TopicName
-	}
-	return ""
-}
-
-func (m *TopicOffset) GetOffset() uint64 {
+func (m *Topic) GetOffset() uint64 {
 	if m != nil {
 		return m.Offset
 	}
 	return 0
 }
 
-type TopicOffsets struct {
-	TopicOffset          []*TopicOffset `protobuf:"bytes,1,rep,name=topicOffset,proto3" json:"topicOffset,omitempty"`
-	XXX_NoUnkeyedLiteral struct{}       `json:"-"`
-	XXX_unrecognized     []byte         `json:"-"`
-	XXX_sizecache        int32          `json:"-"`
+type CreateStatus struct {
+	Created              bool     `protobuf:"varint,1,opt,name=created,proto3" json:"created,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
 }
 
-func (m *TopicOffsets) Reset()         { *m = TopicOffsets{} }
-func (m *TopicOffsets) String() string { return proto.CompactTextString(m) }
-func (*TopicOffsets) ProtoMessage()    {}
-func (*TopicOffsets) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{8}
+func (m *CreateStatus) Reset()         { *m = CreateStatus{} }
+func (m *CreateStatus) String() string { return proto.CompactTextString(m) }
+func (*CreateStatus) ProtoMessage()    {}
+func (*CreateStatus) Descriptor() ([]byte, []int) {
+	return fileDescriptor_c3e5c14afe4be539, []int{2}
 }
 
-func (m *TopicOffsets) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_TopicOffsets.Unmarshal(m, b)
+func (m *CreateStatus) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_CreateStatus.Unmarshal(m, b)
 }
-func (m *TopicOffsets) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_TopicOffsets.Marshal(b, m, deterministic)
+func (m *CreateStatus) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_CreateStatus.Marshal(b, m, deterministic)
 }
-func (m *TopicOffsets) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TopicOffsets.Merge(m, src)
+func (m *CreateStatus) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_CreateStatus.Merge(m, src)
 }
-func (m *TopicOffsets) XXX_Size() int {
-	return xxx_messageInfo_TopicOffsets.Size(m)
+func (m *CreateStatus) XXX_Size() int {
+	return xxx_messageInfo_CreateStatus.Size(m)
 }
-func (m *TopicOffsets) XXX_DiscardUnknown() {
-	xxx_messageInfo_TopicOffsets.DiscardUnknown(m)
+func (m *CreateStatus) XXX_DiscardUnknown() {
+	xxx_messageInfo_CreateStatus.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_TopicOffsets proto.InternalMessageInfo
+var xxx_messageInfo_CreateStatus proto.InternalMessageInfo
 
-func (m *TopicOffsets) GetTopicOffset() []*TopicOffset {
+func (m *CreateStatus) GetCreated() bool {
 	if m != nil {
-		return m.TopicOffset
+		return m.Created
 	}
-	return nil
+	return false
 }
 
-type TopicBatchOffset struct {
+type DropStatus struct {
+	Dropped              bool     `protobuf:"varint,1,opt,name=dropped,proto3" json:"dropped,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *DropStatus) Reset()         { *m = DropStatus{} }
+func (m *DropStatus) String() string { return proto.CompactTextString(m) }
+func (*DropStatus) ProtoMessage()    {}
+func (*DropStatus) Descriptor() ([]byte, []int) {
+	return fileDescriptor_c3e5c14afe4be539, []int{3}
+}
+
+func (m *DropStatus) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_DropStatus.Unmarshal(m, b)
+}
+func (m *DropStatus) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_DropStatus.Marshal(b, m, deterministic)
+}
+func (m *DropStatus) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_DropStatus.Merge(m, src)
+}
+func (m *DropStatus) XXX_Size() int {
+	return xxx_messageInfo_DropStatus.Size(m)
+}
+func (m *DropStatus) XXX_DiscardUnknown() {
+	xxx_messageInfo_DropStatus.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_DropStatus proto.InternalMessageInfo
+
+func (m *DropStatus) GetDropped() bool {
+	if m != nil {
+		return m.Dropped
+	}
+	return false
+}
+
+type WriteStatus struct {
+	Wrote                int64    `protobuf:"varint,1,opt,name=wrote,proto3" json:"wrote,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *WriteStatus) Reset()         { *m = WriteStatus{} }
+func (m *WriteStatus) String() string { return proto.CompactTextString(m) }
+func (*WriteStatus) ProtoMessage()    {}
+func (*WriteStatus) Descriptor() ([]byte, []int) {
+	return fileDescriptor_c3e5c14afe4be539, []int{4}
+}
+
+func (m *WriteStatus) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_WriteStatus.Unmarshal(m, b)
+}
+func (m *WriteStatus) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_WriteStatus.Marshal(b, m, deterministic)
+}
+func (m *WriteStatus) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_WriteStatus.Merge(m, src)
+}
+func (m *WriteStatus) XXX_Size() int {
+	return xxx_messageInfo_WriteStatus.Size(m)
+}
+func (m *WriteStatus) XXX_DiscardUnknown() {
+	xxx_messageInfo_WriteStatus.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_WriteStatus proto.InternalMessageInfo
+
+func (m *WriteStatus) GetWrote() int64 {
+	if m != nil {
+		return m.Wrote
+	}
+	return 0
+}
+
+type Empty struct {
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *Empty) Reset()         { *m = Empty{} }
+func (m *Empty) String() string { return proto.CompactTextString(m) }
+func (*Empty) ProtoMessage()    {}
+func (*Empty) Descriptor() ([]byte, []int) {
+	return fileDescriptor_c3e5c14afe4be539, []int{5}
+}
+
+func (m *Empty) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_Empty.Unmarshal(m, b)
+}
+func (m *Empty) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_Empty.Marshal(b, m, deterministic)
+}
+func (m *Empty) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_Empty.Merge(m, src)
+}
+func (m *Empty) XXX_Size() int {
+	return xxx_messageInfo_Empty.Size(m)
+}
+func (m *Empty) XXX_DiscardUnknown() {
+	xxx_messageInfo_Empty.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_Empty proto.InternalMessageInfo
+
+type ReadParams struct {
 	TopicName            string   `protobuf:"bytes,1,opt,name=topicName,proto3" json:"topicName,omitempty"`
 	Offset               uint64   `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
 	BatchSize            uint32   `protobuf:"varint,3,opt,name=batchSize,proto3" json:"batchSize,omitempty"`
@@ -392,338 +267,189 @@ type TopicBatchOffset struct {
 	XXX_sizecache        int32    `json:"-"`
 }
 
-func (m *TopicBatchOffset) Reset()         { *m = TopicBatchOffset{} }
-func (m *TopicBatchOffset) String() string { return proto.CompactTextString(m) }
-func (*TopicBatchOffset) ProtoMessage()    {}
-func (*TopicBatchOffset) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{9}
+func (m *ReadParams) Reset()         { *m = ReadParams{} }
+func (m *ReadParams) String() string { return proto.CompactTextString(m) }
+func (*ReadParams) ProtoMessage()    {}
+func (*ReadParams) Descriptor() ([]byte, []int) {
+	return fileDescriptor_c3e5c14afe4be539, []int{6}
 }
 
-func (m *TopicBatchOffset) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_TopicBatchOffset.Unmarshal(m, b)
+func (m *ReadParams) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_ReadParams.Unmarshal(m, b)
 }
-func (m *TopicBatchOffset) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_TopicBatchOffset.Marshal(b, m, deterministic)
+func (m *ReadParams) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_ReadParams.Marshal(b, m, deterministic)
 }
-func (m *TopicBatchOffset) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TopicBatchOffset.Merge(m, src)
+func (m *ReadParams) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_ReadParams.Merge(m, src)
 }
-func (m *TopicBatchOffset) XXX_Size() int {
-	return xxx_messageInfo_TopicBatchOffset.Size(m)
+func (m *ReadParams) XXX_Size() int {
+	return xxx_messageInfo_ReadParams.Size(m)
 }
-func (m *TopicBatchOffset) XXX_DiscardUnknown() {
-	xxx_messageInfo_TopicBatchOffset.DiscardUnknown(m)
+func (m *ReadParams) XXX_DiscardUnknown() {
+	xxx_messageInfo_ReadParams.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_TopicBatchOffset proto.InternalMessageInfo
+var xxx_messageInfo_ReadParams proto.InternalMessageInfo
 
-func (m *TopicBatchOffset) GetTopicName() string {
+func (m *ReadParams) GetTopicName() string {
 	if m != nil {
 		return m.TopicName
 	}
 	return ""
 }
 
-func (m *TopicBatchOffset) GetOffset() uint64 {
+func (m *ReadParams) GetOffset() uint64 {
 	if m != nil {
 		return m.Offset
 	}
 	return 0
 }
 
-func (m *TopicBatchOffset) GetBatchSize() uint32 {
+func (m *ReadParams) GetBatchSize() uint32 {
 	if m != nil {
 		return m.BatchSize
 	}
 	return 0
 }
 
-type TopicMessage struct {
+type InputEntries struct {
 	TopicName            string   `protobuf:"bytes,1,opt,name=topicName,proto3" json:"topicName,omitempty"`
-	MessagePayload       []byte   `protobuf:"bytes,2,opt,name=messagePayload,proto3" json:"messagePayload,omitempty"`
+	Entries              [][]byte `protobuf:"bytes,2,rep,name=entries,proto3" json:"entries,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
 }
 
-func (m *TopicMessage) Reset()         { *m = TopicMessage{} }
-func (m *TopicMessage) String() string { return proto.CompactTextString(m) }
-func (*TopicMessage) ProtoMessage()    {}
-func (*TopicMessage) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{10}
+func (m *InputEntries) Reset()         { *m = InputEntries{} }
+func (m *InputEntries) String() string { return proto.CompactTextString(m) }
+func (*InputEntries) ProtoMessage()    {}
+func (*InputEntries) Descriptor() ([]byte, []int) {
+	return fileDescriptor_c3e5c14afe4be539, []int{7}
 }
 
-func (m *TopicMessage) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_TopicMessage.Unmarshal(m, b)
+func (m *InputEntries) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_InputEntries.Unmarshal(m, b)
 }
-func (m *TopicMessage) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_TopicMessage.Marshal(b, m, deterministic)
+func (m *InputEntries) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_InputEntries.Marshal(b, m, deterministic)
 }
-func (m *TopicMessage) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TopicMessage.Merge(m, src)
+func (m *InputEntries) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_InputEntries.Merge(m, src)
 }
-func (m *TopicMessage) XXX_Size() int {
-	return xxx_messageInfo_TopicMessage.Size(m)
+func (m *InputEntries) XXX_Size() int {
+	return xxx_messageInfo_InputEntries.Size(m)
 }
-func (m *TopicMessage) XXX_DiscardUnknown() {
-	xxx_messageInfo_TopicMessage.DiscardUnknown(m)
+func (m *InputEntries) XXX_DiscardUnknown() {
+	xxx_messageInfo_InputEntries.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_TopicMessage proto.InternalMessageInfo
+var xxx_messageInfo_InputEntries proto.InternalMessageInfo
 
-func (m *TopicMessage) GetTopicName() string {
+func (m *InputEntries) GetTopicName() string {
 	if m != nil {
 		return m.TopicName
 	}
 	return ""
 }
 
-func (m *TopicMessage) GetMessagePayload() []byte {
+func (m *InputEntries) GetEntries() [][]byte {
 	if m != nil {
-		return m.MessagePayload
+		return m.Entries
 	}
 	return nil
 }
 
-type TopicBatchMessage struct {
-	TopicName            string   `protobuf:"bytes,1,opt,name=topicName,proto3" json:"topicName,omitempty"`
-	MessagePayload       [][]byte `protobuf:"bytes,2,rep,name=messagePayload,proto3" json:"messagePayload,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *TopicBatchMessage) Reset()         { *m = TopicBatchMessage{} }
-func (m *TopicBatchMessage) String() string { return proto.CompactTextString(m) }
-func (*TopicBatchMessage) ProtoMessage()    {}
-func (*TopicBatchMessage) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{11}
-}
-
-func (m *TopicBatchMessage) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_TopicBatchMessage.Unmarshal(m, b)
-}
-func (m *TopicBatchMessage) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_TopicBatchMessage.Marshal(b, m, deterministic)
-}
-func (m *TopicBatchMessage) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TopicBatchMessage.Merge(m, src)
-}
-func (m *TopicBatchMessage) XXX_Size() int {
-	return xxx_messageInfo_TopicBatchMessage.Size(m)
-}
-func (m *TopicBatchMessage) XXX_DiscardUnknown() {
-	xxx_messageInfo_TopicBatchMessage.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_TopicBatchMessage proto.InternalMessageInfo
-
-func (m *TopicBatchMessage) GetTopicName() string {
-	if m != nil {
-		return m.TopicName
-	}
-	return ""
-}
-
-func (m *TopicBatchMessage) GetMessagePayload() [][]byte {
-	if m != nil {
-		return m.MessagePayload
-	}
-	return nil
-}
-
-type Message struct {
-	Payload              []byte   `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *Message) Reset()         { *m = Message{} }
-func (m *Message) String() string { return proto.CompactTextString(m) }
-func (*Message) ProtoMessage()    {}
-func (*Message) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{12}
-}
-
-func (m *Message) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_Message.Unmarshal(m, b)
-}
-func (m *Message) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_Message.Marshal(b, m, deterministic)
-}
-func (m *Message) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_Message.Merge(m, src)
-}
-func (m *Message) XXX_Size() int {
-	return xxx_messageInfo_Message.Size(m)
-}
-func (m *Message) XXX_DiscardUnknown() {
-	xxx_messageInfo_Message.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_Message proto.InternalMessageInfo
-
-func (m *Message) GetPayload() []byte {
-	if m != nil {
-		return m.Payload
-	}
-	return nil
-}
-
-type Entry struct {
+type OutputEntries struct {
 	Offset               uint64   `protobuf:"varint,1,opt,name=offset,proto3" json:"offset,omitempty"`
-	Payload              []byte   `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	Entries              [][]byte `protobuf:"bytes,2,rep,name=entries,proto3" json:"entries,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
 }
 
-func (m *Entry) Reset()         { *m = Entry{} }
-func (m *Entry) String() string { return proto.CompactTextString(m) }
-func (*Entry) ProtoMessage()    {}
-func (*Entry) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{13}
+func (m *OutputEntries) Reset()         { *m = OutputEntries{} }
+func (m *OutputEntries) String() string { return proto.CompactTextString(m) }
+func (*OutputEntries) ProtoMessage()    {}
+func (*OutputEntries) Descriptor() ([]byte, []int) {
+	return fileDescriptor_c3e5c14afe4be539, []int{8}
 }
 
-func (m *Entry) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_Entry.Unmarshal(m, b)
+func (m *OutputEntries) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_OutputEntries.Unmarshal(m, b)
 }
-func (m *Entry) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_Entry.Marshal(b, m, deterministic)
+func (m *OutputEntries) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_OutputEntries.Marshal(b, m, deterministic)
 }
-func (m *Entry) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_Entry.Merge(m, src)
+func (m *OutputEntries) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_OutputEntries.Merge(m, src)
 }
-func (m *Entry) XXX_Size() int {
-	return xxx_messageInfo_Entry.Size(m)
+func (m *OutputEntries) XXX_Size() int {
+	return xxx_messageInfo_OutputEntries.Size(m)
 }
-func (m *Entry) XXX_DiscardUnknown() {
-	xxx_messageInfo_Entry.DiscardUnknown(m)
+func (m *OutputEntries) XXX_DiscardUnknown() {
+	xxx_messageInfo_OutputEntries.DiscardUnknown(m)
 }
 
-var xxx_messageInfo_Entry proto.InternalMessageInfo
+var xxx_messageInfo_OutputEntries proto.InternalMessageInfo
 
-func (m *Entry) GetOffset() uint64 {
+func (m *OutputEntries) GetOffset() uint64 {
 	if m != nil {
 		return m.Offset
 	}
 	return 0
 }
 
-func (m *Entry) GetPayload() []byte {
-	if m != nil {
-		return m.Payload
-	}
-	return nil
-}
-
-type Status struct {
-	Entries              int32    `protobuf:"varint,1,opt,name=entries,proto3" json:"entries,omitempty"`
-	Current              *Offset  `protobuf:"bytes,2,opt,name=current,proto3" json:"current,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *Status) Reset()         { *m = Status{} }
-func (m *Status) String() string { return proto.CompactTextString(m) }
-func (*Status) ProtoMessage()    {}
-func (*Status) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{14}
-}
-
-func (m *Status) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_Status.Unmarshal(m, b)
-}
-func (m *Status) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_Status.Marshal(b, m, deterministic)
-}
-func (m *Status) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_Status.Merge(m, src)
-}
-func (m *Status) XXX_Size() int {
-	return xxx_messageInfo_Status.Size(m)
-}
-func (m *Status) XXX_DiscardUnknown() {
-	xxx_messageInfo_Status.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_Status proto.InternalMessageInfo
-
-func (m *Status) GetEntries() int32 {
+func (m *OutputEntries) GetEntries() [][]byte {
 	if m != nil {
 		return m.Entries
-	}
-	return 0
-}
-
-func (m *Status) GetCurrent() *Offset {
-	if m != nil {
-		return m.Current
 	}
 	return nil
 }
 
 func init() {
-	proto.RegisterType((*EntryBatch)(nil), "EntryBatch")
-	proto.RegisterType((*TopicStatus)(nil), "TopicStatus")
-	proto.RegisterType((*Empty)(nil), "Empty")
-	proto.RegisterType((*Offset)(nil), "Offset")
-	proto.RegisterType((*Topics)(nil), "Topics")
+	proto.RegisterType((*TopicsStatus)(nil), "TopicsStatus")
 	proto.RegisterType((*Topic)(nil), "Topic")
-	proto.RegisterType((*TopicBatch)(nil), "TopicBatch")
-	proto.RegisterType((*TopicOffset)(nil), "TopicOffset")
-	proto.RegisterType((*TopicOffsets)(nil), "TopicOffsets")
-	proto.RegisterType((*TopicBatchOffset)(nil), "TopicBatchOffset")
-	proto.RegisterType((*TopicMessage)(nil), "TopicMessage")
-	proto.RegisterType((*TopicBatchMessage)(nil), "TopicBatchMessage")
-	proto.RegisterType((*Message)(nil), "Message")
-	proto.RegisterType((*Entry)(nil), "Entry")
-	proto.RegisterType((*Status)(nil), "Status")
+	proto.RegisterType((*CreateStatus)(nil), "CreateStatus")
+	proto.RegisterType((*DropStatus)(nil), "DropStatus")
+	proto.RegisterType((*WriteStatus)(nil), "WriteStatus")
+	proto.RegisterType((*Empty)(nil), "Empty")
+	proto.RegisterType((*ReadParams)(nil), "ReadParams")
+	proto.RegisterType((*InputEntries)(nil), "InputEntries")
+	proto.RegisterType((*OutputEntries)(nil), "OutputEntries")
 }
 
 func init() { proto.RegisterFile("ibsen.proto", fileDescriptor_c3e5c14afe4be539) }
 
 var fileDescriptor_c3e5c14afe4be539 = []byte{
-	// 585 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xa4, 0x54, 0xdd, 0x6a, 0xdb, 0x30,
-	0x14, 0xae, 0x92, 0xd8, 0x5e, 0x8e, 0xd3, 0xb0, 0x68, 0xa5, 0x98, 0x2c, 0x6c, 0xa9, 0x06, 0x6b,
-	0xd8, 0x40, 0x29, 0x19, 0x0c, 0xba, 0x8b, 0xc2, 0x32, 0x32, 0xe8, 0xc5, 0xba, 0xe0, 0x14, 0xc6,
-	0x76, 0xe7, 0x38, 0x8a, 0x2b, 0xa8, 0x7f, 0x90, 0x15, 0x4a, 0xf6, 0x38, 0x7b, 0xb2, 0x3d, 0xca,
-	0xb0, 0x2c, 0xc7, 0x76, 0xda, 0x32, 0xd8, 0xee, 0xa4, 0x73, 0xbe, 0x73, 0xbe, 0xf3, 0x0f, 0x36,
-	0x5f, 0xa6, 0x2c, 0xa2, 0x89, 0x88, 0x65, 0x4c, 0x28, 0xc0, 0x2c, 0x92, 0x62, 0x3b, 0xf5, 0xa4,
-	0x7f, 0x83, 0x87, 0x60, 0xb1, 0x48, 0x0a, 0xce, 0x52, 0x07, 0x0d, 0x9b, 0x23, 0x7b, 0x62, 0x52,
-	0xa5, 0x75, 0x0b, 0x31, 0x39, 0x05, 0xfb, 0x3a, 0x4e, 0xb8, 0xbf, 0x90, 0x9e, 0xdc, 0xa4, 0xd8,
-	0x01, 0xcb, 0x17, 0xcc, 0x93, 0x6c, 0xe5, 0xa0, 0x21, 0x1a, 0x3d, 0x71, 0x8b, 0x2f, 0xb1, 0xc0,
-	0x98, 0x85, 0x89, 0xdc, 0x12, 0x07, 0xcc, 0xaf, 0xeb, 0x75, 0xca, 0x24, 0xee, 0x42, 0x83, 0xe7,
-	0xb8, 0x96, 0xdb, 0xe0, 0x2b, 0x32, 0x00, 0x53, 0xf9, 0x4a, 0x31, 0x86, 0x56, 0xe4, 0x85, 0x4c,
-	0x91, 0xb6, 0x5d, 0xf5, 0x26, 0xcf, 0xc1, 0x50, 0xda, 0x8a, 0x12, 0xed, 0x94, 0x17, 0x00, 0x4a,
-	0x99, 0x87, 0xfd, 0x00, 0x02, 0x0f, 0xa0, 0xbd, 0xcc, 0x94, 0x0b, 0xfe, 0x93, 0x39, 0x8d, 0x21,
-	0x1a, 0x1d, 0xba, 0xa5, 0x80, 0x7c, 0xd2, 0x69, 0xe8, 0xc8, 0x06, 0xd0, 0x96, 0xd9, 0xf7, 0xaa,
-	0xf4, 0x52, 0x0a, 0xf0, 0x31, 0x98, 0xb1, 0xc2, 0x29, 0x3f, 0x2d, 0x57, 0xff, 0xc8, 0x05, 0x74,
-	0x2a, 0x4e, 0x52, 0x4c, 0xc1, 0x96, 0xe5, 0x5f, 0x57, 0xb0, 0x43, 0x2b, 0x18, 0xb7, 0x0a, 0x20,
-	0x6b, 0x78, 0x5a, 0x26, 0xf1, 0x3f, 0x91, 0xd4, 0x93, 0x6d, 0xee, 0x27, 0x7b, 0xad, 0xe3, 0xfc,
-	0xc2, 0xd2, 0xd4, 0x0b, 0xd8, 0x5f, 0x38, 0x5e, 0x43, 0x37, 0xcc, 0x81, 0x73, 0x6f, 0x7b, 0x1b,
-	0x7b, 0x2b, 0xc5, 0xd5, 0x71, 0xf7, 0xa4, 0xe4, 0x3b, 0xf4, 0xca, 0xe8, 0xff, 0xdd, 0x75, 0xf3,
-	0x01, 0xd7, 0xaf, 0xc0, 0x2a, 0x1c, 0x3a, 0x60, 0x25, 0x1a, 0x8b, 0x54, 0x18, 0xc5, 0x97, 0x9c,
-	0x83, 0xa1, 0x66, 0xb3, 0x52, 0x14, 0x54, 0x2b, 0x4a, 0xc5, 0xb4, 0x51, 0x37, 0x9d, 0x81, 0x59,
-	0xce, 0x6f, 0x39, 0xf0, 0x68, 0x64, 0xec, 0x06, 0x1d, 0x9f, 0x80, 0xe5, 0x6f, 0x84, 0x60, 0x51,
-	0x5e, 0x6b, 0x7b, 0x62, 0x51, 0xdd, 0xc3, 0x42, 0x3e, 0xf9, 0xdd, 0x04, 0xe3, 0x32, 0xdb, 0x25,
-	0x3c, 0x04, 0x33, 0x9f, 0x7b, 0x6c, 0xe6, 0xed, 0xee, 0xeb, 0xb6, 0xe7, 0x34, 0xe4, 0x00, 0xbf,
-	0x80, 0xd6, 0x4a, 0xc4, 0xc9, 0xa3, 0xfa, 0x97, 0x00, 0xb7, 0x3c, 0x95, 0x7a, 0x1f, 0x4c, 0xaa,
-	0x76, 0xa7, 0x6f, 0xe5, 0xa8, 0x0c, 0x30, 0x86, 0xa3, 0x12, 0xf0, 0x8d, 0xcb, 0x62, 0x60, 0x0a,
-	0xe8, 0x61, 0x75, 0xce, 0x32, 0x83, 0x13, 0x30, 0xee, 0x04, 0x97, 0x0c, 0x6b, 0x8d, 0xae, 0x68,
-	0xdf, 0xa2, 0x3b, 0xd2, 0xb7, 0x00, 0x0a, 0xa2, 0xb7, 0x88, 0xde, 0xeb, 0x67, 0x1d, 0x6c, 0x2b,
-	0xf0, 0x42, 0x0a, 0xe6, 0x85, 0x8f, 0x7b, 0x1d, 0xa1, 0x33, 0x84, 0x4f, 0xa1, 0x27, 0x98, 0xb7,
-	0xfa, 0x2c, 0xe2, 0x70, 0xca, 0x02, 0x1e, 0x45, 0x3c, 0x0a, 0x76, 0xb9, 0xeb, 0xa3, 0x42, 0x0e,
-	0xce, 0x10, 0x7e, 0x0f, 0xc7, 0x19, 0x50, 0x91, 0xd6, 0xd1, 0x76, 0x25, 0x9c, 0xbe, 0x4d, 0xcb,
-	0x2b, 0xa5, 0xec, 0xde, 0x40, 0xb7, 0x20, 0xd0, 0x85, 0xa8, 0x2d, 0x5a, 0x8d, 0xe3, 0x1c, 0x9e,
-	0xd5, 0x38, 0xb4, 0x41, 0x8f, 0xee, 0x6f, 0xdf, 0x3d, 0x9a, 0xe9, 0x07, 0x38, 0x0a, 0xb8, 0xbc,
-	0xd9, 0x2c, 0xa9, 0x1f, 0x87, 0x54, 0xfa, 0x77, 0x54, 0x1d, 0xcf, 0x29, 0xa8, 0xbe, 0xcf, 0xb3,
-	0x13, 0x3a, 0x47, 0x3f, 0x3a, 0x63, 0x2f, 0xe1, 0xe3, 0x40, 0x24, 0xfe, 0xc7, 0x84, 0xff, 0x6a,
-	0x18, 0x97, 0xd3, 0xc5, 0xec, 0x6a, 0x69, 0xaa, 0x0b, 0xfb, 0xee, 0x4f, 0x00, 0x00, 0x00, 0xff,
-	0xff, 0x49, 0x60, 0x3e, 0x81, 0x70, 0x05, 0x00, 0x00,
+	// 428 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x84, 0x53, 0x41, 0x6f, 0xd3, 0x30,
+	0x14, 0x8e, 0xdb, 0x26, 0x65, 0x2f, 0x09, 0x07, 0x6b, 0x42, 0x51, 0x05, 0x28, 0x18, 0x69, 0xe4,
+	0xe4, 0x55, 0xdb, 0x8d, 0xdb, 0x0a, 0x45, 0xea, 0x65, 0x54, 0x2e, 0x12, 0x12, 0x27, 0xdc, 0xd4,
+	0xdb, 0x7c, 0x48, 0x6c, 0x39, 0x8e, 0x2a, 0xf8, 0x39, 0xfc, 0x41, 0xfe, 0xc2, 0x14, 0x27, 0x9b,
+	0xb3, 0xc3, 0xb4, 0x5b, 0xbe, 0x2f, 0x9f, 0x9f, 0xdf, 0xfb, 0xbe, 0x67, 0x88, 0xe5, 0xbe, 0x11,
+	0x35, 0xd5, 0x46, 0x59, 0x45, 0x28, 0x24, 0x3f, 0x94, 0x96, 0x65, 0xb3, 0xb3, 0xdc, 0xb6, 0x0d,
+	0x7e, 0x0f, 0x91, 0x75, 0x38, 0x43, 0xf9, 0xb4, 0x88, 0x2f, 0x22, 0xea, 0x7e, 0xb3, 0x81, 0x25,
+	0x97, 0x10, 0x3a, 0x02, 0x63, 0x98, 0xd5, 0xbc, 0x12, 0x19, 0xca, 0x51, 0x71, 0xc2, 0xdc, 0x37,
+	0x7e, 0x03, 0x91, 0xba, 0xb9, 0x69, 0x84, 0xcd, 0x26, 0x39, 0x2a, 0x66, 0x6c, 0x40, 0xa4, 0x80,
+	0xe4, 0x8b, 0x11, 0xdc, 0x8a, 0xe1, 0x92, 0x0c, 0xe6, 0xa5, 0xc3, 0x07, 0x77, 0xfc, 0x15, 0x7b,
+	0x80, 0xe4, 0x0c, 0xe0, 0xab, 0x51, 0xda, 0xeb, 0x0e, 0x46, 0x69, 0xed, 0x75, 0x03, 0x24, 0x1f,
+	0x21, 0xfe, 0x69, 0xe4, 0x63, 0xc1, 0x53, 0x08, 0x8f, 0x46, 0xd9, 0xbe, 0x9b, 0x29, 0xeb, 0x01,
+	0x99, 0x43, 0xb8, 0xae, 0xb4, 0xfd, 0x43, 0x7e, 0x03, 0x30, 0xc1, 0x0f, 0x5b, 0x6e, 0x78, 0xd5,
+	0xe0, 0xb7, 0x70, 0xe2, 0x86, 0xb9, 0xf6, 0xed, 0x7b, 0xe2, 0xb9, 0x19, 0xba, 0x53, 0x7b, 0x6e,
+	0xcb, 0xbb, 0x9d, 0xfc, 0x2b, 0xb2, 0x69, 0x8e, 0x8a, 0x94, 0x79, 0x82, 0x7c, 0x83, 0x64, 0x53,
+	0xeb, 0xd6, 0xae, 0x6b, 0x6b, 0xa4, 0x78, 0xe9, 0x8e, 0x0c, 0xe6, 0xa2, 0x17, 0x66, 0x93, 0x7c,
+	0x5a, 0x24, 0xec, 0x01, 0x92, 0x2b, 0x48, 0xbf, 0xb7, 0x76, 0x54, 0xc8, 0xb7, 0x83, 0x9e, 0xb4,
+	0xf3, 0x6c, 0x89, 0x8b, 0xff, 0x08, 0xc2, 0x4d, 0x97, 0x30, 0xfe, 0x00, 0x51, 0xef, 0x2b, 0x1e,
+	0x52, 0x5c, 0xa4, 0x74, 0x9c, 0x03, 0x09, 0xf0, 0x3b, 0x98, 0x75, 0x96, 0x3e, 0x0a, 0x62, 0xea,
+	0xed, 0x27, 0x41, 0x57, 0xa1, 0xe9, 0x1d, 0x8e, 0xa8, 0xb3, 0x72, 0x91, 0xd2, 0xf1, 0xba, 0x90,
+	0x00, 0x9f, 0x75, 0xd6, 0x4b, 0x2b, 0x70, 0x4a, 0xc7, 0x0e, 0x2c, 0x12, 0x3a, 0x0a, 0x88, 0x04,
+	0x78, 0x09, 0xf1, 0xb1, 0x27, 0x8c, 0xe0, 0xd5, 0x0b, 0xea, 0x02, 0x2d, 0x11, 0xfe, 0x04, 0x33,
+	0x23, 0xf8, 0x01, 0xc7, 0xd4, 0x87, 0xb7, 0x78, 0x4d, 0x9f, 0xf8, 0x43, 0x82, 0x25, 0x5a, 0x7d,
+	0x86, 0xd3, 0x5b, 0x69, 0xef, 0xda, 0x3d, 0x2d, 0x55, 0x45, 0x6d, 0x79, 0xa4, 0x6e, 0xc3, 0x57,
+	0xe0, 0x6c, 0xd8, 0x76, 0x7b, 0xbe, 0x45, 0xbf, 0x92, 0x73, 0xae, 0xe5, 0xf9, 0xad, 0xd1, 0xe5,
+	0x95, 0x96, 0xff, 0x26, 0xe1, 0x66, 0xb5, 0x5b, 0x5f, 0xef, 0x23, 0xf7, 0x0c, 0x2e, 0xef, 0x03,
+	0x00, 0x00, 0xff, 0xff, 0x37, 0xd0, 0x6e, 0x7a, 0x15, 0x03, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -738,17 +464,12 @@ const _ = grpc.SupportPackageIsVersion6
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
 type IbsenClient interface {
-	Create(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*TopicStatus, error)
-	Drop(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*TopicStatus, error)
-	ListTopics(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Topics, error)
-	ListTopicsWithOffset(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TopicOffsets, error)
-	Write(ctx context.Context, in *TopicMessage, opts ...grpc.CallOption) (*Status, error)
-	WriteBatch(ctx context.Context, in *TopicBatchMessage, opts ...grpc.CallOption) (*Status, error)
+	Create(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*CreateStatus, error)
+	Drop(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*DropStatus, error)
+	Status(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TopicsStatus, error)
+	Write(ctx context.Context, in *InputEntries, opts ...grpc.CallOption) (*WriteStatus, error)
 	WriteStream(ctx context.Context, opts ...grpc.CallOption) (Ibsen_WriteStreamClient, error)
-	ReadFromBeginning(ctx context.Context, in *Topic, opts ...grpc.CallOption) (Ibsen_ReadFromBeginningClient, error)
-	ReadBatchFromBeginning(ctx context.Context, in *TopicBatch, opts ...grpc.CallOption) (Ibsen_ReadBatchFromBeginningClient, error)
-	ReadFromOffset(ctx context.Context, in *TopicOffset, opts ...grpc.CallOption) (Ibsen_ReadFromOffsetClient, error)
-	ReadBatchFromOffset(ctx context.Context, in *TopicBatchOffset, opts ...grpc.CallOption) (Ibsen_ReadBatchFromOffsetClient, error)
+	Read(ctx context.Context, in *ReadParams, opts ...grpc.CallOption) (Ibsen_ReadClient, error)
 }
 
 type ibsenClient struct {
@@ -759,8 +480,8 @@ func NewIbsenClient(cc grpc.ClientConnInterface) IbsenClient {
 	return &ibsenClient{cc}
 }
 
-func (c *ibsenClient) Create(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*TopicStatus, error) {
-	out := new(TopicStatus)
+func (c *ibsenClient) Create(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*CreateStatus, error) {
+	out := new(CreateStatus)
 	err := c.cc.Invoke(ctx, "/Ibsen/create", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -768,8 +489,8 @@ func (c *ibsenClient) Create(ctx context.Context, in *Topic, opts ...grpc.CallOp
 	return out, nil
 }
 
-func (c *ibsenClient) Drop(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*TopicStatus, error) {
-	out := new(TopicStatus)
+func (c *ibsenClient) Drop(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*DropStatus, error) {
+	out := new(DropStatus)
 	err := c.cc.Invoke(ctx, "/Ibsen/drop", in, out, opts...)
 	if err != nil {
 		return nil, err
@@ -777,36 +498,18 @@ func (c *ibsenClient) Drop(ctx context.Context, in *Topic, opts ...grpc.CallOpti
 	return out, nil
 }
 
-func (c *ibsenClient) ListTopics(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Topics, error) {
-	out := new(Topics)
-	err := c.cc.Invoke(ctx, "/Ibsen/listTopics", in, out, opts...)
+func (c *ibsenClient) Status(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TopicsStatus, error) {
+	out := new(TopicsStatus)
+	err := c.cc.Invoke(ctx, "/Ibsen/status", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *ibsenClient) ListTopicsWithOffset(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TopicOffsets, error) {
-	out := new(TopicOffsets)
-	err := c.cc.Invoke(ctx, "/Ibsen/listTopicsWithOffset", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *ibsenClient) Write(ctx context.Context, in *TopicMessage, opts ...grpc.CallOption) (*Status, error) {
-	out := new(Status)
+func (c *ibsenClient) Write(ctx context.Context, in *InputEntries, opts ...grpc.CallOption) (*WriteStatus, error) {
+	out := new(WriteStatus)
 	err := c.cc.Invoke(ctx, "/Ibsen/write", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *ibsenClient) WriteBatch(ctx context.Context, in *TopicBatchMessage, opts ...grpc.CallOption) (*Status, error) {
-	out := new(Status)
-	err := c.cc.Invoke(ctx, "/Ibsen/writeBatch", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -823,8 +526,8 @@ func (c *ibsenClient) WriteStream(ctx context.Context, opts ...grpc.CallOption) 
 }
 
 type Ibsen_WriteStreamClient interface {
-	Send(*TopicMessage) error
-	Recv() (*Status, error)
+	Send(*InputEntries) error
+	Recv() (*WriteStatus, error)
 	grpc.ClientStream
 }
 
@@ -832,24 +535,24 @@ type ibsenWriteStreamClient struct {
 	grpc.ClientStream
 }
 
-func (x *ibsenWriteStreamClient) Send(m *TopicMessage) error {
+func (x *ibsenWriteStreamClient) Send(m *InputEntries) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *ibsenWriteStreamClient) Recv() (*Status, error) {
-	m := new(Status)
+func (x *ibsenWriteStreamClient) Recv() (*WriteStatus, error) {
+	m := new(WriteStatus)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func (c *ibsenClient) ReadFromBeginning(ctx context.Context, in *Topic, opts ...grpc.CallOption) (Ibsen_ReadFromBeginningClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[1], "/Ibsen/readFromBeginning", opts...)
+func (c *ibsenClient) Read(ctx context.Context, in *ReadParams, opts ...grpc.CallOption) (Ibsen_ReadClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[1], "/Ibsen/read", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &ibsenReadFromBeginningClient{stream}
+	x := &ibsenReadClient{stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -859,113 +562,17 @@ func (c *ibsenClient) ReadFromBeginning(ctx context.Context, in *Topic, opts ...
 	return x, nil
 }
 
-type Ibsen_ReadFromBeginningClient interface {
-	Recv() (*Entry, error)
+type Ibsen_ReadClient interface {
+	Recv() (*OutputEntries, error)
 	grpc.ClientStream
 }
 
-type ibsenReadFromBeginningClient struct {
+type ibsenReadClient struct {
 	grpc.ClientStream
 }
 
-func (x *ibsenReadFromBeginningClient) Recv() (*Entry, error) {
-	m := new(Entry)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (c *ibsenClient) ReadBatchFromBeginning(ctx context.Context, in *TopicBatch, opts ...grpc.CallOption) (Ibsen_ReadBatchFromBeginningClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[2], "/Ibsen/readBatchFromBeginning", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &ibsenReadBatchFromBeginningClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-type Ibsen_ReadBatchFromBeginningClient interface {
-	Recv() (*EntryBatch, error)
-	grpc.ClientStream
-}
-
-type ibsenReadBatchFromBeginningClient struct {
-	grpc.ClientStream
-}
-
-func (x *ibsenReadBatchFromBeginningClient) Recv() (*EntryBatch, error) {
-	m := new(EntryBatch)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (c *ibsenClient) ReadFromOffset(ctx context.Context, in *TopicOffset, opts ...grpc.CallOption) (Ibsen_ReadFromOffsetClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[3], "/Ibsen/readFromOffset", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &ibsenReadFromOffsetClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-type Ibsen_ReadFromOffsetClient interface {
-	Recv() (*Entry, error)
-	grpc.ClientStream
-}
-
-type ibsenReadFromOffsetClient struct {
-	grpc.ClientStream
-}
-
-func (x *ibsenReadFromOffsetClient) Recv() (*Entry, error) {
-	m := new(Entry)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func (c *ibsenClient) ReadBatchFromOffset(ctx context.Context, in *TopicBatchOffset, opts ...grpc.CallOption) (Ibsen_ReadBatchFromOffsetClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[4], "/Ibsen/readBatchFromOffset", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &ibsenReadBatchFromOffsetClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-type Ibsen_ReadBatchFromOffsetClient interface {
-	Recv() (*EntryBatch, error)
-	grpc.ClientStream
-}
-
-type ibsenReadBatchFromOffsetClient struct {
-	grpc.ClientStream
-}
-
-func (x *ibsenReadBatchFromOffsetClient) Recv() (*EntryBatch, error) {
-	m := new(EntryBatch)
+func (x *ibsenReadClient) Recv() (*OutputEntries, error) {
+	m := new(OutputEntries)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -974,55 +581,35 @@ func (x *ibsenReadBatchFromOffsetClient) Recv() (*EntryBatch, error) {
 
 // IbsenServer is the server API for Ibsen service.
 type IbsenServer interface {
-	Create(context.Context, *Topic) (*TopicStatus, error)
-	Drop(context.Context, *Topic) (*TopicStatus, error)
-	ListTopics(context.Context, *Empty) (*Topics, error)
-	ListTopicsWithOffset(context.Context, *Empty) (*TopicOffsets, error)
-	Write(context.Context, *TopicMessage) (*Status, error)
-	WriteBatch(context.Context, *TopicBatchMessage) (*Status, error)
+	Create(context.Context, *Topic) (*CreateStatus, error)
+	Drop(context.Context, *Topic) (*DropStatus, error)
+	Status(context.Context, *Empty) (*TopicsStatus, error)
+	Write(context.Context, *InputEntries) (*WriteStatus, error)
 	WriteStream(Ibsen_WriteStreamServer) error
-	ReadFromBeginning(*Topic, Ibsen_ReadFromBeginningServer) error
-	ReadBatchFromBeginning(*TopicBatch, Ibsen_ReadBatchFromBeginningServer) error
-	ReadFromOffset(*TopicOffset, Ibsen_ReadFromOffsetServer) error
-	ReadBatchFromOffset(*TopicBatchOffset, Ibsen_ReadBatchFromOffsetServer) error
+	Read(*ReadParams, Ibsen_ReadServer) error
 }
 
 // UnimplementedIbsenServer can be embedded to have forward compatible implementations.
 type UnimplementedIbsenServer struct {
 }
 
-func (*UnimplementedIbsenServer) Create(ctx context.Context, req *Topic) (*TopicStatus, error) {
+func (*UnimplementedIbsenServer) Create(ctx context.Context, req *Topic) (*CreateStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
 }
-func (*UnimplementedIbsenServer) Drop(ctx context.Context, req *Topic) (*TopicStatus, error) {
+func (*UnimplementedIbsenServer) Drop(ctx context.Context, req *Topic) (*DropStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Drop not implemented")
 }
-func (*UnimplementedIbsenServer) ListTopics(ctx context.Context, req *Empty) (*Topics, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListTopics not implemented")
+func (*UnimplementedIbsenServer) Status(ctx context.Context, req *Empty) (*TopicsStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Status not implemented")
 }
-func (*UnimplementedIbsenServer) ListTopicsWithOffset(ctx context.Context, req *Empty) (*TopicOffsets, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ListTopicsWithOffset not implemented")
-}
-func (*UnimplementedIbsenServer) Write(ctx context.Context, req *TopicMessage) (*Status, error) {
+func (*UnimplementedIbsenServer) Write(ctx context.Context, req *InputEntries) (*WriteStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Write not implemented")
-}
-func (*UnimplementedIbsenServer) WriteBatch(ctx context.Context, req *TopicBatchMessage) (*Status, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method WriteBatch not implemented")
 }
 func (*UnimplementedIbsenServer) WriteStream(srv Ibsen_WriteStreamServer) error {
 	return status.Errorf(codes.Unimplemented, "method WriteStream not implemented")
 }
-func (*UnimplementedIbsenServer) ReadFromBeginning(req *Topic, srv Ibsen_ReadFromBeginningServer) error {
-	return status.Errorf(codes.Unimplemented, "method ReadFromBeginning not implemented")
-}
-func (*UnimplementedIbsenServer) ReadBatchFromBeginning(req *TopicBatch, srv Ibsen_ReadBatchFromBeginningServer) error {
-	return status.Errorf(codes.Unimplemented, "method ReadBatchFromBeginning not implemented")
-}
-func (*UnimplementedIbsenServer) ReadFromOffset(req *TopicOffset, srv Ibsen_ReadFromOffsetServer) error {
-	return status.Errorf(codes.Unimplemented, "method ReadFromOffset not implemented")
-}
-func (*UnimplementedIbsenServer) ReadBatchFromOffset(req *TopicBatchOffset, srv Ibsen_ReadBatchFromOffsetServer) error {
-	return status.Errorf(codes.Unimplemented, "method ReadBatchFromOffset not implemented")
+func (*UnimplementedIbsenServer) Read(req *ReadParams, srv Ibsen_ReadServer) error {
+	return status.Errorf(codes.Unimplemented, "method Read not implemented")
 }
 
 func RegisterIbsenServer(s *grpc.Server, srv IbsenServer) {
@@ -1065,44 +652,26 @@ func _Ibsen_Drop_Handler(srv interface{}, ctx context.Context, dec func(interfac
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Ibsen_ListTopics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Ibsen_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(IbsenServer).ListTopics(ctx, in)
+		return srv.(IbsenServer).Status(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/Ibsen/ListTopics",
+		FullMethod: "/Ibsen/Status",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IbsenServer).ListTopics(ctx, req.(*Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Ibsen_ListTopicsWithOffset_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(IbsenServer).ListTopicsWithOffset(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/Ibsen/ListTopicsWithOffset",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IbsenServer).ListTopicsWithOffset(ctx, req.(*Empty))
+		return srv.(IbsenServer).Status(ctx, req.(*Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
 func _Ibsen_Write_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TopicMessage)
+	in := new(InputEntries)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -1114,25 +683,7 @@ func _Ibsen_Write_Handler(srv interface{}, ctx context.Context, dec func(interfa
 		FullMethod: "/Ibsen/Write",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IbsenServer).Write(ctx, req.(*TopicMessage))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Ibsen_WriteBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TopicBatchMessage)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(IbsenServer).WriteBatch(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/Ibsen/WriteBatch",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IbsenServer).WriteBatch(ctx, req.(*TopicBatchMessage))
+		return srv.(IbsenServer).Write(ctx, req.(*InputEntries))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1142,8 +693,8 @@ func _Ibsen_WriteStream_Handler(srv interface{}, stream grpc.ServerStream) error
 }
 
 type Ibsen_WriteStreamServer interface {
-	Send(*Status) error
-	Recv() (*TopicMessage, error)
+	Send(*WriteStatus) error
+	Recv() (*InputEntries, error)
 	grpc.ServerStream
 }
 
@@ -1151,99 +702,36 @@ type ibsenWriteStreamServer struct {
 	grpc.ServerStream
 }
 
-func (x *ibsenWriteStreamServer) Send(m *Status) error {
+func (x *ibsenWriteStreamServer) Send(m *WriteStatus) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *ibsenWriteStreamServer) Recv() (*TopicMessage, error) {
-	m := new(TopicMessage)
+func (x *ibsenWriteStreamServer) Recv() (*InputEntries, error) {
+	m := new(InputEntries)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
 	return m, nil
 }
 
-func _Ibsen_ReadFromBeginning_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(Topic)
+func _Ibsen_Read_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ReadParams)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(IbsenServer).ReadFromBeginning(m, &ibsenReadFromBeginningServer{stream})
+	return srv.(IbsenServer).Read(m, &ibsenReadServer{stream})
 }
 
-type Ibsen_ReadFromBeginningServer interface {
-	Send(*Entry) error
+type Ibsen_ReadServer interface {
+	Send(*OutputEntries) error
 	grpc.ServerStream
 }
 
-type ibsenReadFromBeginningServer struct {
+type ibsenReadServer struct {
 	grpc.ServerStream
 }
 
-func (x *ibsenReadFromBeginningServer) Send(m *Entry) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func _Ibsen_ReadBatchFromBeginning_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(TopicBatch)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(IbsenServer).ReadBatchFromBeginning(m, &ibsenReadBatchFromBeginningServer{stream})
-}
-
-type Ibsen_ReadBatchFromBeginningServer interface {
-	Send(*EntryBatch) error
-	grpc.ServerStream
-}
-
-type ibsenReadBatchFromBeginningServer struct {
-	grpc.ServerStream
-}
-
-func (x *ibsenReadBatchFromBeginningServer) Send(m *EntryBatch) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func _Ibsen_ReadFromOffset_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(TopicOffset)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(IbsenServer).ReadFromOffset(m, &ibsenReadFromOffsetServer{stream})
-}
-
-type Ibsen_ReadFromOffsetServer interface {
-	Send(*Entry) error
-	grpc.ServerStream
-}
-
-type ibsenReadFromOffsetServer struct {
-	grpc.ServerStream
-}
-
-func (x *ibsenReadFromOffsetServer) Send(m *Entry) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func _Ibsen_ReadBatchFromOffset_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(TopicBatchOffset)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(IbsenServer).ReadBatchFromOffset(m, &ibsenReadBatchFromOffsetServer{stream})
-}
-
-type Ibsen_ReadBatchFromOffsetServer interface {
-	Send(*EntryBatch) error
-	grpc.ServerStream
-}
-
-type ibsenReadBatchFromOffsetServer struct {
-	grpc.ServerStream
-}
-
-func (x *ibsenReadBatchFromOffsetServer) Send(m *EntryBatch) error {
+func (x *ibsenReadServer) Send(m *OutputEntries) error {
 	return x.ServerStream.SendMsg(m)
 }
 
@@ -1260,20 +748,12 @@ var _Ibsen_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Ibsen_Drop_Handler,
 		},
 		{
-			MethodName: "listTopics",
-			Handler:    _Ibsen_ListTopics_Handler,
-		},
-		{
-			MethodName: "listTopicsWithOffset",
-			Handler:    _Ibsen_ListTopicsWithOffset_Handler,
+			MethodName: "status",
+			Handler:    _Ibsen_Status_Handler,
 		},
 		{
 			MethodName: "write",
 			Handler:    _Ibsen_Write_Handler,
-		},
-		{
-			MethodName: "writeBatch",
-			Handler:    _Ibsen_WriteBatch_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
@@ -1284,23 +764,8 @@ var _Ibsen_serviceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 		{
-			StreamName:    "readFromBeginning",
-			Handler:       _Ibsen_ReadFromBeginning_Handler,
-			ServerStreams: true,
-		},
-		{
-			StreamName:    "readBatchFromBeginning",
-			Handler:       _Ibsen_ReadBatchFromBeginning_Handler,
-			ServerStreams: true,
-		},
-		{
-			StreamName:    "readFromOffset",
-			Handler:       _Ibsen_ReadFromOffset_Handler,
-			ServerStreams: true,
-		},
-		{
-			StreamName:    "readBatchFromOffset",
-			Handler:       _Ibsen_ReadBatchFromOffset_Handler,
+			StreamName:    "read",
+			Handler:       _Ibsen_Read_Handler,
 			ServerStreams: true,
 		},
 	},

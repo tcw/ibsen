@@ -11,7 +11,6 @@ import (
 	"math"
 	"math/rand"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -47,39 +46,11 @@ func (ic *IbsenClient) CreateTopic(topic string) bool {
 	return create.Created
 }
 
-func (ic *IbsenClient) ReadTopic(topic string) {
-	entryStream, err := ic.Client.ReadFromBeginning(ic.Ctx, &grpcApi.Topic{
-		Name: topic,
-	})
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	stdout := os.Stdout
-	writer := bufio.NewWriter(stdout)
-	defer stdout.Close()
-	for {
-		in, err := entryStream.Recv()
-		if err == io.EOF {
-			err := writer.Flush()
-			if err != nil {
-				log.Fatal("flush error")
-			}
-			return
-		}
-		line := fmt.Sprintf("%d\t%s\n", in.Offset, in.Payload)
-		_, err = writer.Write([]byte(line))
-		if err != nil {
-			log.Println(err)
-			return
-		}
-	}
-}
-
-func (ic *IbsenClient) ReadTopicFromNotIncludingOffset(topic string, offset uint64) {
-	entryStream, err := ic.Client.ReadFromOffset(ic.Ctx, &grpcApi.TopicOffset{
+func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) {
+	entryStream, err := ic.Client.Read(ic.Ctx, &grpcApi.ReadParams{
 		TopicName: topic,
 		Offset:    offset,
+		BatchSize: batchSize,
 	})
 	if err != nil {
 		log.Println(err)
@@ -97,7 +68,7 @@ func (ic *IbsenClient) ReadTopicFromNotIncludingOffset(topic string, offset uint
 			}
 			return
 		}
-		line := fmt.Sprintf("%d\t%s\n", in.Offset, in.Payload)
+		line := fmt.Sprintf("%d", in.Offset)
 		_, err = writer.Write([]byte(line))
 		if err != nil {
 			log.Println(err)
@@ -115,7 +86,7 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 	stdin := os.Stdin
 	defer stdin.Close()
 	scanner := bufio.NewScanner(stdin)
-	const maxCapacity = 512 * 1024
+	const maxCapacity = 1024 * 1024 * 10
 	buf := make([]byte, maxCapacity)
 	scanner.Buffer(buf, maxCapacity)
 	for scanner.Scan() {
@@ -123,9 +94,9 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 		if text == "" {
 			continue
 		}
-		mes := grpcApi.TopicMessage{
-			TopicName:      topic,
-			MessagePayload: []byte(text),
+		mes := grpcApi.InputEntries{
+			TopicName: topic,
+			Entries:   [][]byte{[]byte(text)},
 		}
 		err = r.Send(&mes)
 		recv, err := r.Recv() //TODO: do async
@@ -133,7 +104,7 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 			log.Println(err)
 			return
 		}
-		fmt.Printf("Confirmed offset %s\n", strconv.FormatUint(recv.Current.Id, 10))
+		fmt.Printf("Confirmed offset %d\n", recv.Wrote)
 	}
 	err = r.CloseSend()
 	if err != nil {
@@ -148,14 +119,18 @@ func (ic *IbsenClient) WriteTestDataToTopic(topic string, entryByteSize int, ent
 		log.Fatalf("could not greet: %v", err)
 	}
 
-	entry := createTestValues(entryByteSize)
+	var bytes = make([][]byte, 0)
 
 	for i := 0; i < entries; i++ {
-		err = r.Send(&grpcApi.TopicMessage{
-			TopicName:      topic,
-			MessagePayload: entry,
-		})
+		entry := createTestValues(entryByteSize)
+		bytes = append(bytes, entry)
 	}
+
+	err = r.Send(&grpcApi.InputEntries{
+		TopicName: topic,
+		Entries:   nil,
+	})
+
 	err = r.CloseSend()
 	if err != nil {
 		fmt.Println(err)
@@ -165,7 +140,7 @@ func (ic *IbsenClient) WriteTestDataToTopic(topic string, entryByteSize int, ent
 	if err != nil {
 		fmt.Println(err)
 	}
-	fmt.Printf("Current offset is %d, wrote %d entries", recv.Current.Id, recv.Entries)
+	fmt.Printf("Wrote %d entries", recv.Wrote)
 }
 
 func createTestValues(entrySizeBytes int) []byte {

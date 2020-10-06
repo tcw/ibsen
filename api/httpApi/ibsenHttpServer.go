@@ -58,25 +58,29 @@ func (ibsen *IbsenHttpServer) writeEntry(w http.ResponseWriter, r *http.Request)
 	body := r.Body
 	defer body.Close()
 	scanner := bufio.NewScanner(body)
-	const maxCapacity = 512 * 1024
+	const maxCapacity = 1024 * 1024 * 1024 * 10 //max 10 MB pr line
 	buf := make([]byte, maxCapacity)
 	scanner.Buffer(buf, maxCapacity)
+	var bytes = make([][]byte, 0)
+	line := 0
 	for scanner.Scan() {
 		text := scanner.Text()
-		//Todo: use batch write
-		_, err := ibsen.Storage.Write(&logStorage.TopicMessage{
-			Topic:   vars["topic"],
-			Message: []byte(text),
-		})
-		if err != nil {
-			log.Println(err)
-		}
+		bytes[line] = append(bytes[line], []byte(text)...)
+		line = line + 1
+	}
+
+	_, err := ibsen.Storage.WriteBatch(&logStorage.TopicBatchMessage{
+		Topic:   vars["topic"],
+		Message: &bytes,
+	})
+	if err != nil {
+		w.WriteHeader(500)
 	}
 }
 
 func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	logChan := make(chan logStorage.LogEntry)
+	logChan := make(chan logStorage.LogEntryBatch)
 	var wg sync.WaitGroup
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -87,10 +91,10 @@ func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if offset == 0 {
-		err = ibsen.Storage.ReadFromBeginning(logChan, &wg, vars["topic"])
+	if offset < 0 {
+		err = ibsen.Storage.ReadBatchFromBeginning(logChan, &wg, vars["topic"], 1000) //TODO: make optional
 	} else {
-		err = ibsen.Storage.ReadFromNotIncluding(logChan, &wg, vars["topic"], offset)
+		err = ibsen.Storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, vars["topic"], offset, 1000)
 	}
 
 	if err != nil {
@@ -101,7 +105,7 @@ func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) 
 	w.(http.Flusher).Flush()
 }
 func (ibsen *IbsenHttpServer) listTopic(w http.ResponseWriter, r *http.Request) {
-	topics, err := ibsen.Storage.ListTopics()
+	topics, err := ibsen.Storage.Status()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -128,15 +132,18 @@ func (ibsen *IbsenHttpServer) dropTopic(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func sendMessage(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, w http.ResponseWriter) {
+func sendMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, w http.ResponseWriter) {
 	for {
 		entry := <-logChan
-		bytes := base64.StdEncoding.EncodeToString(entry.Entry)
-		ndjson := `[` + strconv.FormatUint(entry.Offset, 10) + `, "` + bytes + "\"]\n"
-		_, err := w.Write([]byte(ndjson))
-		if err != nil {
-			log.Println(err)
-			return
+		entries := entry.Entries
+		for _, logEntry := range entries {
+			bytes := base64.StdEncoding.EncodeToString(logEntry.Entry)
+			ndjson := `[` + strconv.FormatInt(entry.Offset(), 10) + `, "` + bytes + "\"]\n"
+			_, err := w.Write([]byte(ndjson))
+			if err != nil {
+				log.Println(err)
+				return
+			}
 		}
 		wg.Done()
 	}
