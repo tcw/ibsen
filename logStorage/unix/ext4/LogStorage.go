@@ -28,17 +28,8 @@ func (e LogStorage) Drop(topic string) (bool, error) {
 	return e.topicRegister.DropTopic(topic)
 }
 
-func (e LogStorage) ListTopics() ([]string, error) {
+func (e LogStorage) Status() ([]string, error) {
 	return e.topicRegister.ListTopics()
-}
-
-func (e LogStorage) Write(topicMessage *logStorage.TopicMessage) (int, error) {
-	registry := e.topicRegister.topics[topicMessage.Topic]
-	err := registry.Write(topicMessage.Message)
-	if err != nil {
-		return 0, err
-	}
-	return 1, nil
 }
 
 func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int, error) {
@@ -47,31 +38,7 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 	if err != nil {
 		return 0, err
 	}
-	return 1, nil
-}
-
-func (e LogStorage) ReadFromBeginning(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, topic string) error {
-	read, err := NewTopicRead(e.topicRegister.topicsRootPath, topic, e.topicRegister.maxBlockSize)
-	if err != nil {
-		return err
-	}
-	err = read.ReadFromBeginning(logChan, wg)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (e LogStorage) ReadFromNotIncluding(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, topic string, offset uint64) error {
-	read, err := NewTopicRead(e.topicRegister.topicsRootPath, topic, e.topicRegister.maxBlockSize)
-	if err != nil {
-		return err
-	}
-	err = read.ReadLogFromOffsetNotIncluding(logChan, wg, offset)
-	if err != nil {
-		return err
-	}
-	return nil
+	return len(*topicMessage.Message), nil
 }
 
 func (e LogStorage) ReadBatchFromBeginning(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int) error {

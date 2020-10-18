@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+option go_package = "/api/grpcApi";
+option java_multiple_files = true;
+option java_package = "github.com.tcw.ibsen";
+option java_outer_classname = "IbsenProto";
+option objc_class_prefix = "IBSEN";
+
+service Ibsen {
+
+    rpc create (Topic) returns (CreateStatus) {
+    }
+    rpc drop (Topic) returns (DropStatus) {
+    }
+    rpc status (Empty) returns (TopicsStatus) {
+    }
+
+    rpc write (InputEntries) returns (WriteStatus) {
+    }
+    rpc writeStream (stream InputEntries) returns (stream WriteStatus) {
+    }
+    rpc read (ReadParams) returns (stream OutputEntries) {
+    }
+}
+
+message TopicsStatus {
+    repeated Topic topics = 1;
+}
+
+message Topic {
+    string name = 1;
+    uint64 offset = 2;
+}
+
+message CreateStatus{
+    bool created = 1;
+}
+
+message DropStatus{
+    bool dropped = 1;
+}
+
+message WriteStatus{
+    int64 wrote = 1;
+    int64 timeNano = 2;
+}
+
+message Empty {
+}
+
+message ReadParams {
+    string topicName = 1;
+    uint64 offset = 2;
+    uint32 batchSize = 3;
+}
+
+message InputEntries {
+    string topicName = 1;
+    repeated bytes entries = 2;
+}
+
+message OutputEntries {
+    uint64 offset = 1;
+    repeated bytes entries = 2;
+}

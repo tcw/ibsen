@@ -2,15 +2,14 @@
 # STEP 1 build executable binary
 ############################
 FROM golang:buster AS builder
-COPY . /ibsen/build
-WORKDIR /ibsen/build
+COPY . /build
+WORKDIR /build
 ENV CGO_ENABLED=0 GO_LDFLAGS="-extldflags='-static'"
-RUN ./dockerBuild.sh && mkdir -p /data && chmod 600 /data
+RUN go build -v -o app/ibsen . && mkdir -p app/data && chmod 600 app/data
 
 # STEP 2 build a small image
 ############################
 FROM scratch
-COPY --from=builder /bin/* /bin/
-COPY --from=builder /data /data
-
-CMD ["/bin/ibsen","-s","/data"]
+COPY --from=builder /build/app/* /app/
+COPY --from=builder /build/app/data /app/data
+CMD ["app/ibsen","server","/app/data"]

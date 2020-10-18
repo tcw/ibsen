@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/base64"
 	"github.com/tcw/ibsen/logStorage"
-	"github.com/tcw/ibsen/logStorage/unix/ext4"
 	"log"
 	"net/http"
 	"strconv"
@@ -18,10 +17,10 @@ import (
 type IbsenHttpServer struct {
 	Port        uint16
 	IbsenServer *http.Server
-	Storage     ext4.LogStorage
+	Storage     logStorage.LogStorage
 }
 
-func NewIbsenHttpServer(storage ext4.LogStorage) *IbsenHttpServer {
+func NewIbsenHttpServer(storage logStorage.LogStorage) *IbsenHttpServer {
 	server := IbsenHttpServer{
 		Port:    5001,
 		Storage: storage,
@@ -32,7 +31,8 @@ func NewIbsenHttpServer(storage ext4.LogStorage) *IbsenHttpServer {
 func (ibsen *IbsenHttpServer) StartHttpServer() *http.Server {
 	r := mux.NewRouter()
 	r.HandleFunc("/write/{topic}", ibsen.writeEntry).Methods("POST")
-	r.HandleFunc("/read/{topic}/{offset}", ibsen.readEntry).Methods("GET")
+	r.HandleFunc("/read/{topic}/{offset}", ibsen.readEntry).Methods("GET").Queries("base64", "{base64}")
+	r.HandleFunc("/read/{topic}", ibsen.readEntry).Methods("GET").Queries("base64", "{base64}")
 	r.HandleFunc("/create/{topic}", ibsen.createTopic).Methods("POST")
 	r.HandleFunc("/drop/{topic}", ibsen.dropTopic).Methods("POST")
 	r.HandleFunc("/list/topic", ibsen.listTopic).Methods("GET")
@@ -59,39 +59,58 @@ func (ibsen *IbsenHttpServer) writeEntry(w http.ResponseWriter, r *http.Request)
 	body := r.Body
 	defer body.Close()
 	scanner := bufio.NewScanner(body)
-	const maxCapacity = 512 * 1024
+	const maxCapacity = 1024 * 1024 * 1024 * 10 //max 10 MB pr line
 	buf := make([]byte, maxCapacity)
 	scanner.Buffer(buf, maxCapacity)
+	var bytes = make([][]byte, 0)
+	line := 0
 	for scanner.Scan() {
 		text := scanner.Text()
-		//Todo: use batch write
-		_, err := ibsen.Storage.Write(&logStorage.TopicMessage{
-			Topic:   vars["topic"],
-			Message: []byte(text),
-		})
-		if err != nil {
-			log.Println(err)
-		}
+		tmp := make([]byte, 0)
+		tmp = append(tmp, []byte(text)...)
+		bytes = append(bytes, tmp)
+		line = line + 1
+	}
+
+	_, err := ibsen.Storage.WriteBatch(&logStorage.TopicBatchMessage{
+		Topic:   vars["topic"],
+		Message: &bytes,
+	})
+	if err != nil {
+		w.WriteHeader(500)
 	}
 }
 
 func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	logChan := make(chan logStorage.LogEntry)
+
+	logChan := make(chan logStorage.LogEntryBatch)
 	var wg sync.WaitGroup
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/x-ndjson")
-	go sendMessage(logChan, &wg, w)
-	offset, err := strconv.ParseUint(vars["offset"], 10, 64)
+	var err error
+
+	var b64 = false
+	if value := r.URL.Query().Get("base64"); value != "" {
+		b64, err = strconv.ParseBool(value)
+	}
+
+	go sendMessage(logChan, &wg, w, b64)
+
+	var offset uint64 = 0
+	if offsetText, ok := vars["offset"]; ok {
+		offset, err = strconv.ParseUint(offsetText, 10, 64)
+	}
+
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
 	if offset == 0 {
-		err = ibsen.Storage.ReadFromBeginning(logChan, &wg, vars["topic"])
+		err = ibsen.Storage.ReadBatchFromBeginning(logChan, &wg, vars["topic"], 1000) //TODO: make batchSize optional
 	} else {
-		err = ibsen.Storage.ReadFromNotIncluding(logChan, &wg, vars["topic"], offset)
+		err = ibsen.Storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, vars["topic"], offset, 1000)
 	}
 
 	if err != nil {
@@ -102,7 +121,7 @@ func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) 
 	w.(http.Flusher).Flush()
 }
 func (ibsen *IbsenHttpServer) listTopic(w http.ResponseWriter, r *http.Request) {
-	topics, err := ibsen.Storage.ListTopics()
+	topics, err := ibsen.Storage.Status()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -129,15 +148,21 @@ func (ibsen *IbsenHttpServer) dropTopic(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func sendMessage(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, w http.ResponseWriter) {
+func sendMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, w http.ResponseWriter, b64 bool) {
 	for {
 		entry := <-logChan
-		bytes := base64.StdEncoding.EncodeToString(entry.Entry)
-		ndjson := `[` + strconv.FormatUint(entry.Offset, 10) + `, "` + bytes + "\"]\n"
-		_, err := w.Write([]byte(ndjson))
-		if err != nil {
-			log.Println(err)
-			return
+		entries := entry.Entries
+		for _, logEntry := range entries {
+			bytes := string(logEntry.Entry)
+			if b64 {
+				bytes = base64.StdEncoding.EncodeToString(logEntry.Entry)
+			}
+			ndjson := `[` + strconv.FormatUint(logEntry.Offset, 10) + `, "` + bytes + "\"]\n"
+			_, err := w.Write([]byte(ndjson))
+			if err != nil {
+				log.Println(err)
+				return
+			}
 		}
 		wg.Done()
 	}

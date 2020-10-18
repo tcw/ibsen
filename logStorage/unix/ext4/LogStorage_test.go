@@ -65,6 +65,7 @@ func TestLogStorage_Drop(t *testing.T) {
 	}
 }
 
+//Todo: create real status
 func TestLogStorage_ListTopics(t *testing.T) {
 	dir := createTestDir(t)
 	defer os.RemoveAll(dir)
@@ -86,60 +87,13 @@ func TestLogStorage_ListTopics(t *testing.T) {
 	if !create2 {
 		t.Failed()
 	}
-	topics, err := storage.ListTopics()
+	topics, err := storage.Status()
 	if err != nil {
 		t.Error(err)
 	}
 	t.Log(topics)
 	if len(topics) != 2 {
 		t.Fail()
-	}
-}
-
-func TestLogStorage_Write_Read(t *testing.T) {
-	dir := createTestDir(t)
-	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
-	if err != nil {
-		t.Error(err)
-	}
-	create, err := storage.Create(testTopic1)
-	if err != nil {
-		t.Error(err)
-	}
-	if !create {
-		t.Failed()
-	}
-
-	for i := 0; i < 100000; i++ {
-		n, err := storage.Write(&logStorage.TopicMessage{
-			Topic:   testTopic1,
-			Message: []byte("hello1hello1hello1hello1hello1hello1hello1hello1"),
-		})
-		if err != nil {
-			t.Error(err)
-		}
-		if n == 0 {
-			t.Fail()
-		}
-	}
-
-	logChan := make(chan logStorage.LogEntry)
-	var wg sync.WaitGroup
-
-	go func() {
-		err = storage.ReadFromBeginning(logChan, &wg, testTopic1)
-		if err != nil {
-			t.Error(err)
-		}
-	}()
-
-	for i := 1; i < 100001; i++ {
-		entry := <-logChan
-		if entry.Offset != uint64(i) {
-			t.Log("expected ", i, " actual ", entry.Offset)
-			t.FailNow()
-		}
 	}
 }
 
@@ -191,51 +145,6 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 			t.FailNow()
 		}
 	}
-}
-
-func TestLogStorage_ReadFromNotIncluding(t *testing.T) {
-	dir := createTestDir(t)
-	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
-	if err != nil {
-		t.Error(err)
-	}
-	create, err := storage.Create(testTopic1)
-	if err != nil {
-		t.Error(err)
-	}
-	if !create {
-		t.Failed()
-	}
-	n, err := storage.Write(&logStorage.TopicMessage{
-		Topic:   testTopic1,
-		Message: []byte("hello1"),
-	})
-	n, err = storage.Write(&logStorage.TopicMessage{
-		Topic:   testTopic1,
-		Message: []byte("hello2"),
-	})
-	if err != nil {
-		t.Error(err)
-	}
-	if n == 0 {
-		t.Fail()
-	}
-	logChan := make(chan logStorage.LogEntry)
-	var wg sync.WaitGroup
-
-	go func() {
-		err = storage.ReadFromNotIncluding(logChan, &wg, testTopic1, 1)
-		if err != nil {
-			t.Error(err)
-		}
-	}()
-
-	entry := <-logChan
-	if entry.Offset != 2 {
-		t.Fail()
-	}
-	t.Log(entry)
 }
 
 func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
@@ -312,16 +221,17 @@ func TestLogStorage_Corruption(t *testing.T) {
 	if !create {
 		t.Fail()
 	}
-	_, err = storage.Write(&logStorage.TopicMessage{
+	var bytes = []byte("hello1hello1hello1hello1hello1hello1hello1hello1")
+	_, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
 		Topic:   testTopic1,
-		Message: []byte("hello1hello1hello1hello1hello1hello1hello1hello1"),
+		Message: &[][]byte{bytes},
 	})
 	if err != nil {
 		t.Error(err)
 	}
-	_, err = storage.Write(&logStorage.TopicMessage{
+	_, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
 		Topic:   testTopic1,
-		Message: []byte("hello1hello1hello1hello1hello1hello1hello1hello1"),
+		Message: &[][]byte{bytes},
 	})
 	if err != nil {
 		t.Error(err)

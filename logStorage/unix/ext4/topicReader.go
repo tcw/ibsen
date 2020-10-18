@@ -57,6 +57,9 @@ func (t *TopicRead) ReadFromBlock(c chan logStorage.LogEntry, wg *sync.WaitGroup
 }
 
 func (t *TopicRead) ReadLogFromOffsetNotIncluding(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, offset uint64) error {
+	if t.currentOffset == offset {
+		return nil
+	}
 	currentBlockIndex, err := t.blockReg.findBlockIndexContainingOffset(offset)
 	if err != nil {
 		return err

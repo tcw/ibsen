@@ -170,34 +170,34 @@ func (br *BlockRegistry) writeBatchToFile(file *os.File, logEntry *[][]byte) err
 	return nil
 }
 
-func (br *BlockRegistry) Write(entry []byte) error {
+func (br *BlockRegistry) Write(entry []byte) (uint64, error) {
 	if br.currentBlockSize > br.maxBlockSize {
 		br.createNewBlock()
 	}
 	writer, err := OpenFileForWrite(br.CurrentBlockFileName())
 	if err != nil {
-		return err
+		return 0, err
 	}
-	err = br.writeToFile(writer, entry)
-	if err != nil {
-		return err
+	offset, err2 := br.writeToFile(writer, entry)
+	if err2 != nil {
+		return offset, err2
 	}
 	err = writer.Close()
 	if err != nil {
-		return err
+		return offset, err
 	}
-	return nil
+	return offset, nil
 }
 
-func (br *BlockRegistry) writeToFile(file *os.File, entry []byte) error {
+func (br *BlockRegistry) writeToFile(file *os.File, entry []byte) (uint64, error) {
 	br.incrementCurrentOffset(1)
 	bytes := createByteEntry(br, entry)
 	n, err := file.Write(bytes)
 	if err != nil {
-		return err
+		return br.currentOffset, err
 	}
 	br.incrementCurrentByteSize(n)
-	return nil
+	return br.currentOffset, nil
 }
 
 func createByteEntry(br *BlockRegistry, entry []byte) []byte {

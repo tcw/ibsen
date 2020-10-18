@@ -33,7 +33,7 @@ docker build -t ibsen .
 ```
 
 ```shell script
-docker run --name ibsen_peer -e USE_HTTP=true -p 5001:5001 ibsen
+docker run --name ibsen_peer -e IBSEN_HTTP=true -p 5001:5001 ibsen
 
 ```
 
@@ -43,13 +43,13 @@ docker run --name ibsen_solveig -p 50001:50001 ibsen
 ```
 
 
+
+
+
 ## Todo
 
-* Correctness checking
-* Update block creation 
 * Java client
-* Pure unix command writer
 * More tests
-* Create docker image
-* ibsenTool must use block read write
 * Readme
+* In-memory 
+* Easy embeddable
