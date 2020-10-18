@@ -21,13 +21,14 @@ var (
 	toBase64       bool
 	entryByteSize  int
 	entries        int
+	batches        int
 	cpuprofile     string
 	memprofile     string
 
 	rootCmd = &cobra.Command{
 		Use:   "ibsen",
 		Short: "Ibsen is a simple log streaming system",
-		Long: `Ibsen builds on the shoulders of giants. Taking advantage of the recent advances in 
+		Long: `Ibsen stands on the shoulders of giants. Taking advantage of the recent advances in 
 			distributed block storage and unix's philosophy of simplicity'`,
 		TraverseChildren: true,
 	}
@@ -89,9 +90,9 @@ var (
 				if err != nil {
 					fmt.Printf("Illegal offset [%s]", args[1])
 				}
-				ibsenClient.ReadTopic(args[0], offset, 1000)
+				ibsenClient.ReadTopic(args[0], offset, uint32(entries))
 			} else {
-				ibsenClient.ReadTopic(args[0], 0, 1000)
+				ibsenClient.ReadTopic(args[0], 0, uint32(entries))
 			}
 		},
 	}
@@ -108,15 +109,34 @@ var (
 		},
 	}
 
-	cmdClientTestData = &cobra.Command{
-		Use:              "bench [topic]",
+	cmdBench = &cobra.Command{
+		Use:              "bench",
 		Short:            "bench",
-		Long:             `benchmark`,
+		Long:             `bench`,
+		TraverseChildren: true,
+	}
+
+	cmdBenchWrite = &cobra.Command{
+		Use:              "write [topic]",
+		Short:            "bench write",
+		Long:             `bench write`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			ibsenClient := startClient()
-			ibsenClient.WriteTestDataToTopic(args[0], entryByteSize, 1000, 100)
+			ibsenClient.BenchWrite(args[0], entryByteSize, entries, batches)
+		},
+	}
+
+	cmdBenchRead = &cobra.Command{
+		Use:              "read [topic]",
+		Short:            "bench read",
+		Long:             `bench read`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			ibsenClient := startClient()
+			ibsenClient.BenchRead(args[0], 0, uint32(entries))
 		},
 	}
 
@@ -170,22 +190,22 @@ func init() {
 	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(5001)))
 	host = getenv("IBSEN_HOST", "localhost")
 	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "100"))
-	entryByteSize, _ = strconv.Atoi(getenv("IBSEN_ENTRY_SIZE", "100"))
-	entries, _ = strconv.Atoi(getenv("IBSEN_ENTRIES", "100000"))
+	entries, _ = strconv.Atoi(getenv("IBSEN_ENTRIES", "1000"))
 
-	cmdServer.Flags().BoolVarP(&useHttp, "http", "u", useHttp, "config file (default is current directory)")
+	cmdServer.Flags().BoolVarP(&useHttp, "http", "t", useHttp, "config file (default is current directory)")
 	cmdServer.Flags().Lookup("http").NoOptDefVal = "true"
 	if !useHttp && serverPort == 5001 {
 		serverPort = 50001
 	}
 	rootCmd.Flags().IntVarP(&serverPort, "port", "p", serverPort, "config file (default is current directory)")
 	rootCmd.Flags().StringVarP(&host, "host", "l", "localhost", "config file (default is current directory)")
-	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "b", maxBlockSizeMB, "config file (default is current directory)")
-	cmdServer.Flags().StringVarP(&cpuprofile, "cpuprofile", "c", "", "config file (default is current directory)")
-	cmdServer.Flags().StringVarP(&memprofile, "memprofile", "m", "", "config file (default is current directory)")
+	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "config file (default is current directory)")
+	cmdServer.Flags().StringVarP(&cpuprofile, "cpuprofile", "z", "", "config file (default is current directory)")
+	cmdServer.Flags().StringVarP(&memprofile, "memprofile", "y", "", "config file (default is current directory)")
 	cmdCat.Flags().BoolVarP(&toBase64, "base64", "b", false, "Convert messages to base64")
-	cmdClientTestData.Flags().IntVarP(&entryByteSize, "entrysize", "s", entryByteSize, "Test data entry size in bytes")
-	cmdClientTestData.Flags().IntVarP(&entries, "entries", "e", entries, "Number of entries in test data")
+	cmdClient.Flags().IntVarP(&entries, "entries", "e", entries, "Number of entries in each batch")
+	cmdBenchWrite.Flags().IntVarP(&entryByteSize, "entryByteSize", "s", 100, "Test data entry size in bytes")
+	cmdBenchWrite.Flags().IntVarP(&batches, "batches", "a", 1, "Number of batches")
 	err := cmdServer.Flags().MarkHidden("cpuprofile")
 	if err != nil {
 		log.Fatal(err)
@@ -197,7 +217,8 @@ func init() {
 
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdFile)
 	cmdFile.AddCommand(cmdCat, cmdCheck)
-	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientWrite, cmdClientTestData)
+	cmdBench.AddCommand(cmdBenchWrite, cmdBenchRead)
+	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientWrite, cmdBench)
 }
 
 func getenv(key, fallback string) string {

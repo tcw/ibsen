@@ -85,6 +85,7 @@ func (s server) Drop(ctx context.Context, topic *Topic) (*DropStatus, error) {
 }
 
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
+	start := time.Now()
 	n, err := s.logStorage.WriteBatch(&logStorage.TopicBatchMessage{
 		Topic:   entries.TopicName,
 		Message: &entries.Entries,
@@ -93,12 +94,19 @@ func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus,
 		return nil, err
 	}
 
-	return &WriteStatus{Wrote: int64(n)}, nil
+	stop := time.Now()
+	timeElapsed := stop.Sub(start)
+	return &WriteStatus{
+		Wrote:    int64(n),
+		TimeNano: timeElapsed.Nanoseconds(),
+	}, nil
 }
 
 func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
+	start := time.Now()
 	var sum int32
 	var entriesWritten int64
+
 	for {
 		in, err := inStream.Recv()
 		if err == io.EOF {
@@ -119,8 +127,12 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 			return err
 		}
 	}
+	stop := time.Now()
+	timeElapsed := stop.Sub(start)
+
 	err := inStream.Send(&WriteStatus{
-		Wrote: entriesWritten,
+		Wrote:    entriesWritten,
+		TimeNano: timeElapsed.Nanoseconds(),
 	})
 	if err != nil {
 		log.Println(err)

@@ -33,9 +33,9 @@ func (e *LogEntryBatch) Size() int {
 
 func (e *LogEntryBatch) ToArray() [][]byte {
 	entries := e.Entries
-	bytes := make([][]byte, e.Size())
-	for i, entry := range entries {
-		bytes[i] = append(bytes[i], entry.Entry[i])
+	bytes := make([][]byte, 0)
+	for _, entry := range entries {
+		bytes = append(bytes, entry.Entry)
 	}
 	return bytes
 }

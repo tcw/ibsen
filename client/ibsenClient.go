@@ -69,11 +69,14 @@ func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) 
 			}
 			return
 		}
-		line := fmt.Sprintf("%d", in.Offset)
-		_, err = writer.Write([]byte(line))
-		if err != nil {
-			log.Println(err)
-			return
+		entries := in.Entries
+		for _, entry := range entries {
+			line := fmt.Sprintf("%s\n", string(entry))
+			_, err = writer.Write([]byte(line))
+			if err != nil {
+				log.Println(err)
+				return
+			}
 		}
 	}
 }
@@ -135,15 +138,12 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 	if err != nil {
 		fmt.Println(err)
 	}
-	fmt.Printf("wrote %d entries", recv.Wrote)
-
+	milliWithFracion := float64(recv.TimeNano) / float64(time.Millisecond)
+	fmt.Printf("Wrote %d entriesInBatch in %f ms\n", recv.Wrote, milliWithFracion)
 }
 
-func (ic *IbsenClient) WriteTestDataToTopic(topic string, entryByteSize int, entriesInBatch int, batches int) {
-	clientDeadline := time.Now().Add(time.Second * 30)
-	ctx, _ := context.WithDeadline(ic.Ctx, clientDeadline)
-
-	r, err := ic.Client.WriteStream(ctx)
+func (ic *IbsenClient) BenchWrite(topic string, entryByteSize int, entriesInBatch int, batches int) {
+	r, err := ic.Client.WriteStream(ic.Ctx)
 	if err != nil {
 		log.Fatalf("could not greet: %v", err)
 	}
@@ -171,7 +171,44 @@ func (ic *IbsenClient) WriteTestDataToTopic(topic string, entryByteSize int, ent
 	if err != nil {
 		fmt.Println(err)
 	}
-	fmt.Printf("Wrote %d entriesInBatch", recv.Wrote)
+	milliWithFracion := float64(recv.TimeNano) / float64(time.Millisecond)
+	fmt.Printf("Entries written:\t%d\nEntry size:\t\t%d Bytes\nBatches:\t\t%d\nEntires each batch:\t%d\nTime:\t\t\t%f ms\n", recv.Wrote, entryByteSize, batches, entriesInBatch, milliWithFracion)
+	fmt.Printf("Used %d nano seconds per entry\n", recv.TimeNano/recv.Wrote)
+}
+
+func (ic *IbsenClient) BenchRead(topic string, offset uint64, batchSize uint32) {
+	entryStream, err := ic.Client.Read(ic.Ctx, &grpcApi.ReadParams{
+		TopicName: topic,
+		Offset:    offset,
+		BatchSize: batchSize,
+	})
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	start := time.Now()
+	stdout := os.Stdout
+	writer := bufio.NewWriter(stdout)
+	var totalEntriesRead int64 = 0
+	defer stdout.Close()
+	for {
+		in, err := entryStream.Recv()
+		if err == io.EOF {
+			err := writer.Flush()
+			if err != nil {
+				log.Fatal("flush error")
+			}
+			break
+		}
+		if in != nil && in.Entries != nil {
+			totalEntriesRead = totalEntriesRead + int64(len(in.GetEntries()))
+		}
+	}
+	stop := time.Now()
+	elapsedTime := stop.Sub(start)
+	milliWithFraction := float64(elapsedTime.Nanoseconds()) / float64(time.Millisecond)
+	fmt.Printf("Read entries:\t%d\nBatch size:\t%d\nTime:\t%f ms\n", totalEntriesRead, batchSize, milliWithFraction)
+	fmt.Printf("Used %d nano seconds per entry\n", elapsedTime.Nanoseconds()/totalEntriesRead)
 }
 
 func createTestValues(entrySizeBytes int) []byte {
