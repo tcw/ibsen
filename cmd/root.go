@@ -26,10 +26,9 @@ var (
 	memprofile     string
 
 	rootCmd = &cobra.Command{
-		Use:   "ibsen",
-		Short: "Ibsen is a simple log streaming system",
-		Long: `Ibsen stands on the shoulders of giants. Taking advantage of the recent advances in 
-			distributed block storage and unix's philosophy of simplicity'`,
+		Use:              "ibsen",
+		Short:            "Ibsen is a simple log streaming system",
+		Long:             `Ibsen is build on unix's philosophy of simplicity'`,
 		TraverseChildren: true,
 	}
 
