@@ -21,7 +21,8 @@ type IbsenClient struct {
 
 func Start(target string) IbsenClient {
 	conn, err := grpc.Dial(target, grpc.WithInsecure(), grpc.WithBlock(),
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)))
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32),
+			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
@@ -89,32 +90,60 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 	const maxCapacity = 1024 * 1024 * 10
 	buf := make([]byte, maxCapacity)
 	scanner.Buffer(buf, maxCapacity)
+	var tmpBytes = make([][]byte, 0)
+	var limitCounter = 0
 	for scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			fmt.Println(err)
+		}
 		text := scanner.Text()
 		if text == "" {
 			continue
 		}
+		tmpBytes = append(tmpBytes, []byte(text))
+		limitCounter = limitCounter + 1
+		if limitCounter == 2 {
+			mes := grpcApi.InputEntries{
+				TopicName: topic,
+				Entries:   tmpBytes,
+			}
+			err = r.Send(&mes)
+			if err != nil {
+				fmt.Println(err)
+			}
+			limitCounter = 0
+			tmpBytes = make([][]byte, 0)
+		}
+	}
+	if limitCounter > 0 {
+		fmt.Println("bytes", tmpBytes)
 		mes := grpcApi.InputEntries{
 			TopicName: topic,
-			Entries:   [][]byte{[]byte(text)},
+			Entries:   tmpBytes,
 		}
 		err = r.Send(&mes)
-		recv, err := r.Recv() //TODO: do async
 		if err != nil {
-			log.Println(err)
-			return
+			fmt.Println(err)
 		}
-		fmt.Printf("Confirmed offset %d\n", recv.Wrote)
 	}
 	err = r.CloseSend()
 	if err != nil {
 		fmt.Println(err)
-		return
 	}
+
+	recv, err := r.Recv()
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Printf("wrote %d entries", recv.Wrote)
+
 }
 
 func (ic *IbsenClient) WriteTestDataToTopic(topic string, entryByteSize int, entries int) {
-	r, err := ic.Client.WriteStream(ic.Ctx)
+	clientDeadline := time.Now().Add(time.Second * 30)
+	ctx, _ := context.WithDeadline(ic.Ctx, clientDeadline)
+
+	r, err := ic.Client.WriteStream(ctx)
 	if err != nil {
 		log.Fatalf("could not greet: %v", err)
 	}
@@ -128,7 +157,7 @@ func (ic *IbsenClient) WriteTestDataToTopic(topic string, entryByteSize int, ent
 
 	err = r.Send(&grpcApi.InputEntries{
 		TopicName: topic,
-		Entries:   nil,
+		Entries:   bytes,
 	})
 
 	err = r.CloseSend()

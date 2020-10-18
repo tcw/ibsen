@@ -9,8 +9,10 @@ import (
 	"google.golang.org/grpc/testdata"
 	"io"
 	"log"
+	"math"
 	"net"
 	"sync"
+	"time"
 )
 
 type server struct {
@@ -42,14 +44,18 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 		return err
 	}
 	var opts []grpc.ServerOption
+	opts = []grpc.ServerOption{
+		grpc.ConnectionTimeout(time.Second * 30),
+		grpc.MaxRecvMsgSize(math.MaxInt32),
+		grpc.MaxSendMsgSize(math.MaxInt32)}
 	if igs.UseTls {
 		absCert := testdata.Path(igs.CertFile)
 		absKey := testdata.Path(igs.KeyFile)
 		creds, err := credentials.NewServerTLSFromFile(absCert, absKey)
+		opts = append(opts, grpc.Creds(creds))
 		if err != nil {
 			return err
 		}
-		opts = []grpc.ServerOption{grpc.Creds(creds)}
 	}
 	grpcServer := grpc.NewServer(opts...)
 
@@ -117,8 +123,7 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 		Wrote: entriesWritten,
 	})
 	if err != nil {
-		log.Printf("Failed sending status message to client %d, error: %s", entriesWritten, err)
-		return err
+		log.Println(err)
 	}
 	return nil
 }
