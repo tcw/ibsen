@@ -116,7 +116,7 @@ var (
 		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			ibsenClient := startClient()
-			ibsenClient.WriteTestDataToTopic(args[0], entryByteSize, entries)
+			ibsenClient.WriteTestDataToTopic(args[0], entryByteSize, 1000, 100)
 		},
 	}
 

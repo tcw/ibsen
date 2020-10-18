@@ -139,7 +139,7 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 
 }
 
-func (ic *IbsenClient) WriteTestDataToTopic(topic string, entryByteSize int, entries int) {
+func (ic *IbsenClient) WriteTestDataToTopic(topic string, entryByteSize int, entriesInBatch int, batches int) {
 	clientDeadline := time.Now().Add(time.Second * 30)
 	ctx, _ := context.WithDeadline(ic.Ctx, clientDeadline)
 
@@ -150,15 +150,17 @@ func (ic *IbsenClient) WriteTestDataToTopic(topic string, entryByteSize int, ent
 
 	var bytes = make([][]byte, 0)
 
-	for i := 0; i < entries; i++ {
+	for i := 0; i < entriesInBatch; i++ {
 		entry := createTestValues(entryByteSize)
 		bytes = append(bytes, entry)
 	}
 
-	err = r.Send(&grpcApi.InputEntries{
-		TopicName: topic,
-		Entries:   bytes,
-	})
+	for i := 0; i < batches; i++ {
+		err = r.Send(&grpcApi.InputEntries{
+			TopicName: topic,
+			Entries:   bytes,
+		})
+	}
 
 	err = r.CloseSend()
 	if err != nil {
@@ -169,7 +171,7 @@ func (ic *IbsenClient) WriteTestDataToTopic(topic string, entryByteSize int, ent
 	if err != nil {
 		fmt.Println(err)
 	}
-	fmt.Printf("Wrote %d entries", recv.Wrote)
+	fmt.Printf("Wrote %d entriesInBatch", recv.Wrote)
 }
 
 func createTestValues(entrySizeBytes int) []byte {
