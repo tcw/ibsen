@@ -44,10 +44,12 @@ see try.http
 
 ### Create grpc api
 
+#### GO
 ```shell script
 protoc --proto_path=api/grpc/golangApi ibsen.proto --go_out=plugins=grpc:./
 ```
 
+#### Java
 ```shell script
 protoc --proto_path=api/grpc/JavaApi --java_out=api/grpc/JavaApi ibsen.proto
 ```
