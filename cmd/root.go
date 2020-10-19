@@ -22,13 +22,13 @@ var (
 	entryByteSize  int
 	entries        int
 	batches        int
-	cpuprofile     string
-	memprofile     string
+	cpuProfile     string
+	memProfile     string
 
 	rootCmd = &cobra.Command{
 		Use:              "ibsen",
 		Short:            "Ibsen is a simple log streaming system",
-		Long:             `Ibsen is build on unix's philosophy of simplicity'`,
+		Long:             `Ibsen is a simple log streaming system build on unix's philosophy of simplicity'`,
 		TraverseChildren: true,
 	}
 
@@ -199,20 +199,12 @@ func init() {
 	rootCmd.Flags().IntVarP(&serverPort, "port", "p", serverPort, "config file (default is current directory)")
 	rootCmd.Flags().StringVarP(&host, "host", "l", "localhost", "config file (default is current directory)")
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "config file (default is current directory)")
-	cmdServer.Flags().StringVarP(&cpuprofile, "cpuprofile", "z", "", "config file (default is current directory)")
-	cmdServer.Flags().StringVarP(&memprofile, "memprofile", "y", "", "config file (default is current directory)")
+	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "config file (default is current directory)")
+	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "config file (default is current directory)")
 	cmdCat.Flags().BoolVarP(&toBase64, "base64", "b", false, "Convert messages to base64")
 	cmdClient.Flags().IntVarP(&entries, "entries", "e", entries, "Number of entries in each batch")
 	cmdBenchWrite.Flags().IntVarP(&entryByteSize, "entryByteSize", "s", 100, "Test data entry size in bytes")
 	cmdBenchWrite.Flags().IntVarP(&batches, "batches", "a", 1, "Number of batches")
-	err := cmdServer.Flags().MarkHidden("cpuprofile")
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = cmdServer.Flags().MarkHidden("memprofile")
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdFile)
 	cmdFile.AddCommand(cmdCat, cmdCheck)
