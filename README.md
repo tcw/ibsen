@@ -4,7 +4,7 @@
 
 ### GO
 ```shell script
-go get github.com/tcw/Ibsen
+go get github.com/tcw/ibsen
 ```
 
 ### Docker 
