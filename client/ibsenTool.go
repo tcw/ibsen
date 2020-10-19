@@ -1,10 +1,10 @@
-package tools
+package client
 
 import (
 	"encoding/base64"
 	"fmt"
 	"github.com/tcw/ibsen/logStorage"
-	"github.com/tcw/ibsen/logStorage/unix/ext4"
+	"github.com/tcw/ibsen/logStorage/ext4"
 	"log"
 	"os"
 	"path"

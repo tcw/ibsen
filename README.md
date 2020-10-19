@@ -55,10 +55,15 @@ protoc --proto_path=api/grpc/JavaApi --java_out=api/grpc/JavaApi ibsen.proto
 ```
 
 
-### Run with profiling
+### Profiling
 
 ```shell script
-ibsen server <path> -cpu=cpu.pprof -mem=mem.pprof
+ibsen server <path> -z cpu.pprof -y mem.pprof
+go tool pprof cpu.proff
+> weblist ibsen
+> pdf
+go tool pprof mem.proff
+> pdf
 ```
 
 ## gRPC logging
@@ -76,3 +81,7 @@ GRPC_GO_LOG_VERBOSITY_LEVEL=99 GRPC_GO_LOG_SEVERITY_LEVEL=info
 openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out cert.pem
 ```
 
+For darwin bench
+```shell script
+ibsen client bench read <topic>
+```

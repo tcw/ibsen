@@ -1,4 +1,4 @@
-package server
+package api
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/api/httpApi"
 	"github.com/tcw/ibsen/logStorage"
-	"github.com/tcw/ibsen/logStorage/unix/ext4"
+	"github.com/tcw/ibsen/logStorage/ext4"
 	"log"
 	"net/http"
 	"os"
@@ -38,6 +38,7 @@ var ibsenFiglet = `
 	 Henrik Ibsen (1828–1906)
 
 `
+var fProfile *os.File
 
 type IbsenServer struct {
 	DataPath     string
@@ -77,14 +78,15 @@ func waitForWriteLock(dataPath string) {
 
 func useCpuProfiling(cpuProfile string) {
 	if cpuProfile != "" {
-		f, err := os.Create(cpuProfile)
+		var err error
+		fProfile, err = os.Create(cpuProfile)
 		if err != nil {
 			log.Fatal("could not create CPU profile: ", err)
 		}
-		defer f.Close()
-		if err := pprof.StartCPUProfile(f); err != nil {
+		if err := pprof.StartCPUProfile(fProfile); err != nil {
 			log.Fatal("could not start CPU profile: ", err)
 		}
+		log.Printf("Started profiling, creating file %s", cpuProfile)
 	}
 }
 
@@ -148,9 +150,6 @@ func (ibs *IbsenServer) initSignals() {
 }
 
 func (ibs *IbsenServer) ShutdownCleanly() {
-	if ibs.CpuProfile != "" {
-		pprof.StopCPUProfile()
-	}
 
 	if ibs.MemProfile != "" {
 		f, err := os.Create(ibs.MemProfile)
@@ -162,6 +161,7 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 		if err := pprof.WriteHeapProfile(f); err != nil {
 			log.Fatal("could not write memory profile: ", err)
 		}
+		log.Printf("Ended memory profiling, writing to file %s", ibs.MemProfile)
 	}
 
 	if ibs.UseHttp {
@@ -175,6 +175,16 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 		ibsenGrpcServer.IbsenServer.GracefulStop()
 		log.Println("shutdown gRPC server")
 	}
+
+	if ibs.CpuProfile != "" {
+		log.Printf("Ended cpu profiling, writing to file %s", ibs.CpuProfile)
+		pprof.StopCPUProfile()
+		err := fProfile.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	done <- true
 
 }

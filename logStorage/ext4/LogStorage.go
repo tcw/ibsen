@@ -42,6 +42,7 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 }
 
 func (e LogStorage) ReadBatchFromBeginning(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int) error {
+	//Todo: this method is more time consuming than the actual reading - needs change
 	read, err := NewTopicRead(e.topicRegister.topicsRootPath, topic, e.topicRegister.maxBlockSize)
 	if err != nil {
 		return err

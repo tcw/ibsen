@@ -3,9 +3,8 @@ package cmd
 import (
 	"fmt"
 	"github.com/spf13/cobra"
+	"github.com/tcw/ibsen/api"
 	"github.com/tcw/ibsen/client"
-	"github.com/tcw/ibsen/server"
-	"github.com/tcw/ibsen/tools"
 	"log"
 	"os"
 	"path/filepath"
@@ -43,14 +42,14 @@ var (
 			if err2 != nil {
 				log.Fatal(err2)
 			}
-			ibsenServer := server.IbsenServer{
+			ibsenServer := api.IbsenServer{
 				DataPath:     absolutePath,
 				UseHttp:      useHttp,
 				Host:         host,
 				Port:         serverPort,
 				MaxBlockSize: maxBlockSizeMB,
-				CpuProfile:   "",
-				MemProfile:   "",
+				CpuProfile:   cpuProfile,
+				MemProfile:   memProfile,
 			}
 			ibsenServer.Start()
 		},
@@ -153,7 +152,7 @@ var (
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			tools.ReadTopic(args[0], toBase64)
+			client.ReadTopic(args[0], toBase64)
 		},
 	}
 
@@ -198,9 +197,9 @@ func init() {
 	}
 	rootCmd.Flags().IntVarP(&serverPort, "port", "p", serverPort, "config file (default is current directory)")
 	rootCmd.Flags().StringVarP(&host, "host", "l", "localhost", "config file (default is current directory)")
-	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "config file (default is current directory)")
-	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "config file (default is current directory)")
-	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "config file (default is current directory)")
+	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
+	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "config file")
+	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "config file")
 	cmdCat.Flags().BoolVarP(&toBase64, "base64", "b", false, "Convert messages to base64")
 	cmdClient.Flags().IntVarP(&entries, "entries", "e", entries, "Number of entries in each batch")
 	cmdBenchWrite.Flags().IntVarP(&entryByteSize, "entryByteSize", "s", 100, "Test data entry size in bytes")
