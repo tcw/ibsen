@@ -4,33 +4,33 @@ import (
 	"os"
 )
 
-type TopicRegister struct {
+type TopicManager struct {
 	topicsRootPath string
-	topics         map[string]*BlockRegistry
+	topics         map[string]*BlockManager
 	maxBlockSize   int64
 }
 
-func newTopics(rootPath string, maxBlockSize int64) (TopicRegister, error) {
-	var topics = map[string]*BlockRegistry{}
-	register := TopicRegister{
+func NewTopicManager(rootPath string, maxBlockSize int64) (TopicManager, error) {
+	var topics = map[string]*BlockManager{}
+	register := TopicManager{
 		maxBlockSize:   maxBlockSize,
 		topicsRootPath: rootPath,
 		topics:         topics,
 	}
 	err := register.UpdateTopicsFromStorage()
 	if err != nil {
-		return TopicRegister{}, err
+		return TopicManager{}, err
 	}
 	return register, nil
 }
 
-func (tr *TopicRegister) UpdateTopicsFromStorage() error {
+func (tr *TopicManager) UpdateTopicsFromStorage() error {
 	directories, err := listUnhiddenDirectories(tr.topicsRootPath)
 	if err != nil {
 		return err
 	}
 	for _, topic := range directories {
-		registry, err := NewBlockRegistry(tr.topicsRootPath, topic, tr.maxBlockSize)
+		registry, err := NewBlockManger(tr.topicsRootPath, topic, tr.maxBlockSize)
 		if err != nil {
 			return err
 		}
@@ -39,7 +39,7 @@ func (tr *TopicRegister) UpdateTopicsFromStorage() error {
 	return nil
 }
 
-func (tr *TopicRegister) CreateTopic(topic string) (bool, error) {
+func (tr *TopicManager) CreateTopic(topic string) (bool, error) {
 	if tr.doesTopicExist(topic) {
 		return false, nil
 	}
@@ -47,7 +47,7 @@ func (tr *TopicRegister) CreateTopic(topic string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	registry, err := NewBlockRegistry(tr.topicsRootPath, topic, tr.maxBlockSize)
+	registry, err := NewBlockManger(tr.topicsRootPath, topic, tr.maxBlockSize)
 	if err != nil {
 		return false, err
 	}
@@ -56,7 +56,7 @@ func (tr *TopicRegister) CreateTopic(topic string) (bool, error) {
 	return true, nil
 }
 
-func (tr *TopicRegister) DropTopic(topic string) (bool, error) {
+func (tr *TopicManager) DropTopic(topic string) (bool, error) {
 
 	if !tr.doesTopicExist(topic) {
 		return false, nil
@@ -71,7 +71,7 @@ func (tr *TopicRegister) DropTopic(topic string) (bool, error) {
 	return true, nil
 }
 
-func (tr *TopicRegister) ListTopics() ([]string, error) {
+func (tr *TopicManager) ListTopics() ([]string, error) {
 	topics := make([]string, 0, len(tr.topics))
 	for k := range tr.topics {
 		topics = append(topics, k)
@@ -79,7 +79,7 @@ func (tr *TopicRegister) ListTopics() ([]string, error) {
 	return topics, nil
 }
 
-func (tr *TopicRegister) doesTopicExist(topic string) bool {
+func (tr *TopicManager) doesTopicExist(topic string) bool {
 	_, exists := tr.topics[topic]
 	return exists
 }

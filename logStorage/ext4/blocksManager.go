@@ -8,7 +8,7 @@ import (
 	"sort"
 )
 
-type BlockRegistry struct {
+type BlockManager struct {
 	rootPath         string
 	topic            string
 	blocks           []int64
@@ -21,27 +21,27 @@ var EndOfBlock = errors.New("End of block")
 
 var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
-func NewBlockRegistry(rootPath string, topic string, maxBlockSize int64) (BlockRegistry, error) {
-	registry := BlockRegistry{
+func NewBlockManger(rootPath string, topic string, maxBlockSize int64) (BlockManager, error) {
+	registry := BlockManager{
 		rootPath:     rootPath,
 		topic:        topic,
 		maxBlockSize: maxBlockSize,
 	}
 	err := registry.updateBlocksFromStorage()
 	if err != nil {
-		return BlockRegistry{}, err
+		return BlockManager{}, err
 	}
 	return registry, nil
 }
 
-func (br *BlockRegistry) updateBlocksFromStorage() error {
+func (br *BlockManager) updateBlocksFromStorage() error {
 	var blocks []int64
 	files, err := listFilesInDirectory(br.rootPath + separator + br.topic)
 	if err != nil {
 		return err
 	}
 	if len(files) == 0 {
-		blocks = []int64{0}
+		br.blocks = []int64{0}
 		br.currentBlockSize = 0
 		br.currentOffset = 0
 		return nil
@@ -65,58 +65,58 @@ func (br *BlockRegistry) updateBlocksFromStorage() error {
 	return nil
 }
 
-func (br *BlockRegistry) incrementCurrentOffset(increment int) {
+func (br *BlockManager) incrementCurrentOffset(increment int) {
 	br.currentOffset = br.currentOffset + uint64(increment)
 }
 
-func (br *BlockRegistry) incrementCurrentByteSize(increment int) {
+func (br *BlockManager) incrementCurrentByteSize(increment int) {
 	br.currentBlockSize = br.currentBlockSize + int64(increment)
 }
 
-func (br *BlockRegistry) createNewBlock() {
+func (br *BlockManager) createNewBlock() {
 	br.blocks = append(br.blocks, int64(br.currentOffset))
 	br.currentBlockSize = 0
 }
 
-func (br *BlockRegistry) CurrentOffset() uint64 {
+func (br *BlockManager) CurrentOffset() uint64 {
 	return br.currentOffset
 }
 
-func (br *BlockRegistry) CurrentBlock() int64 {
+func (br *BlockManager) CurrentBlock() int64 {
 	if br.blocks == nil {
 		return 0
 	}
 	return br.blocks[len(br.blocks)-1]
 }
 
-func (br *BlockRegistry) FirstBlock() int64 {
+func (br *BlockManager) FirstBlock() int64 {
 	return br.blocks[0]
 }
 
-func (br *BlockRegistry) FirstBlockFileName() string {
+func (br *BlockManager) FirstBlockFileName() string {
 	return br.rootPath + separator + br.topic + separator + createBlockFileName(br.CurrentBlock())
 }
 
-func (br *BlockRegistry) GetBlock(blockIndex int) (int64, error) {
+func (br *BlockManager) GetBlock(blockIndex int) (int64, error) {
 	if blockIndex >= len(br.blocks) {
 		return 0, EndOfBlock
 	}
 	return br.blocks[blockIndex], nil
 }
 
-func (br *BlockRegistry) GetBlockFilename(blockIndex int) (string, error) {
+func (br *BlockManager) GetBlockFilename(blockIndex int) (string, error) {
 	if blockIndex >= len(br.blocks) {
 		return "", EndOfBlock
 	}
 	return br.rootPath + separator + br.topic + separator + createBlockFileName(br.blocks[blockIndex]), nil
 }
 
-func (br *BlockRegistry) CurrentBlockFileName() string {
+func (br *BlockManager) CurrentBlockFileName() string {
 	path := br.rootPath + separator + br.topic + separator + createBlockFileName(br.CurrentBlock())
 	return path
 }
 
-func (br *BlockRegistry) findBlockIndexContainingOffset(offset uint64) (uint, error) {
+func (br *BlockManager) findBlockIndexContainingOffset(offset uint64) (uint, error) {
 
 	if len(br.blocks) == 0 {
 		return 0, errors.New("no block")
@@ -133,11 +133,11 @@ func (br *BlockRegistry) findBlockIndexContainingOffset(offset uint64) (uint, er
 	return uint(len(br.blocks) - 1), nil
 }
 
-func (br *BlockRegistry) createBlockFileName(offset int64) string {
+func (br *BlockManager) createBlockFileName(offset int64) string {
 	return fmt.Sprintf("%020d.log", offset)
 }
 
-func (br *BlockRegistry) WriteBatch(logEntry *[][]byte) error {
+func (br *BlockManager) WriteBatch(logEntry *[][]byte) error {
 	if br.currentBlockSize > br.maxBlockSize {
 		br.createNewBlock()
 	}
@@ -156,7 +156,7 @@ func (br *BlockRegistry) WriteBatch(logEntry *[][]byte) error {
 	return nil
 }
 
-func (br *BlockRegistry) writeBatchToFile(file *os.File, logEntry *[][]byte) error {
+func (br *BlockManager) writeBatchToFile(file *os.File, logEntry *[][]byte) error {
 	var bytes []byte
 	for _, v := range *logEntry {
 		br.incrementCurrentOffset(1)
@@ -170,7 +170,7 @@ func (br *BlockRegistry) writeBatchToFile(file *os.File, logEntry *[][]byte) err
 	return nil
 }
 
-func (br *BlockRegistry) Write(entry []byte) (uint64, error) {
+func (br *BlockManager) Write(entry []byte) (uint64, error) {
 	if br.currentBlockSize > br.maxBlockSize {
 		br.createNewBlock()
 	}
@@ -189,7 +189,7 @@ func (br *BlockRegistry) Write(entry []byte) (uint64, error) {
 	return offset, nil
 }
 
-func (br *BlockRegistry) writeToFile(file *os.File, entry []byte) (uint64, error) {
+func (br *BlockManager) writeToFile(file *os.File, entry []byte) (uint64, error) {
 	br.incrementCurrentOffset(1)
 	bytes := createByteEntry(br, entry)
 	n, err := file.Write(bytes)
@@ -200,7 +200,7 @@ func (br *BlockRegistry) writeToFile(file *os.File, entry []byte) (uint64, error
 	return br.currentOffset, nil
 }
 
-func createByteEntry(br *BlockRegistry, entry []byte) []byte {
+func createByteEntry(br *BlockManager, entry []byte) []byte {
 	offset := offsetToLittleEndian(br.currentOffset)
 	byteSize := byteSizeToLittleEndian(len(entry))
 	checksum := crc32.Checksum(offset, crc32q)

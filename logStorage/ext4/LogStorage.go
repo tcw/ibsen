@@ -6,11 +6,11 @@ import (
 )
 
 type LogStorage struct {
-	topicRegister *TopicRegister
+	topicRegister *TopicManager
 }
 
 func NewLogStorage(rootPath string, maxBlockSize int64) (LogStorage, error) {
-	topics, err := newTopics(rootPath, maxBlockSize)
+	topics, err := NewTopicManager(rootPath, maxBlockSize)
 	if err != nil {
 		return LogStorage{}, err
 	}
@@ -43,7 +43,7 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 
 func (e LogStorage) ReadBatchFromBeginning(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int) error {
 	//Todo: this method is more time consuming than the actual reading - needs change
-	read, err := NewTopicRead(e.topicRegister.topicsRootPath, topic, e.topicRegister.maxBlockSize)
+	read, err := NewTopicRead(e.topicRegister.topics[topic])
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ func (e LogStorage) ReadBatchFromBeginning(logChan chan logStorage.LogEntryBatch
 }
 
 func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64, batchSize int) error {
-	read, err := NewTopicRead(e.topicRegister.topicsRootPath, topic, e.topicRegister.maxBlockSize)
+	read, err := NewTopicRead(e.topicRegister.topics[topic])
 	if err != nil {
 		return err
 	}

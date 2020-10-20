@@ -41,7 +41,8 @@ func ReadTopic(readPath string, toBase64 bool) {
 			logChannel := make(chan logStorage.LogEntry)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
-			reader, err := ext4.NewTopicRead(dir, topic, 1024*1024*10)
+			manger, err := ext4.NewBlockManger(dir, topic, 1024*1024*10)
+			reader, err := ext4.NewTopicRead(&manger)
 			if err != nil {
 				log.Fatal(err)
 			}
