@@ -107,11 +107,7 @@ func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if offset == 0 {
-		err = ibsen.Storage.ReadBatchFromBeginning(logChan, &wg, vars["topic"], 1000) //TODO: make batchSize optional
-	} else {
-		err = ibsen.Storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, vars["topic"], offset, 1000)
-	}
+	err = ibsen.Storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, vars["topic"], offset, 1000)
 
 	if err != nil {
 		log.Println(err)

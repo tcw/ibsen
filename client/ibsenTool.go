@@ -38,7 +38,7 @@ func ReadTopic(readPath string, toBase64 bool) {
 		}
 		if isDir {
 			dir, topic := path.Split(abs)
-			logChannel := make(chan logStorage.LogEntry)
+			logChannel := make(chan logStorage.LogEntryBatch)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
 			manger, err := ext4.NewBlockManger(dir, topic, 1024*1024*10)
@@ -46,17 +46,17 @@ func ReadTopic(readPath string, toBase64 bool) {
 			if err != nil {
 				log.Fatal(err)
 			}
-			err = reader.ReadFromBeginning(logChannel, &wg)
+			err = reader.ReadBatchFromOffsetNotIncluding(logChannel, &wg, 0, 1000)
 			if err != nil {
 				log.Fatal(err)
 			}
 			wg.Wait()
 		} else {
-			logChannel := make(chan logStorage.LogEntry)
+			logChannel := make(chan logStorage.LogEntryBatch)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
 			openFile, err := ext4.OpenFileForRead(readPath)
-			err = ext4.ReadLogToEnd(openFile, logChannel, &wg)
+			err = ext4.ReadLogBlockFromOffsetNotIncluding(openFile, logChannel, &wg, 0, 1000)
 			if err != nil {
 				log.Println(err)
 			}
@@ -69,14 +69,16 @@ func ReadTopic(readPath string, toBase64 bool) {
 	}
 }
 
-func writeToStdOut(c chan logStorage.LogEntry, wg *sync.WaitGroup, toBase64 bool) {
+func writeToStdOut(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, toBase64 bool) {
 	const textLine = "%d\t%s\n"
 	for {
 		entry := <-c
-		if toBase64 {
-			fmt.Printf(textLine, entry.Offset, base64.StdEncoding.EncodeToString(entry.Entry))
-		} else {
-			fmt.Printf(textLine, entry.Offset, string(entry.Entry))
+		for _, logEntry := range entry.Entries {
+			if toBase64 {
+				fmt.Printf(textLine, entry.Offset(), base64.StdEncoding.EncodeToString(logEntry.Entry))
+			} else {
+				fmt.Printf(textLine, entry.Offset(), string(logEntry.Entry))
+			}
 		}
 		wg.Done()
 	}

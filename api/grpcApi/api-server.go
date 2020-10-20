@@ -146,11 +146,8 @@ func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
 	go sendBatchMessage(logChan, &wg, outStream)
 
 	var err error
-	if readParams.Offset == 0 {
-		err = s.logStorage.ReadBatchFromBeginning(logChan, &wg, readParams.TopicName, int(readParams.BatchSize))
-	} else {
-		err = s.logStorage.ReadBatchFromOffsetNotIncluding(logChan, &wg, readParams.TopicName, readParams.Offset, int(readParams.BatchSize))
-	}
+	err = s.logStorage.ReadBatchFromOffsetNotIncluding(logChan, &wg, readParams.TopicName, readParams.Offset, int(readParams.BatchSize))
+
 	if err != nil {
 		return err
 	}

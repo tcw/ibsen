@@ -132,7 +132,7 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 	var wg sync.WaitGroup
 
 	go func() {
-		err = storage.ReadBatchFromBeginning(logChan, &wg, testTopic1, 2)
+		err = storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, testTopic1, 0, 2)
 		if err != nil {
 			t.Error(err)
 		}

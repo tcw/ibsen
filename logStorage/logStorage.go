@@ -9,7 +9,6 @@ type LogStorage interface {
 	Drop(topic string) (bool, error)
 	Status() ([]string, error)
 	WriteBatch(topicBatchMessage *TopicBatchMessage) (int, error)
-	ReadBatchFromBeginning(logChan chan LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int) error
 	ReadBatchFromOffsetNotIncluding(logChan chan LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64, batchSize int) error
 	Close()
 }

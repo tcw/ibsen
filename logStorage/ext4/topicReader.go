@@ -20,63 +20,6 @@ func NewTopicRead(manager *BlockManager) (*TopicReader, error) {
 	}, nil
 }
 
-func (t *TopicReader) ReadFromBeginning(c chan logStorage.LogEntry, wg *sync.WaitGroup) error {
-	return t.ReadFromBlock(c, wg, 0)
-}
-
-func (t *TopicReader) ReadFromBlock(c chan logStorage.LogEntry, wg *sync.WaitGroup, block int) error {
-	blockIndex := block
-	for {
-		filename, err := t.blockManager.GetBlockFilename(blockIndex)
-		if err != nil && err != EndOfBlock {
-			return err
-		}
-		if err == EndOfBlock {
-			return nil
-		}
-		read, err := OpenFileForRead(filename)
-		if err != nil {
-			read.Close()
-			return err
-		}
-		err = ReadLogToEnd(read, c, wg)
-		if err != nil {
-			read.Close()
-			return err
-		}
-		err = read.Close()
-		if err != nil {
-			return err
-		}
-		blockIndex = blockIndex + 1
-	}
-}
-
-func (t *TopicReader) ReadLogFromOffsetNotIncluding(logChan chan logStorage.LogEntry, wg *sync.WaitGroup, offset uint64) error {
-	if t.currentOffset == offset {
-		return nil
-	}
-	currentBlockIndex, err := t.blockManager.findBlockIndexContainingOffset(offset)
-	if err != nil {
-		return err
-	}
-	blockIndex := int(currentBlockIndex)
-	blockFileName, err := t.blockManager.GetBlockFilename(blockIndex)
-	if err != nil {
-		return err
-	}
-	file, err := OpenFileForRead(blockFileName)
-	err = ReadLogFromOffsetNotIncluding(file, logChan, wg, offset)
-	if err != nil {
-		return err
-	}
-	return t.ReadFromBlock(logChan, wg, blockIndex+1)
-}
-
-func (t *TopicReader) ReadBatchFromBeginning(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int) error {
-	return t.ReadBatchFromBlock(c, wg, batchSize, 0)
-}
-
 func (t *TopicReader) ReadBatchFromBlock(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, block int) error {
 	blockIndex := block
 	var entriesBytes []logStorage.LogEntry

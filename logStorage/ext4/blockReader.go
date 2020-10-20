@@ -113,17 +113,21 @@ func FastForwardToOffset(file *os.File, offset int64) error {
 
 func ReadLogBlockFromOffsetNotIncluding(file *os.File, logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, offset uint64, batchSize int) error {
 
-	err := FastForwardToOffset(file, int64(offset))
-	if err != nil {
-		return err
+	if offset > 0 {
+		err := FastForwardToOffset(file, int64(offset))
+		if err != nil {
+			return err
+		}
 	}
 
 	partialBatch, _, err := ReadLogInBatchesToEnd(file, nil, logChan, wg, batchSize)
 	if err != nil {
 		return err
 	}
-	wg.Add(1)
-	logChan <- logStorage.LogEntryBatch{Entries: partialBatch.Entries}
+	if partialBatch.Entries != nil {
+		wg.Add(1)
+		logChan <- logStorage.LogEntryBatch{Entries: partialBatch.Entries}
+	}
 	return nil
 }
 
@@ -198,76 +202,5 @@ func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, lo
 			ByteSize: int(size),
 			Entry:    entry,
 		})
-	}
-}
-
-func ReadLogFromOffsetNotIncluding(file *os.File, c chan logStorage.LogEntry, wg *sync.WaitGroup, offset uint64) error {
-	err := FastForwardToOffset(file, int64(offset))
-	if err != nil {
-		return err
-	}
-
-	err = ReadLogToEnd(file, c, wg)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func ReadLogToEnd(file *os.File, c chan logStorage.LogEntry, wg *sync.WaitGroup) error {
-	reader := bufio.NewReader(file)
-	bytes := make([]byte, 8)
-	checksum := make([]byte, 4)
-	for {
-		n, err := io.ReadFull(reader, bytes)
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			log.Println(err)
-			return err
-		}
-		if n != 8 {
-			log.Println("offset incorrect")
-			return errors.New("offset incorrect")
-		}
-		offset := fromLittleEndian(bytes)
-		n, err2 := io.ReadFull(reader, checksum)
-		if n != 4 {
-			log.Println("entry size incorrect")
-			return errors.New("entry size incorrect")
-		}
-		checksumValue := fromLittleEndianToUint32(checksum)
-		if err2 != nil {
-			log.Println(err2)
-			return err2
-		}
-		n, err3 := io.ReadFull(reader, bytes)
-		if n != 8 {
-			log.Println("entry size incorrect")
-			return errors.New("entry size incorrect")
-		}
-		size := fromLittleEndian(bytes)
-		if err3 != nil {
-			log.Println(err3)
-			return err3
-		}
-		entry := make([]byte, size)
-		n, err4 := io.ReadFull(reader, entry)
-		if err4 != nil {
-			log.Println(err4)
-			return err4
-		}
-		if n != int(size) {
-			log.Println("entry incorrect")
-			return errors.New("entry incorrect")
-		}
-		wg.Add(1)
-		c <- logStorage.LogEntry{
-			Offset:   offset,
-			Crc:      checksumValue,
-			ByteSize: int(size),
-			Entry:    entry,
-		}
 	}
 }
