@@ -52,16 +52,19 @@ func (br *BlockManager) updateBlocksFromStorage() error {
 	}
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
 	br.blocks = blocks
-	blockSize, err := blockSizeFromFilename(br.CurrentBlockFileName())
+
+	blockSize, err := blockSize(br.CurrentBlockFileName())
 	if err != nil {
 		return err
 	}
 	br.currentBlockSize = blockSize
+
 	offset, err := findLastOffset(br.CurrentBlockFileName())
 	if err != nil {
 		return err
 	}
 	br.currentOffset = uint64(offset)
+
 	return nil
 }
 
@@ -168,36 +171,6 @@ func (br *BlockManager) writeBatchToFile(file *os.File, logEntry *[][]byte) erro
 		return err
 	}
 	return nil
-}
-
-func (br *BlockManager) Write(entry []byte) (uint64, error) {
-	if br.currentBlockSize > br.maxBlockSize {
-		br.createNewBlock()
-	}
-	writer, err := OpenFileForWrite(br.CurrentBlockFileName())
-	if err != nil {
-		return 0, err
-	}
-	offset, err2 := br.writeToFile(writer, entry)
-	if err2 != nil {
-		return offset, err2
-	}
-	err = writer.Close()
-	if err != nil {
-		return offset, err
-	}
-	return offset, nil
-}
-
-func (br *BlockManager) writeToFile(file *os.File, entry []byte) (uint64, error) {
-	br.incrementCurrentOffset(1)
-	bytes := createByteEntry(br, entry)
-	n, err := file.Write(bytes)
-	if err != nil {
-		return br.currentOffset, err
-	}
-	br.incrementCurrentByteSize(n)
-	return br.currentOffset, nil
 }
 
 func createByteEntry(br *BlockManager, entry []byte) []byte {

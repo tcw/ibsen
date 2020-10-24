@@ -3,11 +3,11 @@ package httpApi
 import (
 	"bufio"
 	"encoding/base64"
+	"encoding/json"
 	"github.com/tcw/ibsen/logStorage"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -107,7 +107,7 @@ func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err = ibsen.Storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, vars["topic"], offset, 1000)
+	err = ibsen.Storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, vars["topic"], 1000, offset)
 
 	if err != nil {
 		log.Println(err)
@@ -117,15 +117,12 @@ func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) 
 	w.(http.Flusher).Flush()
 }
 func (ibsen *IbsenHttpServer) listTopic(w http.ResponseWriter, r *http.Request) {
-	topics, err := ibsen.Storage.Status()
+	status := ibsen.Storage.Status()
+	prettyJSON, err := json.MarshalIndent(status, "", "    ")
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		log.Print(err)
 	}
-	_, err = w.Write([]byte("[" + strings.Join(topics, ",") + "]"))
-	if err != nil {
-		log.Println(err)
-	}
+	_, err = w.Write(prettyJSON)
 }
 func (ibsen *IbsenHttpServer) createTopic(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)

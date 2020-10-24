@@ -3,6 +3,7 @@ package client
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"google.golang.org/grpc"
@@ -45,6 +46,20 @@ func (ic *IbsenClient) CreateTopic(topic string) bool {
 		log.Println(err)
 	}
 	return create.Created
+}
+
+func (ic *IbsenClient) Status() {
+	status := ic.Status
+	prettyJSON, err := json.MarshalIndent(status, "", "    ")
+	if err != nil {
+		log.Print(err)
+	}
+	stdout := os.Stdout
+	writer := bufio.NewWriter(stdout)
+	_, err = writer.Write(prettyJSON)
+	if err != nil {
+		log.Println(err)
+	}
 }
 
 func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) {

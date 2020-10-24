@@ -24,7 +24,15 @@ service Ibsen {
 }
 
 message TopicsStatus {
-    repeated Topic topics = 1;
+    repeated TopicStatus topicStatus = 1;
+}
+
+message TopicStatus {
+    string topic = 1;
+    int64 blocks = 2;
+    int64 offset = 3;
+    int64 maxBlockSize = 4;
+    string path = 5;
 }
 
 message Topic {
@@ -32,15 +40,15 @@ message Topic {
     uint64 offset = 2;
 }
 
-message CreateStatus{
+message CreateStatus {
     bool created = 1;
 }
 
-message DropStatus{
+message DropStatus {
     bool dropped = 1;
 }
 
-message WriteStatus{
+message WriteStatus {
     int64 wrote = 1;
     int64 timeNano = 2;
 }

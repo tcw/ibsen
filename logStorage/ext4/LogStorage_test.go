@@ -87,7 +87,7 @@ func TestLogStorage_ListTopics(t *testing.T) {
 	if !create2 {
 		t.Failed()
 	}
-	topics, err := storage.Status()
+	topics := storage.Status()
 	if err != nil {
 		t.Error(err)
 	}
@@ -132,7 +132,7 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 	var wg sync.WaitGroup
 
 	go func() {
-		err = storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, testTopic1, 0, 2)
+		err = storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, testTopic1, 2, 0)
 		if err != nil {
 			t.Error(err)
 		}

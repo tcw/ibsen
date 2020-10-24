@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -45,7 +46,7 @@ func OpenFileForRead(fileName string) (*os.File, error) {
 	return f, nil
 }
 
-func blockSizeFromFilename(filename string) (int64, error) {
+func blockSize(filename string) (int64, error) {
 	if !doesFileExist(filename) {
 		return 0, nil
 	}
@@ -92,6 +93,106 @@ func listUnhiddenDirectories(root string) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+func findLastOffset(blockFileName string) (int64, error) {
+	var offsetFound int64 = -1
+	file, err := OpenFileForRead(blockFileName)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	for {
+		bytes := make([]byte, 8)
+		checksum := make([]byte, 4)
+		n, err := io.ReadFull(file, bytes)
+		if err == io.EOF {
+			return offsetFound, nil
+		}
+
+		if err == io.EOF {
+			return offsetFound, errors.New("no offset in block")
+		}
+		if err != nil {
+			return offsetFound, errors.New("error")
+		}
+		if n != 8 {
+			log.Println("offset incorrect")
+			return offsetFound, errors.New("offset incorrect")
+		}
+		offsetFound = int64(fromLittleEndian(bytes))
+		n, err2 := io.ReadFull(file, checksum)
+		if err2 != nil {
+			return offsetFound, errors.New("error")
+		}
+		if n != 4 {
+			log.Println("byte size incorrect")
+			return offsetFound, errors.New("byte size incorrect")
+		}
+
+		n, err3 := io.ReadFull(file, bytes)
+		if err3 != nil {
+			log.Println(err3)
+			return offsetFound, err3
+		}
+		if n != 8 {
+			log.Println("byte size incorrect")
+			return offsetFound, errors.New("byte size incorrect")
+		}
+		size := fromLittleEndian(bytes)
+		_, err = file.Seek(int64(size), 1)
+		if err != nil {
+			println(err)
+			return offsetFound, err
+		}
+	}
+}
+
+func fastForwardToOffset(file *os.File, offset int64) error {
+	var offsetFound int64 = -1
+	for {
+		if offsetFound == offset {
+			return nil
+		}
+		bytes := make([]byte, 8)
+		checksum := make([]byte, 4)
+		n, err := io.ReadFull(file, bytes)
+		if err == io.EOF {
+			return errors.New("no offset in block")
+		}
+		if err != nil {
+			return errors.New("error")
+		}
+		if n != 8 {
+			log.Println("offset incorrect")
+			return errors.New("offset incorrect")
+		}
+		offsetFound = int64(fromLittleEndian(bytes))
+		n, err2 := io.ReadFull(file, checksum)
+		if err2 != nil {
+			return errors.New("error")
+		}
+		if n != 4 {
+			log.Println("byte size incorrect")
+			return errors.New("byte size incorrect")
+		}
+
+		n, err3 := io.ReadFull(file, bytes)
+		if err3 != nil {
+			log.Println(err3)
+			return err3
+		}
+		if n != 8 {
+			log.Println("byte size incorrect")
+			return errors.New("byte size incorrect")
+		}
+		size := fromLittleEndian(bytes)
+		_, err = file.Seek(int64(size), 1)
+		if err != nil {
+			println(err)
+			return err
+		}
+	}
 }
 
 func listFilesInDirectory(dir string) ([]string, error) {

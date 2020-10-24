@@ -33,7 +33,7 @@ var (
 
 	cmdServer = &cobra.Command{
 		Use:              "server [data directory]",
-		Short:            "server",
+		Short:            "start a ibsen server",
 		Long:             `server`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
@@ -57,14 +57,14 @@ var (
 
 	cmdClient = &cobra.Command{
 		Use:              "client",
-		Short:            "client",
+		Short:            "client from commandline",
 		Long:             `client`,
 		TraverseChildren: true,
 	}
 
 	cmdClientCreate = &cobra.Command{
 		Use:              "create [topic]",
-		Short:            "create",
+		Short:            "create a new topic",
 		Long:             `create`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
@@ -77,7 +77,7 @@ var (
 
 	cmdClientRead = &cobra.Command{
 		Use:              "read [topic] <offset>",
-		Short:            "read",
+		Short:            "read entries from a topic",
 		Long:             `read`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
@@ -97,7 +97,7 @@ var (
 
 	cmdClientWrite = &cobra.Command{
 		Use:              "write [topic]",
-		Short:            "write",
+		Short:            "write entries to a topic",
 		Long:             `write`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
@@ -107,16 +107,28 @@ var (
 		},
 	}
 
+	cmdClientStatus = &cobra.Command{
+		Use:              "status",
+		Short:            "topic status as json",
+		Long:             `status`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			ibsenClient := startClient()
+			ibsenClient.Status()
+		},
+	}
+
 	cmdBench = &cobra.Command{
 		Use:              "bench",
-		Short:            "bench",
+		Short:            "benchmark read/write",
 		Long:             `bench`,
 		TraverseChildren: true,
 	}
 
 	cmdBenchWrite = &cobra.Command{
 		Use:              "write [topic]",
-		Short:            "bench write",
+		Short:            "benchmark write to topic",
 		Long:             `bench write`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
@@ -128,7 +140,7 @@ var (
 
 	cmdBenchRead = &cobra.Command{
 		Use:              "read [topic]",
-		Short:            "bench read",
+		Short:            "benchmark read from topic",
 		Long:             `bench read`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
@@ -139,15 +151,15 @@ var (
 	}
 
 	cmdFile = &cobra.Command{
-		Use:              "files",
-		Short:            "files",
-		Long:             `files`,
+		Use:              "file",
+		Short:            "access files directly from file",
+		Long:             `file`,
 		TraverseChildren: true,
 	}
 
 	cmdCat = &cobra.Command{
 		Use:              "cat [from file/directory]",
-		Short:            "cat",
+		Short:            "cat a log file or topic directory",
 		Long:             `cat`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
@@ -158,7 +170,7 @@ var (
 
 	cmdCheck = &cobra.Command{
 		Use:              "check [from directory]",
-		Short:            "check",
+		Short:            "check for file entry corruption",
 		Long:             `check`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
@@ -208,7 +220,7 @@ func init() {
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdFile)
 	cmdFile.AddCommand(cmdCat, cmdCheck)
 	cmdBench.AddCommand(cmdBenchWrite, cmdBenchRead)
-	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientWrite, cmdBench)
+	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientWrite, cmdBench, cmdClientStatus)
 }
 
 func getenv(key, fallback string) string {

@@ -28,8 +28,19 @@ func (e LogStorage) Drop(topic string) (bool, error) {
 	return e.topicRegister.DropTopic(topic)
 }
 
-func (e LogStorage) Status() ([]string, error) {
-	return e.topicRegister.ListTopics()
+func (e LogStorage) Status() []*logStorage.TopicStatusMessage {
+	topics := e.topicRegister.topics
+	messages := make([]*logStorage.TopicStatusMessage, 0)
+	for _, manager := range topics {
+		messages = append(messages, &logStorage.TopicStatusMessage{
+			Topic:        manager.topic,
+			Blocks:       len(manager.blocks),
+			Offset:       int64(manager.currentOffset),
+			MaxBlockSize: manager.maxBlockSize,
+			Path:         manager.rootPath,
+		})
+	}
+	return messages
 }
 
 func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int, error) {
@@ -41,12 +52,12 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 	return len(*topicMessage.Message), nil
 }
 
-func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, offset uint64, batchSize int) error {
+func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int, offset uint64) error {
 	read, err := NewTopicRead(e.topicRegister.topics[topic])
 	if err != nil {
 		return err
 	}
-	err = read.ReadBatchFromOffsetNotIncluding(logChan, wg, offset, batchSize)
+	err = read.ReadBatchFromOffsetNotIncluding(logChan, wg, batchSize, offset)
 	if err != nil {
 		return err
 	}

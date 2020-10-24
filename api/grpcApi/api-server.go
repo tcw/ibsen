@@ -146,7 +146,7 @@ func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
 	go sendBatchMessage(logChan, &wg, outStream)
 
 	var err error
-	err = s.logStorage.ReadBatchFromOffsetNotIncluding(logChan, &wg, readParams.TopicName, readParams.Offset, int(readParams.BatchSize))
+	err = s.logStorage.ReadBatchFromOffsetNotIncluding(logChan, &wg, readParams.TopicName, int(readParams.BatchSize), readParams.Offset)
 
 	if err != nil {
 		return err
@@ -156,7 +156,20 @@ func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
 }
 
 func (s server) Status(context.Context, *Empty) (*TopicsStatus, error) {
-	panic("implement me")
+	status := s.logStorage.Status()
+	statuses := make([]*TopicStatus, 0)
+	for _, message := range status {
+		statuses = append(statuses, &TopicStatus{
+			Topic:        message.Topic,
+			Blocks:       int64(message.Blocks),
+			Offset:       message.Offset,
+			MaxBlockSize: message.MaxBlockSize,
+			Path:         message.Path,
+		})
+	}
+	return &TopicsStatus{
+		TopicStatus: statuses,
+	}, nil
 }
 
 func (s server) Close() {
