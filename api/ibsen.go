@@ -101,7 +101,8 @@ func (ibs *IbsenServer) startHTTPServer(storage logStorage.LogStorage) {
 func (ibs *IbsenServer) startGRPCServer(storage logStorage.LogStorage) {
 	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage)
 	ibsenGrpcServer.Port = uint16(ibs.Port)
-	log.Printf("Ibsen grpc server started on port [%d]\n", ibsenGrpcServer.Port)
+	ibsenGrpcServer.Host = ibs.Host
+	log.Printf("Ibsen grpc server started on [%s:%d]\n", ibsenGrpcServer.Host, ibsenGrpcServer.Port)
 	fmt.Print(ibsenFiglet)
 	var err2 error
 	err2 = ibsenGrpcServer.StartGRPC()

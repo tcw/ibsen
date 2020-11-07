@@ -46,9 +46,9 @@ func (br *BlockManager) updateBlocksFromStorage() error {
 		br.currentOffset = 0
 		return nil
 	}
-	blocks, err2 := filesToBlocks(files)
-	if err2 != nil {
-		return err2
+	blocks, err = filesToBlocks(files)
+	if err != nil {
+		return err
 	}
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
 	br.blocks = blocks

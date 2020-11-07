@@ -69,9 +69,9 @@ var (
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("creating topic %s", args[0])
 			ibsenClient := startClient()
 			ibsenClient.CreateTopic(args[0])
+			fmt.Printf("created topic %s\n", args[0])
 		},
 	}
 
@@ -198,17 +198,17 @@ func init() {
 	useHttp, _ = strconv.ParseBool(getenv("IBSEN_HTTP", "false"))
 
 	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(5001)))
-	host = getenv("IBSEN_HOST", "localhost")
+	host = getenv("IBSEN_HOST", "0.0.0.0")
 	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "100"))
 	entries, _ = strconv.Atoi(getenv("IBSEN_ENTRIES", "1000"))
 
-	cmdServer.Flags().BoolVarP(&useHttp, "http", "t", useHttp, "config file (default is current directory)")
+	cmdServer.Flags().BoolVarP(&useHttp, "http", "t", useHttp, "use http 1.1")
 	cmdServer.Flags().Lookup("http").NoOptDefVal = "true"
 	if !useHttp && serverPort == 5001 {
 		serverPort = 50001
 	}
 	rootCmd.Flags().IntVarP(&serverPort, "port", "p", serverPort, "config file (default is current directory)")
-	rootCmd.Flags().StringVarP(&host, "host", "l", "localhost", "config file (default is current directory)")
+	rootCmd.Flags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "config file")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "config file")

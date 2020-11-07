@@ -121,8 +121,8 @@ func findLastOffset(blockFileName string) (int64, error) {
 			return offsetFound, errors.New("offset incorrect")
 		}
 		offsetFound = int64(fromLittleEndian(bytes))
-		n, err2 := io.ReadFull(file, checksum)
-		if err2 != nil {
+		n, err = io.ReadFull(file, checksum)
+		if err != nil {
 			return offsetFound, errors.New("error")
 		}
 		if n != 4 {
@@ -130,10 +130,10 @@ func findLastOffset(blockFileName string) (int64, error) {
 			return offsetFound, errors.New("byte size incorrect")
 		}
 
-		n, err3 := io.ReadFull(file, bytes)
-		if err3 != nil {
-			log.Println(err3)
-			return offsetFound, err3
+		n, err = io.ReadFull(file, bytes)
+		if err != nil {
+			log.Println(err)
+			return offsetFound, err
 		}
 		if n != 8 {
 			log.Println("byte size incorrect")
@@ -168,8 +168,8 @@ func fastForwardToOffset(file *os.File, offset int64) error {
 			return errors.New("offset incorrect")
 		}
 		offsetFound = int64(fromLittleEndian(bytes))
-		n, err2 := io.ReadFull(file, checksum)
-		if err2 != nil {
+		n, err = io.ReadFull(file, checksum)
+		if err != nil {
 			return errors.New("error")
 		}
 		if n != 4 {
@@ -177,10 +177,10 @@ func fastForwardToOffset(file *os.File, offset int64) error {
 			return errors.New("byte size incorrect")
 		}
 
-		n, err3 := io.ReadFull(file, bytes)
-		if err3 != nil {
-			log.Println(err3)
-			return err3
+		n, err = io.ReadFull(file, bytes)
+		if err != nil {
+			log.Println(err)
+			return err
 		}
 		if n != 8 {
 			log.Println("byte size incorrect")

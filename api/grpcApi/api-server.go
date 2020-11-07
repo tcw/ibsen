@@ -20,6 +20,7 @@ type server struct {
 }
 
 type IbsenGrpcServer struct {
+	Host        string
 	Port        uint16
 	CertFile    string
 	KeyFile     string
@@ -30,6 +31,7 @@ type IbsenGrpcServer struct {
 
 func NewIbsenGrpcServer(storage logStorage.LogStorage) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
+		Host:     "0.0.0.0",
 		Port:     50001,
 		CertFile: "",
 		KeyFile:  "",
@@ -39,7 +41,7 @@ func NewIbsenGrpcServer(storage logStorage.LogStorage) *IbsenGrpcServer {
 }
 
 func (igs *IbsenGrpcServer) StartGRPC() error {
-	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", igs.Port))
+	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", igs.Host, igs.Port))
 	if err != nil {
 		return err
 	}
@@ -87,7 +89,7 @@ func (s server) Drop(ctx context.Context, topic *Topic) (*DropStatus, error) {
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
 	start := time.Now()
 	n, err := s.logStorage.WriteBatch(&logStorage.TopicBatchMessage{
-		Topic:   entries.TopicName,
+		Topic:   entries.Topic,
 		Message: &entries.Entries,
 	})
 	if err != nil {
@@ -117,7 +119,7 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 			return err
 		}
 		written, err := s.logStorage.WriteBatch(&logStorage.TopicBatchMessage{
-			Topic:   in.TopicName,
+			Topic:   in.Topic,
 			Message: &in.Entries,
 		})
 		sum = sum + 1
@@ -146,7 +148,7 @@ func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
 	go sendBatchMessage(logChan, &wg, outStream)
 
 	var err error
-	err = s.logStorage.ReadBatchFromOffsetNotIncluding(logChan, &wg, readParams.TopicName, int(readParams.BatchSize), readParams.Offset)
+	err = s.logStorage.ReadBatchFromOffsetNotIncluding(logChan, &wg, readParams.Topic, int(readParams.BatchSize), readParams.Offset)
 
 	if err != nil {
 		return err

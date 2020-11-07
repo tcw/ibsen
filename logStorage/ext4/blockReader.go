@@ -63,10 +63,10 @@ func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, lo
 		}
 		offset := int64(fromLittleEndian(bytes))
 
-		n, err2 := io.ReadFull(reader, checksum)
-		if err2 != nil {
-			log.Println(err2)
-			return logStorage.LogEntryBatch{}, false, err2
+		n, err = io.ReadFull(reader, checksum)
+		if err != nil {
+			log.Println(err)
+			return logStorage.LogEntryBatch{}, false, err
 		}
 		if n != 4 {
 			log.Println("crc size incorrect")
@@ -74,10 +74,10 @@ func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, lo
 		}
 		checksumValue := fromLittleEndianToUint32(bytes)
 
-		n, err3 := io.ReadFull(reader, bytes)
-		if err3 != nil {
-			log.Println(err3)
-			return logStorage.LogEntryBatch{}, false, err3
+		n, err = io.ReadFull(reader, bytes)
+		if err != nil {
+			log.Println(err)
+			return logStorage.LogEntryBatch{}, false, err
 		}
 		if n != 8 {
 			log.Println("entry size incorrect")
@@ -86,10 +86,10 @@ func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, lo
 		size := fromLittleEndian(bytes)
 
 		entry := make([]byte, size)
-		n, err4 := io.ReadFull(reader, entry)
-		if err4 != nil {
-			log.Println(err4)
-			return logStorage.LogEntryBatch{}, false, err4
+		n, err = io.ReadFull(reader, entry)
+		if err != nil {
+			log.Println(err)
+			return logStorage.LogEntryBatch{}, false, err
 		}
 		if n != int(size) {
 			log.Println("entry incorrect")

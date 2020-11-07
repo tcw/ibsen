@@ -64,7 +64,7 @@ func (ic *IbsenClient) Status() {
 
 func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) {
 	entryStream, err := ic.Client.Read(ic.Ctx, &grpcApi.ReadParams{
-		TopicName: topic,
+		Topic:     topic,
 		Offset:    offset,
 		BatchSize: batchSize,
 	})
@@ -122,8 +122,8 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 		limitCounter = limitCounter + 1
 		if limitCounter == 2 {
 			mes := grpcApi.InputEntries{
-				TopicName: topic,
-				Entries:   tmpBytes,
+				Topic:   topic,
+				Entries: tmpBytes,
 			}
 			err = r.Send(&mes)
 			if err != nil {
@@ -136,8 +136,8 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 	if limitCounter > 0 {
 		fmt.Println("bytes", tmpBytes)
 		mes := grpcApi.InputEntries{
-			TopicName: topic,
-			Entries:   tmpBytes,
+			Topic:   topic,
+			Entries: tmpBytes,
 		}
 		err = r.Send(&mes)
 		if err != nil {
@@ -172,8 +172,8 @@ func (ic *IbsenClient) BenchWrite(topic string, entryByteSize int, entriesInBatc
 
 	for i := 0; i < batches; i++ {
 		err = r.Send(&grpcApi.InputEntries{
-			TopicName: topic,
-			Entries:   bytes,
+			Topic:   topic,
+			Entries: bytes,
 		})
 	}
 
@@ -193,7 +193,7 @@ func (ic *IbsenClient) BenchWrite(topic string, entryByteSize int, entriesInBatc
 
 func (ic *IbsenClient) BenchRead(topic string, offset uint64, batchSize uint32) {
 	entryStream, err := ic.Client.Read(ic.Ctx, &grpcApi.ReadParams{
-		TopicName: topic,
+		Topic:     topic,
 		Offset:    offset,
 		BatchSize: batchSize,
 	})

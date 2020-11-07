@@ -42,16 +42,16 @@ func performCorruptionCheck(rootPath string) error {
 func correctFile(filename string, safePoint int) error {
 	orgFileName := filename
 	corruptFile := strings.Replace(filename, ".log", ".corrupt", -1)
-	err2 := os.Rename(filename, corruptFile)
-	if err2 != nil {
-		return err2
+	err := os.Rename(filename, corruptFile)
+	if err != nil {
+		return err
 	}
 	file, err := OpenFileForRead(corruptFile)
 	if err != nil {
 		return err
 	}
-	correctedFile, err3 := OpenFileForWrite(orgFileName)
-	if err3 != nil {
+	correctedFile, err := OpenFileForWrite(orgFileName)
+	if err != nil {
 		return err
 	}
 	buffer := make([]byte, 4096)
@@ -103,8 +103,8 @@ func checkForCorruption(file *os.File) (int, error) {
 		}
 		currentOffset = offset
 
-		n, err2 := io.ReadFull(file, checksum)
-		if err2 != nil {
+		n, err = io.ReadFull(file, checksum)
+		if err != nil {
 			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
 		}
 		if n != 4 {
@@ -112,8 +112,8 @@ func checkForCorruption(file *os.File) (int, error) {
 		}
 		checksumValue := fromLittleEndianToUint32(checksum)
 
-		n, err3 := io.ReadFull(file, byteSizeBytes)
-		if err3 != nil {
+		n, err = io.ReadFull(file, byteSizeBytes)
+		if err != nil {
 			return lastSafePoint, errors.New(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
 		}
 		if n != 8 {

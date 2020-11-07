@@ -37,7 +37,6 @@ message TopicStatus {
 
 message Topic {
     string name = 1;
-    uint64 offset = 2;
 }
 
 message CreateStatus {
@@ -57,13 +56,13 @@ message Empty {
 }
 
 message ReadParams {
-    string topicName = 1;
+    string topic = 1;
     uint64 offset = 2;
     uint32 batchSize = 3;
 }
 
 message InputEntries {
-    string topicName = 1;
+    string topic = 1;
     repeated bytes entries = 2;
 }
 
