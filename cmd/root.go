@@ -186,7 +186,6 @@ func startClient() client.IbsenClient {
 }
 
 func Execute() {
-
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -194,7 +193,6 @@ func Execute() {
 }
 
 func init() {
-
 	useHttp, _ = strconv.ParseBool(getenv("IBSEN_HTTP", "false"))
 
 	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(5001)))

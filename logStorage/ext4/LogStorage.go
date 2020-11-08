@@ -17,8 +17,8 @@ func NewLogStorage(rootPath string, maxBlockSize int64) (LogStorage, error) {
 	return LogStorage{&topics}, nil
 }
 
-var _ logStorage.LogStorage = LogStorage{} // Verify that T implements I.
-//var _ logStorage.LogStorage = (*LogStorage{})(nil) // Verify that *T implements I.
+var _ logStorage.LogStorage = LogStorage{} // Verify that interface is implemented.
+//var _ logStorage.LogStorage = (*LogStorage{})(nil) // Verify that interface is implemented.
 
 func (e LogStorage) Create(topic string) (bool, error) {
 	return e.topicRegister.CreateTopic(topic)
