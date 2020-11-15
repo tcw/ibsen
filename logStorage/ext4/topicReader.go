@@ -34,10 +34,10 @@ func (t *TopicReader) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.Lo
 	if err != nil {
 		return err
 	}
-	return t.ReadBatchFromBlock(logChan, wg, batchSize, blockIndex+1)
+	return t.readBatchFromBlock(logChan, wg, batchSize, blockIndex+1)
 }
 
-func (t *TopicReader) ReadBatchFromBlock(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, block int) error {
+func (t *TopicReader) readBatchFromBlock(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, block int) error {
 	blockIndex := block
 	var entriesBytes []logStorage.LogEntry
 	for {

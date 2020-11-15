@@ -86,7 +86,7 @@ func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) 
 		}
 		entries := in.Entries
 		for _, entry := range entries {
-			line := fmt.Sprintf("%s\n", string(entry))
+			line := fmt.Sprintf("%d\t%s\n", entry.Offset, string(entry.Content))
 			_, err = writer.Write([]byte(line))
 			if err != nil {
 				log.Println(err)

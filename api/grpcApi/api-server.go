@@ -180,17 +180,28 @@ func (s server) Close() {
 
 func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadServer) {
 	for {
-		entry := <-logChan
-		if entry.Size() == 0 {
+		entryBatch := <-logChan
+		if entryBatch.Size() == 0 {
 			break
 		}
 		err := outStream.Send(&OutputEntries{
-			Offset:  uint64(entry.Offset()),
-			Entries: entry.ToArray(),
+			Entries: convert(&entryBatch),
 		})
 		if err != nil {
 			log.Println(err)
 		}
 		wg.Done()
 	}
+}
+
+func convert(entryBatch *logStorage.LogEntryBatch) []*Entry {
+	entries := entryBatch.Entries
+	outEntries := make([]*Entry, len(entries))
+	for i, entry := range entries {
+		outEntries[i] = &Entry{
+			Offset:  entry.Offset,
+			Content: entry.Entry,
+		}
+	}
+	return outEntries
 }
