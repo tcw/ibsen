@@ -3,6 +3,7 @@ package grpcApi
 import (
 	"context"
 	"fmt"
+	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -43,7 +44,7 @@ func NewIbsenGrpcServer(storage logStorage.LogStorage) *IbsenGrpcServer {
 func (igs *IbsenGrpcServer) StartGRPC() error {
 	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", igs.Host, igs.Port))
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	var opts []grpc.ServerOption
 	opts = []grpc.ServerOption{
@@ -56,7 +57,7 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 		creds, err := credentials.NewServerTLSFromFile(absCert, absKey)
 		opts = append(opts, grpc.Creds(creds))
 		if err != nil {
-			return err
+			return errore.WrapWithContext(err)
 		}
 	}
 	grpcServer := grpc.NewServer(opts...)
@@ -74,6 +75,10 @@ var _ IbsenServer = &server{}
 
 func (s server) Create(ctx context.Context, topic *Topic) (*CreateStatus, error) {
 	create, err := s.logStorage.Create(topic.Name)
+	if err != nil {
+		err = errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
+	}
 	return &CreateStatus{
 		Created: create,
 	}, err
@@ -81,6 +86,10 @@ func (s server) Create(ctx context.Context, topic *Topic) (*CreateStatus, error)
 
 func (s server) Drop(ctx context.Context, topic *Topic) (*DropStatus, error) {
 	dropped, err := s.logStorage.Drop(topic.Name)
+	if err != nil {
+		err = errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
+	}
 	return &DropStatus{
 		Dropped: dropped,
 	}, err
@@ -93,6 +102,8 @@ func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus,
 		Message: &entries.Entries,
 	})
 	if err != nil {
+		err = errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
 		return nil, err
 	}
 
@@ -115,7 +126,8 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 			break
 		}
 		if err != nil {
-			log.Printf("Failed reading input stream, error: %s", err)
+			err = errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
 			return err
 		}
 		written, err := s.logStorage.WriteBatch(&logStorage.TopicBatchMessage{
@@ -125,7 +137,8 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 		sum = sum + 1
 		entriesWritten = entriesWritten + int64(written)
 		if err != nil {
-			log.Printf("Failed writing input stream after %d entries, error: %s", entriesWritten, err)
+			err = errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
 			return err
 		}
 	}
@@ -137,7 +150,9 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 		TimeNano: timeElapsed.Nanoseconds(),
 	})
 	if err != nil {
-		log.Println(err)
+		err = errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
+		return err
 	}
 	return nil
 }
@@ -151,6 +166,8 @@ func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
 	err = s.logStorage.ReadBatchFromOffsetNotIncluding(logChan, &wg, readParams.Topic, int(readParams.BatchSize), readParams.Offset)
 
 	if err != nil {
+		err = errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
 		return err
 	}
 	wg.Wait()
@@ -188,7 +205,9 @@ func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup,
 			Entries: convert(&entryBatch),
 		})
 		if err != nil {
-			log.Println(err)
+			err = errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
+			return
 		}
 		wg.Done()
 	}

@@ -1,6 +1,7 @@
 package ext4
 
 import (
+	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
 	"sync"
 )
@@ -12,7 +13,7 @@ type LogStorage struct {
 func NewLogStorage(rootPath string, maxBlockSize int64) (LogStorage, error) {
 	topics, err := NewTopicManager(rootPath, maxBlockSize)
 	if err != nil {
-		return LogStorage{}, err
+		return LogStorage{}, errore.WrapWithContext(err)
 	}
 	return LogStorage{&topics}, nil
 }
@@ -47,7 +48,7 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 	registry := e.topicRegister.topics[topicMessage.Topic]
 	err := registry.WriteBatch(topicMessage.Message)
 	if err != nil {
-		return 0, err
+		return 0, errore.WrapWithContext(err)
 	}
 	return len(*topicMessage.Message), nil
 }
@@ -55,11 +56,11 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int, offset uint64) error {
 	read, err := NewTopicRead(e.topicRegister.topics[topic])
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	err = read.ReadBatchFromOffsetNotIncluding(logChan, wg, batchSize, offset)
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	return nil
 }

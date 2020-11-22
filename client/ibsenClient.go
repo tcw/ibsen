@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
+	"github.com/tcw/ibsen/errore"
 	"google.golang.org/grpc"
 	"io"
 	"log"
@@ -25,7 +26,8 @@ func Start(target string) IbsenClient {
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32),
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
-		log.Fatalf("did not connect: %v", err)
+		err := errore.WrapWithContext(err)
+		log.Fatalf(errore.SprintTrace(err))
 	}
 
 	client := grpcApi.NewIbsenClient(conn)
@@ -43,7 +45,8 @@ func (ic *IbsenClient) CreateTopic(topic string) bool {
 		Name: topic,
 	})
 	if err != nil {
-		log.Println(err)
+		err := errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
 	}
 	return create.Created
 }
@@ -58,7 +61,8 @@ func (ic *IbsenClient) Status() {
 	writer := bufio.NewWriter(stdout)
 	_, err = writer.Write(prettyJSON)
 	if err != nil {
-		log.Println(err)
+		err := errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
 	}
 }
 
@@ -69,7 +73,8 @@ func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) 
 		BatchSize: batchSize,
 	})
 	if err != nil {
-		log.Println(err)
+		err := errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
 		return
 	}
 	stdout := os.Stdout
@@ -80,7 +85,8 @@ func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) 
 		if err == io.EOF {
 			err := writer.Flush()
 			if err != nil {
-				log.Fatal("flush error")
+				err := errore.WrapWithContext(err)
+				log.Fatal(errore.SprintTrace(err))
 			}
 			return
 		}
@@ -89,7 +95,8 @@ func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) 
 			line := fmt.Sprintf("%d\t%s\n", entry.Offset, string(entry.Content))
 			_, err = writer.Write([]byte(line))
 			if err != nil {
-				log.Println(err)
+				err := errore.WrapWithContext(err)
+				log.Println(errore.SprintTrace(err))
 				return
 			}
 		}
@@ -99,7 +106,8 @@ func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) 
 func (ic *IbsenClient) WriteTopic(topic string) {
 	r, err := ic.Client.WriteStream(ic.Ctx)
 	if err != nil {
-		log.Fatalf("could not greet: %v", err)
+		err := errore.WrapWithContext(err)
+		log.Fatalf(errore.SprintTrace(err))
 	}
 
 	stdin := os.Stdin
@@ -112,7 +120,8 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 	var limitCounter = 0
 	for scanner.Scan() {
 		if err := scanner.Err(); err != nil {
-			fmt.Println(err)
+			err := errore.WrapWithContext(err)
+			fmt.Println(errore.SprintTrace(err))
 		}
 		text := scanner.Text()
 		if text == "" {
@@ -127,31 +136,34 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 			}
 			err = r.Send(&mes)
 			if err != nil {
-				fmt.Println(err)
+				err := errore.WrapWithContext(err)
+				fmt.Println(errore.SprintTrace(err))
 			}
 			limitCounter = 0
 			tmpBytes = make([][]byte, 0)
 		}
 	}
 	if limitCounter > 0 {
-		fmt.Println("bytes", tmpBytes)
 		mes := grpcApi.InputEntries{
 			Topic:   topic,
 			Entries: tmpBytes,
 		}
 		err = r.Send(&mes)
 		if err != nil {
-			fmt.Println(err)
+			err := errore.WrapWithContext(err)
+			fmt.Println(errore.SprintTrace(err))
 		}
 	}
 	err = r.CloseSend()
 	if err != nil {
-		fmt.Println(err)
+		err := errore.WrapWithContext(err)
+		fmt.Println(errore.SprintTrace(err))
 	}
 
 	recv, err := r.Recv()
 	if err != nil {
-		fmt.Println(err)
+		err := errore.WrapWithContext(err)
+		fmt.Println(errore.SprintTrace(err))
 	}
 	milliWithFracion := float64(recv.TimeNano) / float64(time.Millisecond)
 	fmt.Printf("Wrote %d entriesInBatch in %f ms\n", recv.Wrote, milliWithFracion)
@@ -160,7 +172,8 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 func (ic *IbsenClient) BenchWrite(topic string, entryByteSize int, entriesInBatch int, batches int) {
 	r, err := ic.Client.WriteStream(ic.Ctx)
 	if err != nil {
-		log.Fatalf("could not greet: %v", err)
+		err := errore.WrapWithContext(err)
+		log.Fatalf(errore.SprintTrace(err))
 	}
 
 	var bytes = make([][]byte, 0)
@@ -179,12 +192,14 @@ func (ic *IbsenClient) BenchWrite(topic string, entryByteSize int, entriesInBatc
 
 	err = r.CloseSend()
 	if err != nil {
-		fmt.Println(err)
+		err := errore.WrapWithContext(err)
+		fmt.Println(errore.SprintTrace(err))
 		return
 	}
 	recv, err := r.Recv()
 	if err != nil {
-		fmt.Println(err)
+		err := errore.WrapWithContext(err)
+		fmt.Println(errore.SprintTrace(err))
 	}
 	milliWithFracion := float64(recv.TimeNano) / float64(time.Millisecond)
 	fmt.Printf("Entries written:\t%d\nEntry size:\t\t%d Bytes\nBatches:\t\t%d\nEntires each batch:\t%d\nTime:\t\t\t%f ms\n", recv.Wrote, entryByteSize, batches, entriesInBatch, milliWithFracion)
@@ -198,7 +213,8 @@ func (ic *IbsenClient) BenchRead(topic string, offset uint64, batchSize uint32) 
 		BatchSize: batchSize,
 	})
 	if err != nil {
-		log.Println(err)
+		err := errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
 		return
 	}
 	start := time.Now()
@@ -211,7 +227,8 @@ func (ic *IbsenClient) BenchRead(topic string, offset uint64, batchSize uint32) 
 		if err == io.EOF {
 			err := writer.Flush()
 			if err != nil {
-				log.Fatal("flush error")
+				err := errore.WrapWithContext(err)
+				log.Fatal(errore.SprintTrace(err))
 			}
 			break
 		}

@@ -1,6 +1,7 @@
 package ext4
 
 import (
+	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
 	"sync"
 )
@@ -22,17 +23,17 @@ func NewTopicRead(manager *BlockManager) (*TopicReader, error) {
 func (t *TopicReader) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, offset uint64) error {
 	currentBlockIndex, err := t.blockManager.findBlockIndexContainingOffset(offset)
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	blockIndex := int(currentBlockIndex)
 	blockFileName, err := t.blockManager.GetBlockFilename(blockIndex)
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	file, err := OpenFileForRead(blockFileName)
 	err = ReadLogBlockFromOffsetNotIncluding(file, logChan, wg, batchSize, offset)
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	return t.readBatchFromBlock(logChan, wg, batchSize, blockIndex+1)
 }
@@ -43,7 +44,7 @@ func (t *TopicReader) readBatchFromBlock(c chan logStorage.LogEntryBatch, wg *sy
 	for {
 		filename, err := t.blockManager.GetBlockFilename(blockIndex)
 		if err != nil && err != EndOfBlock {
-			return err
+			return errore.WrapWithContext(err)
 		}
 		if err == EndOfBlock && entriesBytes != nil {
 			wg.Add(1)
@@ -55,12 +56,15 @@ func (t *TopicReader) readBatchFromBlock(c chan logStorage.LogEntryBatch, wg *sy
 		}
 		read, err := OpenFileForRead(filename)
 		if err != nil {
-			read.Close()
-			return err
+			errC := read.Close()
+			if errC != nil {
+				return errore.WrapWithContext(errC)
+			}
+			return errore.WrapWithContext(err)
 		}
 		partial, hasSent, err := ReadLogInBatchesToEnd(read, entriesBytes, c, wg, batchSize)
 		if err != nil {
-			return err
+			return errore.WrapWithContext(err)
 		}
 		if hasSent {
 			entriesBytes = nil
@@ -68,7 +72,7 @@ func (t *TopicReader) readBatchFromBlock(c chan logStorage.LogEntryBatch, wg *sy
 		entriesBytes = append(entriesBytes, partial.Entries...)
 		err = read.Close()
 		if err != nil {
-			return err
+			return errore.WrapWithContext(err)
 		}
 		blockIndex = blockIndex + 1
 	}

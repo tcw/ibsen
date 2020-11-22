@@ -3,6 +3,7 @@ package ext4
 import (
 	"errors"
 	"fmt"
+	"github.com/tcw/ibsen/errore"
 	"hash/crc32"
 	"os"
 	"sort"
@@ -17,7 +18,7 @@ type BlockManager struct {
 	currentBlockSize int64
 }
 
-var EndOfBlock = errors.New("End of block")
+var EndOfBlock = errors.New("end of block")
 
 var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
@@ -38,7 +39,7 @@ func (br *BlockManager) updateBlocksFromStorage() error {
 	var blocks []int64
 	files, err := listFilesInDirectory(br.rootPath + separator + br.topic)
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	if len(files) == 0 {
 		br.blocks = []int64{0}
@@ -55,13 +56,13 @@ func (br *BlockManager) updateBlocksFromStorage() error {
 
 	blockSize, err := blockSize(br.CurrentBlockFileName())
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	br.currentBlockSize = blockSize
 
 	offset, err := findLastOffset(br.CurrentBlockFileName())
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	br.currentOffset = uint64(offset)
 
@@ -122,7 +123,7 @@ func (br *BlockManager) CurrentBlockFileName() string {
 func (br *BlockManager) findBlockIndexContainingOffset(offset uint64) (uint, error) {
 
 	if len(br.blocks) == 0 {
-		return 0, errors.New("no block")
+		return 0, errore.NewWithContext("No blocks")
 	}
 	if len(br.blocks) == 1 {
 		return 0, nil
@@ -146,15 +147,15 @@ func (br *BlockManager) WriteBatch(logEntry *[][]byte) error {
 	}
 	writer, err := OpenFileForWrite(br.CurrentBlockFileName())
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	err = br.writeBatchToFile(writer, logEntry)
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	err = writer.Close()
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	return nil
 }
@@ -168,7 +169,7 @@ func (br *BlockManager) writeBatchToFile(file *os.File, logEntry *[][]byte) erro
 	n, err := file.Write(bytes)
 	br.incrementCurrentByteSize(n)
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	return nil
 }

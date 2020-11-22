@@ -3,6 +3,7 @@ package client
 import (
 	"encoding/base64"
 	"fmt"
+	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
 	"github.com/tcw/ibsen/logStorage/ext4"
 	"log"
@@ -17,23 +18,27 @@ func ReadTopic(readPath string, toBase64 bool) {
 	if readPath != "" {
 		abs, err := filepath.Abs(readPath)
 		if err != nil {
-			log.Println("Absolute:", abs)
+			err := errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
 		}
 		f, err := os.OpenFile(abs,
 			os.O_RDONLY, 0400)
 		if err != nil {
-			log.Println(err)
+			err := errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
 			return
 		}
 		stat, err := f.Stat()
 		if err != nil {
-			log.Println(err)
+			err := errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
 			return
 		}
 		isDir := stat.IsDir()
 		err = f.Close()
 		if err != nil {
-			log.Println(err)
+			err := errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
 			return
 		}
 		if isDir {
@@ -44,11 +49,13 @@ func ReadTopic(readPath string, toBase64 bool) {
 			manger, err := ext4.NewBlockManger(dir, topic, 1024*1024*10)
 			reader, err := ext4.NewTopicRead(&manger)
 			if err != nil {
-				log.Fatal(err)
+				err := errore.WrapWithContext(err)
+				log.Fatal(errore.SprintTrace(err))
 			}
 			err = reader.ReadBatchFromOffsetNotIncluding(logChannel, &wg, 1000, 0)
 			if err != nil {
-				log.Fatal(err)
+				err := errore.WrapWithContext(err)
+				log.Fatal(errore.SprintTrace(err))
 			}
 			wg.Wait()
 		} else {
@@ -58,11 +65,13 @@ func ReadTopic(readPath string, toBase64 bool) {
 			openFile, err := ext4.OpenFileForRead(readPath)
 			err = ext4.ReadLogBlockFromOffsetNotIncluding(openFile, logChannel, &wg, 1000, 0)
 			if err != nil {
-				log.Println(err)
+				err := errore.WrapWithContext(err)
+				log.Fatal(errore.SprintTrace(err))
 			}
 			err = openFile.Close()
 			if err != nil {
-				println(err)
+				err := errore.WrapWithContext(err)
+				log.Println(errore.SprintTrace(err))
 			}
 			wg.Wait()
 		}

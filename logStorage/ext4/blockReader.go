@@ -2,10 +2,10 @@ package ext4
 
 import (
 	"bufio"
-	"errors"
+	"fmt"
+	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
 	"io"
-	"log"
 	"os"
 	"sync"
 )
@@ -15,7 +15,7 @@ func ReadLogBlockFromOffsetNotIncluding(file *os.File, logChan chan logStorage.L
 	if offset > 0 {
 		err := fastForwardToOffset(file, int64(offset))
 		if err != nil {
-			return err
+			return fmt.Errorf("fastForwardToOffset failed: %v", err)
 		}
 	}
 
@@ -33,6 +33,8 @@ func ReadLogBlockFromOffsetNotIncluding(file *os.File, logChan chan logStorage.L
 func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, logChan chan logStorage.LogEntryBatch,
 	wg *sync.WaitGroup, batchSize int) (logStorage.LogEntryBatch, bool, error) {
 
+	const method = "ReadLogInBatchesToEnd"
+
 	hasSent := false
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
@@ -49,51 +51,31 @@ func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, lo
 			entryBatch = nil
 		}
 
-		n, err := io.ReadFull(reader, bytes)
+		_, err := io.ReadFull(reader, bytes)
 		if err == io.EOF {
 			return logStorage.LogEntryBatch{Entries: entryBatch}, hasSent, nil
 		}
 		if err != nil {
-			log.Println(err)
-			return logStorage.LogEntryBatch{}, false, err
-		}
-		if n != 8 {
-			log.Println("offset incorrect")
-			return logStorage.LogEntryBatch{}, false, errors.New("offset incorrect")
+			return logStorage.LogEntryBatch{}, false, errore.WrapWithContext(err)
 		}
 		offset := int64(fromLittleEndian(bytes))
 
-		n, err = io.ReadFull(reader, checksum)
+		_, err = io.ReadFull(reader, checksum)
 		if err != nil {
-			log.Println(err)
-			return logStorage.LogEntryBatch{}, false, err
-		}
-		if n != 4 {
-			log.Println("crc size incorrect")
-			return logStorage.LogEntryBatch{}, false, errors.New("crc size incorrect")
+			return logStorage.LogEntryBatch{}, false, errore.WrapWithContext(err)
 		}
 		checksumValue := fromLittleEndianToUint32(bytes)
 
-		n, err = io.ReadFull(reader, bytes)
+		_, err = io.ReadFull(reader, bytes)
 		if err != nil {
-			log.Println(err)
-			return logStorage.LogEntryBatch{}, false, err
-		}
-		if n != 8 {
-			log.Println("entry size incorrect")
-			return logStorage.LogEntryBatch{}, false, errors.New("entry size incorrect")
+			return logStorage.LogEntryBatch{}, false, errore.WrapWithContext(err)
 		}
 		size := fromLittleEndian(bytes)
 
 		entry := make([]byte, size)
-		n, err = io.ReadFull(reader, entry)
+		_, err = io.ReadFull(reader, entry)
 		if err != nil {
-			log.Println(err)
-			return logStorage.LogEntryBatch{}, false, err
-		}
-		if n != int(size) {
-			log.Println("entry incorrect")
-			return logStorage.LogEntryBatch{}, false, errors.New("entry incorrect")
+			return logStorage.LogEntryBatch{}, false, errore.WrapWithContext(err)
 		}
 		entryBatch = append(entryBatch, logStorage.LogEntry{
 			Offset:   uint64(offset),

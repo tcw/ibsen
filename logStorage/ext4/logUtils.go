@@ -2,11 +2,10 @@ package ext4
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
+	"github.com/tcw/ibsen/errore"
 	"io"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,7 +18,7 @@ func OpenFileForReadWrite(fileName string) (*os.File, error) {
 	f, err := os.OpenFile(fileName,
 		os.O_CREATE|os.O_RDWR, 0700)
 	if err != nil {
-		return nil, err
+		return nil, errore.WrapWithContext(err)
 	}
 	return f, nil
 }
@@ -28,37 +27,36 @@ func OpenFileForWrite(fileName string) (*os.File, error) {
 	f, err := os.OpenFile(fileName,
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
-		return nil, err
+		return nil, errore.WrapWithContext(err)
 	}
 	return f, nil
 }
 
 func OpenFileForRead(fileName string) (*os.File, error) {
 	if !doesFileExist(fileName) {
-		return nil, errors.New(fmt.Sprintf("File %s does not exist", fileName))
+		return nil, errore.NewWithContext(fmt.Sprintf("File %s does not exist", fileName))
 	}
 	f, err := os.OpenFile(fileName,
 		os.O_RDONLY, 0400)
 	if err != nil {
-		log.Println(err)
-		return nil, err
+		return nil, errore.WrapWithContext(err)
 	}
 	return f, nil
 }
 
-func blockSize(filename string) (int64, error) {
-	if !doesFileExist(filename) {
-		return 0, nil
+func blockSize(fileName string) (int64, error) {
+	if !doesFileExist(fileName) {
+		return 0, errore.NewWithContext(fmt.Sprintf("File %s does not exist", fileName))
 	}
-	file, err := os.OpenFile(filename,
+	file, err := os.OpenFile(fileName,
 		os.O_RDONLY, 0400)
 	fi, err := file.Stat()
 	if err != nil {
-		return 0, err
+		return 0, errore.WrapWithContext(err)
 	}
 	err = file.Close()
 	if err != nil {
-		return 0, err
+		return 0, errore.WrapWithContext(err)
 	}
 	return fi.Size(), nil
 }
@@ -81,7 +79,7 @@ func listUnhiddenDirectories(root string) ([]string, error) {
 	var files []string
 	fileInfo, err := ioutil.ReadDir(root)
 	if err != nil {
-		return files, err
+		return files, errore.WrapWithContext(err)
 	}
 	for _, file := range fileInfo {
 		if file.IsDir() {
@@ -99,51 +97,36 @@ func findLastOffset(blockFileName string) (int64, error) {
 	var offsetFound int64 = -1
 	file, err := OpenFileForRead(blockFileName)
 	if err != nil {
-		return 0, err
+		return 0, errore.WrapWithContext(err)
 	}
 	defer file.Close()
 	for {
 		bytes := make([]byte, 8)
 		checksum := make([]byte, 4)
-		n, err := io.ReadFull(file, bytes)
+		_, err := io.ReadFull(file, bytes)
 		if err == io.EOF {
 			return offsetFound, nil
 		}
 
 		if err == io.EOF {
-			return offsetFound, errors.New("no offset in block")
+			return offsetFound, errore.NewWithContext("no offset in block")
 		}
 		if err != nil {
-			return offsetFound, errors.New("error")
-		}
-		if n != 8 {
-			log.Println("offset incorrect")
-			return offsetFound, errors.New("offset incorrect")
+			return offsetFound, errore.WrapWithContext(err)
 		}
 		offsetFound = int64(fromLittleEndian(bytes))
-		n, err = io.ReadFull(file, checksum)
+		_, err = io.ReadFull(file, checksum)
 		if err != nil {
-			return offsetFound, errors.New("error")
+			return offsetFound, errore.WrapWithContext(err)
 		}
-		if n != 4 {
-			log.Println("byte size incorrect")
-			return offsetFound, errors.New("byte size incorrect")
-		}
-
-		n, err = io.ReadFull(file, bytes)
+		_, err = io.ReadFull(file, bytes)
 		if err != nil {
-			log.Println(err)
-			return offsetFound, err
-		}
-		if n != 8 {
-			log.Println("byte size incorrect")
-			return offsetFound, errors.New("byte size incorrect")
+			return offsetFound, errore.WrapWithContext(err)
 		}
 		size := fromLittleEndian(bytes)
 		_, err = file.Seek(int64(size), 1)
 		if err != nil {
-			println(err)
-			return offsetFound, err
+			return offsetFound, errore.WrapWithContext(err)
 		}
 	}
 }
@@ -156,35 +139,21 @@ func fastForwardToOffset(file *os.File, offset int64) error {
 		}
 		bytes := make([]byte, 8)
 		checksum := make([]byte, 4)
-		n, err := io.ReadFull(file, bytes)
+		_, err := io.ReadFull(file, bytes)
 		if err == io.EOF {
-			return errors.New("no offset in block")
+			return errore.NewWithContext("no offset in block")
 		}
 		if err != nil {
-			return errors.New("error")
-		}
-		if n != 8 {
-			log.Println("offset incorrect")
-			return errors.New("offset incorrect")
+			return errore.WrapWithContext(err)
 		}
 		offsetFound = int64(fromLittleEndian(bytes))
-		n, err = io.ReadFull(file, checksum)
+		_, err = io.ReadFull(file, checksum)
 		if err != nil {
-			return errors.New("error")
+			return errore.WrapWithContext(err)
 		}
-		if n != 4 {
-			log.Println("byte size incorrect")
-			return errors.New("byte size incorrect")
-		}
-
-		n, err = io.ReadFull(file, bytes)
+		_, err = io.ReadFull(file, bytes)
 		if err != nil {
-			log.Println(err)
-			return err
-		}
-		if n != 8 {
-			log.Println("byte size incorrect")
-			return errors.New("byte size incorrect")
+			return errore.WrapWithContext(err)
 		}
 		size := fromLittleEndian(bytes)
 		_, err = file.Seek(int64(size), 1)
@@ -204,7 +173,7 @@ func listFilesInDirectory(dir string) ([]string, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, errore.WrapWithContext(err)
 	}
 	if files == nil {
 		files = make([]string, 0)
@@ -223,7 +192,7 @@ func filesToBlocks(files []string) ([]int64, error) {
 			splitPath := strings.Split(splitFileName[0], separator)
 			parseUint, err := strconv.ParseInt(splitPath[len(splitPath)-1], 10, 64)
 			if err != nil {
-				return nil, err
+				return nil, errore.WrapWithContext(err)
 			}
 			blocks = append(blocks, parseUint)
 		}

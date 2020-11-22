@@ -1,6 +1,7 @@
 package ext4
 
 import (
+	"github.com/tcw/ibsen/errore"
 	"os"
 )
 
@@ -19,7 +20,7 @@ func NewTopicManager(rootPath string, maxBlockSize int64) (TopicManager, error) 
 	}
 	err := register.UpdateTopicsFromStorage()
 	if err != nil {
-		return TopicManager{}, err
+		return TopicManager{}, errore.WrapWithContext(err)
 	}
 	return register, nil
 }
@@ -27,12 +28,12 @@ func NewTopicManager(rootPath string, maxBlockSize int64) (TopicManager, error) 
 func (tr *TopicManager) UpdateTopicsFromStorage() error {
 	directories, err := listUnhiddenDirectories(tr.topicsRootPath)
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	for _, topic := range directories {
 		registry, err := NewBlockManger(tr.topicsRootPath, topic, tr.maxBlockSize)
 		if err != nil {
-			return err
+			return errore.WrapWithContext(err)
 		}
 		tr.topics[topic] = &registry
 	}
@@ -45,11 +46,11 @@ func (tr *TopicManager) CreateTopic(topic string) (bool, error) {
 	}
 	err := os.Mkdir(tr.topicsRootPath+separator+topic, 0777) //Todo: more restrictive
 	if err != nil {
-		return false, err
+		return false, errore.WrapWithContext(err)
 	}
 	registry, err := NewBlockManger(tr.topicsRootPath, topic, tr.maxBlockSize)
 	if err != nil {
-		return false, err
+		return false, errore.WrapWithContext(err)
 	}
 
 	tr.topics[topic] = &registry
@@ -65,7 +66,7 @@ func (tr *TopicManager) DropTopic(topic string) (bool, error) {
 	newLocation := tr.topicsRootPath + separator + "." + topic
 	err := os.Rename(oldLocation, newLocation)
 	if err != nil {
-		return false, err
+		return false, errore.WrapWithContext(err)
 	}
 	delete(tr.topics, topic)
 	return true, nil
