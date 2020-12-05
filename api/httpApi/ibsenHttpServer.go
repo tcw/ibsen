@@ -84,7 +84,7 @@ func (ibsen *IbsenHttpServer) writeEntry(w http.ResponseWriter, r *http.Request)
 func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 
-	logChan := make(chan logStorage.LogEntryBatch)
+	logChan := make(chan *logStorage.LogEntryBatch)
 	var wg sync.WaitGroup
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -141,7 +141,7 @@ func (ibsen *IbsenHttpServer) dropTopic(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func sendMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, w http.ResponseWriter, b64 bool) {
+func sendMessage(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, w http.ResponseWriter, b64 bool) {
 	for {
 		entry := <-logChan
 		entries := entry.Entries

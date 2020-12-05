@@ -9,7 +9,7 @@ import (
 	"sync"
 )
 
-func ReadLogBlockFromOffsetNotIncluding(file *os.File, logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, offset uint64) error {
+func ReadLogBlockFromOffsetNotIncluding(file *os.File, logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, offset uint64) error {
 
 	if offset > 0 {
 		err := fastForwardToOffset(file, int64(offset))
@@ -24,12 +24,12 @@ func ReadLogBlockFromOffsetNotIncluding(file *os.File, logChan chan logStorage.L
 	}
 	if partialBatch.Entries != nil {
 		wg.Add(1)
-		logChan <- logStorage.LogEntryBatch{Entries: partialBatch.Entries}
+		logChan <- &logStorage.LogEntryBatch{Entries: partialBatch.Entries}
 	}
 	return nil
 }
 
-func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, logChan chan logStorage.LogEntryBatch,
+func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, logChan chan *logStorage.LogEntryBatch,
 	wg *sync.WaitGroup, batchSize int) (logStorage.LogEntryBatch, bool, error) {
 
 	hasSent := false
@@ -43,7 +43,7 @@ func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, lo
 	for {
 		if entryBatch != nil && len(entryBatch)%batchSize == 0 {
 			wg.Add(1)
-			logChan <- logStorage.LogEntryBatch{Entries: entryBatch}
+			logChan <- &logStorage.LogEntryBatch{Entries: entryBatch}
 			hasSent = true
 			entryBatch = nil
 		}

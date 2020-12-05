@@ -20,7 +20,7 @@ func NewTopicRead(manager *BlockManager) (*TopicReader, error) {
 	}, nil
 }
 
-func (t *TopicReader) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, offset uint64) error {
+func (t *TopicReader) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, offset uint64) error {
 	currentBlockIndex, err := t.blockManager.findBlockIndexContainingOffset(offset)
 	if err != nil {
 		return errore.WrapWithContext(err)
@@ -38,7 +38,7 @@ func (t *TopicReader) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.Lo
 	return t.readBatchFromBlock(logChan, wg, batchSize, blockIndex+1)
 }
 
-func (t *TopicReader) readBatchFromBlock(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, block int) error {
+func (t *TopicReader) readBatchFromBlock(c chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, block int) error {
 	blockIndex := block
 	var entriesBytes []logStorage.LogEntry
 	for {
@@ -48,7 +48,7 @@ func (t *TopicReader) readBatchFromBlock(c chan logStorage.LogEntryBatch, wg *sy
 		}
 		if err == EndOfBlock && entriesBytes != nil {
 			wg.Add(1)
-			c <- logStorage.LogEntryBatch{Entries: entriesBytes}
+			c <- &logStorage.LogEntryBatch{Entries: entriesBytes}
 			return nil
 		}
 		if err == EndOfBlock {

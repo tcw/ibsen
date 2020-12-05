@@ -158,7 +158,7 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 }
 
 func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
-	logChan := make(chan logStorage.LogEntryBatch)
+	logChan := make(chan *logStorage.LogEntryBatch)
 	var wg sync.WaitGroup
 	go sendBatchMessage(logChan, &wg, outStream)
 
@@ -195,14 +195,14 @@ func (s server) Close() {
 	s.logStorage.Close()
 }
 
-func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadServer) {
+func sendBatchMessage(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadServer) {
 	for {
 		entryBatch := <-logChan
 		if entryBatch.Size() == 0 {
 			break
 		}
 		err := outStream.Send(&OutputEntries{
-			Entries: convert(&entryBatch),
+			Entries: convert(entryBatch),
 		})
 		if err != nil {
 			err = errore.WrapWithContext(err)

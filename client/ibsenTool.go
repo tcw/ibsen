@@ -43,7 +43,7 @@ func ReadTopic(readPath string, toBase64 bool) {
 		}
 		if isDir {
 			dir, topic := path.Split(abs)
-			logChannel := make(chan logStorage.LogEntryBatch)
+			logChannel := make(chan *logStorage.LogEntryBatch)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
 			manger, err := ext4.NewBlockManger(dir, topic, 1024*1024*10)
@@ -59,7 +59,7 @@ func ReadTopic(readPath string, toBase64 bool) {
 			}
 			wg.Wait()
 		} else {
-			logChannel := make(chan logStorage.LogEntryBatch)
+			logChannel := make(chan *logStorage.LogEntryBatch)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
 			openFile, err := ext4.OpenFileForRead(readPath)
@@ -78,7 +78,7 @@ func ReadTopic(readPath string, toBase64 bool) {
 	}
 }
 
-func writeToStdOut(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, toBase64 bool) {
+func writeToStdOut(c chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, toBase64 bool) {
 	const textLine = "%d\t%s\n"
 	for {
 		entry := <-c

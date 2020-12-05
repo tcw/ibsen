@@ -53,7 +53,7 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 	return len(*topicMessage.Message), nil
 }
 
-func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int, offset uint64) error {
+func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int, offset uint64) error {
 	read, err := NewTopicRead(e.topicRegister.topics[topic])
 	if err != nil {
 		return errore.WrapWithContext(err)

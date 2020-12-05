@@ -128,7 +128,7 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 		}
 	}
 
-	logChan := make(chan logStorage.LogEntryBatch)
+	logChan := make(chan *logStorage.LogEntryBatch)
 	var wg sync.WaitGroup
 
 	go func() {
@@ -187,7 +187,7 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 	if n == 0 {
 		t.Fail()
 	}
-	logChan := make(chan logStorage.LogEntryBatch)
+	logChan := make(chan *logStorage.LogEntryBatch)
 	var wg sync.WaitGroup
 
 	go func() {
