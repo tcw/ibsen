@@ -2,7 +2,6 @@ package ext4
 
 import (
 	"bufio"
-	"fmt"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
 	"io"
@@ -15,13 +14,13 @@ func ReadLogBlockFromOffsetNotIncluding(file *os.File, logChan chan logStorage.L
 	if offset > 0 {
 		err := fastForwardToOffset(file, int64(offset))
 		if err != nil {
-			return fmt.Errorf("fastForwardToOffset failed: %v", err)
+			return errore.WrapWithContext(err)
 		}
 	}
 
 	partialBatch, _, err := ReadLogInBatchesToEnd(file, nil, logChan, wg, batchSize)
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	if partialBatch.Entries != nil {
 		wg.Add(1)
@@ -32,8 +31,6 @@ func ReadLogBlockFromOffsetNotIncluding(file *os.File, logChan chan logStorage.L
 
 func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, logChan chan logStorage.LogEntryBatch,
 	wg *sync.WaitGroup, batchSize int) (logStorage.LogEntryBatch, bool, error) {
-
-	const method = "ReadLogInBatchesToEnd"
 
 	hasSent := false
 	reader := bufio.NewReader(file)

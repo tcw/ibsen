@@ -30,7 +30,7 @@ func NewBlockManger(rootPath string, topic string, maxBlockSize int64) (BlockMan
 	}
 	err := registry.updateBlocksFromStorage()
 	if err != nil {
-		return BlockManager{}, err
+		return BlockManager{}, errore.WrapWithContext(err)
 	}
 	return registry, nil
 }
