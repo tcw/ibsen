@@ -1,4 +1,4 @@
-package logStorage
+package storage
 
 import (
 	"github.com/spf13/afero"
@@ -19,7 +19,7 @@ func NewLogStorage(afs *afero.Afero, rootPath string, maxBlockSize int64) (LogSt
 }
 
 var _ LogStorage = LogStorageAfero{} // Verify that interface is implemented.
-//var _ logStorage.LogStorageAfero = (*LogStorageAfero{})(nil) // Verify that interface is implemented.
+//var _ storage.LogStorageAfero = (*LogStorageAfero{})(nil) // Verify that interface is implemented.
 
 func (e LogStorageAfero) Create(topic string) (bool, error) {
 	return e.topicRegister.CreateTopic(topic)

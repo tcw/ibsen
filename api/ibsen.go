@@ -8,7 +8,7 @@ import (
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/api/httpApi"
 	"github.com/tcw/ibsen/errore"
-	"github.com/tcw/ibsen/logStorage"
+	"github.com/tcw/ibsen/storage"
 	"log"
 	"net/http"
 	"os"
@@ -66,7 +66,7 @@ func (ibs *IbsenServer) Start() {
 	}
 	useCpuProfiling(ibs.CpuProfile)
 
-	storage, err := logStorage.NewLogStorage(ibs.Afs, ibs.DataPath, int64(ibs.MaxBlockSize)*1024*1024)
+	storage, err := storage.NewLogStorage(ibs.Afs, ibs.DataPath, int64(ibs.MaxBlockSize)*1024*1024)
 	if err != nil {
 		log.Println(errore.SprintTrace(err))
 		return
@@ -102,7 +102,7 @@ func useCpuProfiling(cpuProfile string) {
 	}
 }
 
-func (ibs *IbsenServer) startHTTPServer(storage logStorage.LogStorage) {
+func (ibs *IbsenServer) startHTTPServer(storage storage.LogStorage) {
 	ibsenHttpServer := httpApi.NewIbsenHttpServer(storage)
 	ibsenHttpServer.Port = uint16(ibs.Port)
 	log.Printf("Ibsen http/1.1 server started on port [%d]\n", ibsenHttpServer.Port)
@@ -110,7 +110,7 @@ func (ibs *IbsenServer) startHTTPServer(storage logStorage.LogStorage) {
 	httpServer = ibsenHttpServer.StartHttpServer()
 }
 
-func (ibs *IbsenServer) startGRPCServer(storage logStorage.LogStorage) {
+func (ibs *IbsenServer) startGRPCServer(storage storage.LogStorage) {
 	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage)
 	ibsenGrpcServer.Port = uint16(ibs.Port)
 	ibsenGrpcServer.Host = ibs.Host

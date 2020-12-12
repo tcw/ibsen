@@ -1,4 +1,4 @@
-package logStorage
+package storage
 
 import (
 	"bufio"

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/tcw/ibsen/errore"
-	"github.com/tcw/ibsen/logStorage"
+	"github.com/tcw/ibsen/storage"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -19,7 +19,7 @@ import (
 )
 
 type server struct {
-	logStorage logStorage.LogStorage
+	logStorage storage.LogStorage
 }
 
 type IbsenGrpcServer struct {
@@ -29,10 +29,10 @@ type IbsenGrpcServer struct {
 	KeyFile     string
 	UseTls      bool
 	IbsenServer *grpc.Server
-	Storage     logStorage.LogStorage
+	Storage     storage.LogStorage
 }
 
-func NewIbsenGrpcServer(storage logStorage.LogStorage) *IbsenGrpcServer {
+func NewIbsenGrpcServer(storage storage.LogStorage) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
 		Host:     "0.0.0.0",
 		Port:     50001,
@@ -101,7 +101,7 @@ func (s server) Drop(ctx context.Context, topic *Topic) (*DropStatus, error) {
 
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
 	start := time.Now()
-	n, err := s.logStorage.WriteBatch(&logStorage.TopicBatchMessage{
+	n, err := s.logStorage.WriteBatch(&storage.TopicBatchMessage{
 		Topic:   entries.Topic,
 		Message: entries.Entries,
 	})
@@ -134,7 +134,7 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 			log.Println(errore.SprintTrace(err))
 			return status.Error(codes.Unknown, "Error receiving writing streaming batch")
 		}
-		written, err := s.logStorage.WriteBatch(&logStorage.TopicBatchMessage{
+		written, err := s.logStorage.WriteBatch(&storage.TopicBatchMessage{
 			Topic:   in.Topic,
 			Message: in.Entries,
 		})
@@ -162,11 +162,11 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 }
 
 func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
-	logChan := make(chan *logStorage.LogEntryBatch)
+	logChan := make(chan *storage.LogEntryBatch)
 	var wg sync.WaitGroup
 	go sendBatchMessage(logChan, &wg, outStream)
 
-	err := s.logStorage.ReadBatchFromOffsetNotIncluding(logStorage.ReadBatchParam{
+	err := s.logStorage.ReadBatchFromOffsetNotIncluding(storage.ReadBatchParam{
 		LogChan:   logChan,
 		Wg:        &wg,
 		Topic:     readParams.Topic,
@@ -204,7 +204,7 @@ func (s server) Close() {
 	s.logStorage.Close()
 }
 
-func sendBatchMessage(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadServer) {
+func sendBatchMessage(logChan chan *storage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadServer) {
 	for {
 		entryBatch := <-logChan
 		if entryBatch.Size() == 0 {
@@ -222,7 +222,7 @@ func sendBatchMessage(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup
 	}
 }
 
-func convert(entryBatch *logStorage.LogEntryBatch) []*Entry {
+func convert(entryBatch *storage.LogEntryBatch) []*Entry {
 	entries := entryBatch.Entries
 	outEntries := make([]*Entry, len(entries))
 	for i, entry := range entries {

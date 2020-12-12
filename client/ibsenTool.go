@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
-	"github.com/tcw/ibsen/logStorage"
+	"github.com/tcw/ibsen/storage"
 	"log"
 	"os"
 	"path"
@@ -43,16 +43,16 @@ func ReadTopic(afs *afero.Afero, readPath string, toBase64 bool) {
 		}
 		if isDir {
 			dir, topic := path.Split(abs)
-			logChannel := make(chan *logStorage.LogEntryBatch)
+			logChannel := make(chan *storage.LogEntryBatch)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
-			manger, err := logStorage.NewBlockManger(afs, dir, topic, 1024*1024*10)
-			reader, err := logStorage.NewTopicRead(afs, &manger)
+			manger, err := storage.NewBlockManger(afs, dir, topic, 1024*1024*10)
+			reader, err := storage.NewTopicRead(afs, &manger)
 			if err != nil {
 				err := errore.WrapWithContext(err)
 				log.Fatal(errore.SprintTrace(err))
 			}
-			err = reader.ReadBatchFromOffsetNotIncluding(logStorage.ReadBatchParam{
+			err = reader.ReadBatchFromOffsetNotIncluding(storage.ReadBatchParam{
 				LogChan:   logChannel,
 				Wg:        &wg,
 				Topic:     "",
@@ -65,11 +65,11 @@ func ReadTopic(afs *afero.Afero, readPath string, toBase64 bool) {
 			}
 			wg.Wait()
 		} else {
-			logChannel := make(chan *logStorage.LogEntryBatch)
+			logChannel := make(chan *storage.LogEntryBatch)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
-			openFile, err := logStorage.OpenFileForRead(afs, readPath)
-			err = logStorage.ReadLogBlockFromOffsetNotIncluding(openFile, logStorage.ReadBatchParam{
+			openFile, err := storage.OpenFileForRead(afs, readPath)
+			err = storage.ReadLogBlockFromOffsetNotIncluding(openFile, storage.ReadBatchParam{
 				LogChan:   logChannel,
 				Wg:        &wg,
 				Topic:     "",
@@ -90,7 +90,7 @@ func ReadTopic(afs *afero.Afero, readPath string, toBase64 bool) {
 	}
 }
 
-func writeToStdOut(c chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, toBase64 bool) {
+func writeToStdOut(c chan *storage.LogEntryBatch, wg *sync.WaitGroup, toBase64 bool) {
 	const textLine = "%d\t%s\n"
 	for {
 		entry := <-c
