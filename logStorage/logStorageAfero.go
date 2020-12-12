@@ -1,40 +1,39 @@
-package ext4
+package logStorage
 
 import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
-	"github.com/tcw/ibsen/logStorage"
 )
 
-type LogStorage struct {
+type LogStorageAfero struct {
 	afs           *afero.Afero
 	topicRegister *TopicManager
 }
 
-func NewLogStorage(afs *afero.Afero, rootPath string, maxBlockSize int64) (LogStorage, error) {
+func NewLogStorage(afs *afero.Afero, rootPath string, maxBlockSize int64) (LogStorageAfero, error) {
 	topics, err := NewTopicManager(afs, rootPath, maxBlockSize)
 	if err != nil {
-		return LogStorage{}, errore.WrapWithContext(err)
+		return LogStorageAfero{}, errore.WrapWithContext(err)
 	}
-	return LogStorage{afs, &topics}, nil
+	return LogStorageAfero{afs, &topics}, nil
 }
 
-var _ logStorage.LogStorage = LogStorage{} // Verify that interface is implemented.
-//var _ logStorage.LogStorage = (*LogStorage{})(nil) // Verify that interface is implemented.
+var _ LogStorage = LogStorageAfero{} // Verify that interface is implemented.
+//var _ logStorage.LogStorageAfero = (*LogStorageAfero{})(nil) // Verify that interface is implemented.
 
-func (e LogStorage) Create(topic string) (bool, error) {
+func (e LogStorageAfero) Create(topic string) (bool, error) {
 	return e.topicRegister.CreateTopic(topic)
 }
 
-func (e LogStorage) Drop(topic string) (bool, error) {
+func (e LogStorageAfero) Drop(topic string) (bool, error) {
 	return e.topicRegister.DropTopic(topic)
 }
 
-func (e LogStorage) Status() []*logStorage.TopicStatusMessage {
+func (e LogStorageAfero) Status() []*TopicStatusMessage {
 	topics := e.topicRegister.topics
-	messages := make([]*logStorage.TopicStatusMessage, 0)
+	messages := make([]*TopicStatusMessage, 0)
 	for _, manager := range topics {
-		messages = append(messages, &logStorage.TopicStatusMessage{
+		messages = append(messages, &TopicStatusMessage{
 			Topic:        manager.topic,
 			Blocks:       len(manager.blocks),
 			Offset:       int64(manager.currentOffset),
@@ -45,7 +44,7 @@ func (e LogStorage) Status() []*logStorage.TopicStatusMessage {
 	return messages
 }
 
-func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int, error) {
+func (e LogStorageAfero) WriteBatch(topicMessage *TopicBatchMessage) (int, error) {
 	registry := e.topicRegister.topics[topicMessage.Topic]
 	err := registry.WriteBatch(topicMessage.Message)
 	if err != nil {
@@ -54,7 +53,7 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 	return len(topicMessage.Message), nil
 }
 
-func (e LogStorage) ReadBatchFromOffsetNotIncluding(readBatchParam logStorage.ReadBatchParam) error {
+func (e LogStorageAfero) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchParam) error {
 	read, err := NewTopicRead(e.afs, e.topicRegister.topics[readBatchParam.Topic])
 	if err != nil {
 		return errore.WrapWithContext(err)
@@ -66,6 +65,6 @@ func (e LogStorage) ReadBatchFromOffsetNotIncluding(readBatchParam logStorage.Re
 	return nil
 }
 
-func (e LogStorage) Close() {
+func (e LogStorageAfero) Close() {
 	//close
 }

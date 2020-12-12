@@ -1,4 +1,4 @@
-package ext4
+package logStorage
 
 import (
 	"github.com/spf13/afero"
@@ -47,8 +47,8 @@ func (bw BlockWriterParams) writeBatchToFile(file afero.File) (uint64, int64, er
 }
 
 func createByteEntry(entry []byte, currentOffset uint64) []byte {
-	offset := offsetToLittleEndian(currentOffset)
-	byteSize := byteSizeToLittleEndian(len(entry))
+	offset := uint64ToLittleEndian(currentOffset)
+	byteSize := intToLittleEndian(len(entry))
 	checksum := crc32.Checksum(offset, crc32q)
 	checksum = crc32.Update(checksum, crc32q, byteSize)
 	checksum = crc32.Update(checksum, crc32q, entry)

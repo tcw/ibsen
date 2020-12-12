@@ -1,9 +1,8 @@
-package ext4
+package logStorage
 
 import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
-	"github.com/tcw/ibsen/logStorage"
 )
 
 type TopicReader struct {
@@ -22,7 +21,7 @@ func NewTopicRead(afs *afero.Afero, manager *BlockManager) (*TopicReader, error)
 	}, nil
 }
 
-func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam logStorage.ReadBatchParam) error {
+func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchParam) error {
 	currentBlockIndex, err := t.blockManager.findBlockIndexContainingOffset(readBatchParam.Offset)
 	if err != nil {
 		return errore.WrapWithContext(err)
@@ -40,9 +39,9 @@ func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam logStorage.
 	return t.readBatchFromBlock(readBatchParam, blockIndex+1)
 }
 
-func (t *TopicReader) readBatchFromBlock(readBatchParam logStorage.ReadBatchParam, block int) error {
+func (t *TopicReader) readBatchFromBlock(readBatchParam ReadBatchParam, block int) error {
 	blockIndex := block
-	var entriesBytes []logStorage.LogEntry
+	var entriesBytes []LogEntry
 	for {
 		filename, err := t.blockManager.GetBlockFilename(blockIndex)
 		if err != nil && err != EndOfBlock {
@@ -50,7 +49,7 @@ func (t *TopicReader) readBatchFromBlock(readBatchParam logStorage.ReadBatchPara
 		}
 		if err == EndOfBlock && entriesBytes != nil {
 			readBatchParam.Wg.Add(1)
-			readBatchParam.LogChan <- &logStorage.LogEntryBatch{Entries: entriesBytes}
+			readBatchParam.LogChan <- &LogEntryBatch{Entries: entriesBytes}
 			return nil
 		}
 		if err == EndOfBlock {

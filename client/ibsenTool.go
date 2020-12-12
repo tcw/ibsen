@@ -6,7 +6,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
-	"github.com/tcw/ibsen/logStorage/ext4"
 	"log"
 	"os"
 	"path"
@@ -47,8 +46,8 @@ func ReadTopic(afs *afero.Afero, readPath string, toBase64 bool) {
 			logChannel := make(chan *logStorage.LogEntryBatch)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
-			manger, err := ext4.NewBlockManger(afs, dir, topic, 1024*1024*10)
-			reader, err := ext4.NewTopicRead(afs, &manger)
+			manger, err := logStorage.NewBlockManger(afs, dir, topic, 1024*1024*10)
+			reader, err := logStorage.NewTopicRead(afs, &manger)
 			if err != nil {
 				err := errore.WrapWithContext(err)
 				log.Fatal(errore.SprintTrace(err))
@@ -69,8 +68,8 @@ func ReadTopic(afs *afero.Afero, readPath string, toBase64 bool) {
 			logChannel := make(chan *logStorage.LogEntryBatch)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
-			openFile, err := ext4.OpenFileForRead(afs, readPath)
-			err = ext4.ReadLogBlockFromOffsetNotIncluding(openFile, logStorage.ReadBatchParam{
+			openFile, err := logStorage.OpenFileForRead(afs, readPath)
+			err = logStorage.ReadLogBlockFromOffsetNotIncluding(openFile, logStorage.ReadBatchParam{
 				LogChan:   logChannel,
 				Wg:        &wg,
 				Topic:     "",

@@ -1,4 +1,4 @@
-package ext4
+package logStorage
 
 import (
 	"errors"
@@ -39,7 +39,7 @@ func NewBlockManger(afs *afero.Afero, rootPath string, topic string, maxBlockSiz
 
 func (br *BlockManager) updateBlocksFromStorage() error {
 	var blocks []int64
-	files, err := listFilesInDirectory(br.asf, br.rootPath+separator+br.topic)
+	files, err := listFilesInDirectoryRecursively(br.asf, br.rootPath+separator+br.topic)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}

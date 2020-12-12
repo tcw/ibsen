@@ -1,50 +1,89 @@
-package ext4
+package logStorage
 
 import (
-	"encoding/binary"
+	"bufio"
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
-const separator = string(os.PathSeparator) //Todo: how in Afero
+func ReadLogBlockFromOffsetNotIncluding(file afero.File, readBatchParam ReadBatchParam) error {
 
-func OpenFileForReadWrite(afs *afero.Afero, fileName string) (afero.File, error) {
-	f, err := afs.OpenFile(fileName,
-		os.O_CREATE|os.O_RDWR, 0700)
-	if err != nil {
-		return nil, errore.WrapWithContext(err)
+	if readBatchParam.Offset > 0 {
+		err := fastForwardToOffset(file, int64(readBatchParam.Offset))
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
 	}
-	return f, nil
+
+	partialBatch, _, err := ReadLogInBatchesToEnd(file, nil, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	if partialBatch.Entries != nil {
+		readBatchParam.Wg.Add(1)
+		readBatchParam.LogChan <- &LogEntryBatch{Entries: partialBatch.Entries}
+	}
+	return nil
 }
 
-func OpenFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
-	f, err := afs.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return nil, errore.WrapWithContext(err)
-	}
-	return f, nil
-}
+func ReadLogInBatchesToEnd(file afero.File, partialBatch []LogEntry, logChan chan *LogEntryBatch,
+	wg *sync.WaitGroup, batchSize int) (LogEntryBatch, bool, error) {
 
-func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
-	exists, err := afs.Exists(fileName)
-	if err != nil {
-		return nil, errore.NewWithContext(fmt.Sprintf("Failes checking if file %s exist", fileName))
+	hasSent := false
+	reader := bufio.NewReader(file)
+	bytes := make([]byte, 8)
+	checksum := make([]byte, 4)
+	var entryBatch []LogEntry
+	if partialBatch != nil {
+		entryBatch = append(entryBatch, partialBatch...)
 	}
-	if !exists {
-		return nil, errore.NewWithContext(fmt.Sprintf("File %s does not exist", fileName))
+	for {
+		if entryBatch != nil && len(entryBatch)%batchSize == 0 {
+			wg.Add(1)
+			logChan <- &LogEntryBatch{Entries: entryBatch}
+			hasSent = true
+			entryBatch = nil
+		}
+
+		_, err := io.ReadFull(reader, bytes)
+		if err == io.EOF {
+			return LogEntryBatch{Entries: entryBatch}, hasSent, nil
+		}
+		if err != nil {
+			return LogEntryBatch{}, false, errore.WrapWithContext(err)
+		}
+		offset := int64(littleEndianToUint64(bytes))
+
+		_, err = io.ReadFull(reader, checksum)
+		if err != nil {
+			return LogEntryBatch{}, false, errore.WrapWithContext(err)
+		}
+		checksumValue := littleEndianToUint32(bytes)
+
+		_, err = io.ReadFull(reader, bytes)
+		if err != nil {
+			return LogEntryBatch{}, false, errore.WrapWithContext(err)
+		}
+		size := littleEndianToUint64(bytes)
+
+		entry := make([]byte, size)
+		_, err = io.ReadFull(reader, entry)
+		if err != nil {
+			return LogEntryBatch{}, false, errore.WrapWithContext(err)
+		}
+		entryBatch = append(entryBatch, LogEntry{
+			Offset:   uint64(offset),
+			Crc:      checksumValue,
+			ByteSize: int(size),
+			Entry:    entry,
+		})
 	}
-	f, err := afs.OpenFile(fileName,
-		os.O_RDONLY, 0400)
-	if err != nil {
-		return nil, errore.WrapWithContext(err)
-	}
-	return f, nil
 }
 
 func blockSize(asf *afero.Afero, fileName string) (int64, error) {
@@ -73,24 +112,6 @@ func createBlockFileName(blockName int64) string {
 	return fmt.Sprintf("%020d.log", blockName)
 }
 
-func listUnhiddenDirectories(afs *afero.Afero, root string) ([]string, error) {
-	var files []string
-	fileInfo, err := afs.ReadDir(root)
-	if err != nil {
-		return files, errore.WrapWithContext(err)
-	}
-	for _, file := range fileInfo {
-		if file.IsDir() {
-			_, name := filepath.Split(file.Name())
-			isHidden := strings.HasPrefix(name, ".")
-			if !isHidden {
-				files = append(files, file.Name())
-			}
-		}
-	}
-	return files, nil
-}
-
 func findLastOffset(afs *afero.Afero, blockFileName string) (int64, error) {
 	var offsetFound int64 = -1
 	file, err := OpenFileForRead(afs, blockFileName)
@@ -112,7 +133,7 @@ func findLastOffset(afs *afero.Afero, blockFileName string) (int64, error) {
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
 		}
-		offsetFound = int64(fromLittleEndian(bytes))
+		offsetFound = int64(littleEndianToUint64(bytes))
 		_, err = io.ReadFull(file, checksum)
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
@@ -121,7 +142,7 @@ func findLastOffset(afs *afero.Afero, blockFileName string) (int64, error) {
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
 		}
-		size := fromLittleEndian(bytes)
+		size := littleEndianToUint64(bytes)
 		_, err = file.Seek(int64(size), 1)
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
@@ -144,7 +165,7 @@ func fastForwardToOffset(file afero.File, offset int64) error {
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		offsetFound = int64(fromLittleEndian(bytes))
+		offsetFound = int64(littleEndianToUint64(bytes))
 		_, err = io.ReadFull(file, checksum)
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -153,30 +174,13 @@ func fastForwardToOffset(file afero.File, offset int64) error {
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		size := fromLittleEndian(bytes)
+		size := littleEndianToUint64(bytes)
 		_, err = (file).Seek(int64(size), 1)
 		if err != nil {
 			println(err)
 			return err
 		}
 	}
-}
-
-func listFilesInDirectory(afs *afero.Afero, dir string) ([]string, error) {
-	var files []string
-	err := afs.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if path != dir {
-			files = append(files, path)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, errore.WrapWithContext(err)
-	}
-	if files == nil {
-		files = make([]string, 0)
-	}
-	return files, nil
 }
 
 func filesToBlocks(files []string) ([]int64, error) {
@@ -196,30 +200,4 @@ func filesToBlocks(files []string) ([]int64, error) {
 		}
 	}
 	return blocks, nil
-}
-
-func offsetToLittleEndian(offset uint64) []byte {
-	bytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(bytes, offset)
-	return bytes
-}
-
-func byteSizeToLittleEndian(number int) []byte {
-	bytes := make([]byte, 8)
-	binary.LittleEndian.PutUint32(bytes, uint32(number))
-	return bytes
-}
-
-func uint32ToLittleEndian(number uint32) []byte {
-	bytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(bytes, number)
-	return bytes
-}
-
-func fromLittleEndian(bytes []byte) uint64 {
-	return binary.LittleEndian.Uint64(bytes)
-}
-
-func fromLittleEndianToUint32(bytes []byte) uint32 {
-	return binary.LittleEndian.Uint32(bytes)
 }

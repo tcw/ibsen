@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/afero"
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/api/httpApi"
+	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
-	"github.com/tcw/ibsen/logStorage/ext4"
 	"log"
 	"net/http"
 	"os"
@@ -42,6 +42,8 @@ var ibsenFiglet = `
 var fProfile *os.File
 
 type IbsenServer struct {
+	InMemory     bool
+	Afs          *afero.Afero
 	DataPath     string
 	UseHttp      bool
 	Host         string
@@ -53,16 +55,20 @@ type IbsenServer struct {
 
 func (ibs *IbsenServer) Start() {
 	go ibs.initSignals()
-	waitForWriteLock(ibs.DataPath)
-
+	if ibs.InMemory {
+		err := ibs.Afs.Mkdir(ibs.DataPath, 0777)
+		if err != nil {
+			log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+		}
+		log.Println("Running in-memory!")
+	} else {
+		waitForWriteLock(ibs.DataPath)
+	}
 	useCpuProfiling(ibs.CpuProfile)
 
-	var fs = afero.NewOsFs()
-	afs := &afero.Afero{Fs: fs}
-
-	storage, err := ext4.NewLogStorage(afs, ibs.DataPath, int64(ibs.MaxBlockSize)*1024*1024)
+	storage, err := logStorage.NewLogStorage(ibs.Afs, ibs.DataPath, int64(ibs.MaxBlockSize)*1024*1024)
 	if err != nil {
-		log.Println(err)
+		log.Println(errore.SprintTrace(err))
 		return
 	}
 	if ibs.UseHttp {
@@ -70,7 +76,9 @@ func (ibs *IbsenServer) Start() {
 	} else {
 		ibs.startGRPCServer(storage)
 	}
-	<-doneCleanup
+	if !ibs.InMemory {
+		<-doneCleanup
+	}
 }
 
 func waitForWriteLock(dataPath string) {
@@ -108,10 +116,9 @@ func (ibs *IbsenServer) startGRPCServer(storage logStorage.LogStorage) {
 	ibsenGrpcServer.Host = ibs.Host
 	log.Printf("Ibsen grpc server started on [%s:%d]\n", ibsenGrpcServer.Host, ibsenGrpcServer.Port)
 	fmt.Print(ibsenFiglet)
-	var err2 error
-	err2 = ibsenGrpcServer.StartGRPC()
-	if err2 != nil {
-		log.Fatal(err2)
+	err := ibsenGrpcServer.StartGRPC()
+	if err != nil {
+		log.Fatal(errore.SprintTrace(err))
 	}
 }
 

@@ -1,9 +1,8 @@
-package ext4
+package logStorage
 
 import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
-	"github.com/tcw/ibsen/logStorage"
 	"os"
 	"sync"
 	"testing"
@@ -125,7 +124,7 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 	}
 
 	for i := 0; i < 50000; i++ {
-		n, err := storage.WriteBatch(&logStorage.TopicBatchMessage{
+		n, err := storage.WriteBatch(&TopicBatchMessage{
 			Topic: testTopic1,
 			Message: [][]byte{
 				[]byte("hello1"),
@@ -140,11 +139,11 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 		}
 	}
 
-	logChan := make(chan *logStorage.LogEntryBatch)
+	logChan := make(chan *LogEntryBatch)
 	var wg sync.WaitGroup
 
 	go func() {
-		err = storage.ReadBatchFromOffsetNotIncluding(logStorage.ReadBatchParam{
+		err = storage.ReadBatchFromOffsetNotIncluding(ReadBatchParam{
 			LogChan:   logChan,
 			Wg:        &wg,
 			Topic:     testTopic1,
@@ -180,7 +179,7 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 	if !create {
 		t.Failed()
 	}
-	n, err := storage.WriteBatch(&logStorage.TopicBatchMessage{
+	n, err := storage.WriteBatch(&TopicBatchMessage{
 		Topic: testTopic1,
 		Message: [][]byte{
 			[]byte("hello1"),
@@ -193,7 +192,7 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 	if n == 0 {
 		t.Fail()
 	}
-	n, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
+	n, err = storage.WriteBatch(&TopicBatchMessage{
 		Topic: testTopic1,
 		Message: [][]byte{
 			[]byte("hello3"),
@@ -206,11 +205,11 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 	if n == 0 {
 		t.Fail()
 	}
-	logChan := make(chan *logStorage.LogEntryBatch)
+	logChan := make(chan *LogEntryBatch)
 	var wg sync.WaitGroup
 
 	go func() {
-		err = storage.ReadBatchFromOffsetNotIncluding(logStorage.ReadBatchParam{
+		err = storage.ReadBatchFromOffsetNotIncluding(ReadBatchParam{
 			LogChan:   logChan,
 			Wg:        &wg,
 			Topic:     testTopic1,
@@ -248,14 +247,14 @@ func TestLogStorage_Corruption(t *testing.T) {
 		t.Fail()
 	}
 	var bytes = []byte("hello1hello1hello1hello1hello1hello1hello1hello1")
-	_, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
+	_, err = storage.WriteBatch(&TopicBatchMessage{
 		Topic:   testTopic1,
 		Message: [][]byte{bytes},
 	})
 	if err != nil {
 		t.Error(err)
 	}
-	_, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
+	_, err = storage.WriteBatch(&TopicBatchMessage{
 		Topic:   testTopic1,
 		Message: [][]byte{bytes},
 	})

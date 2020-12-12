@@ -14,6 +14,7 @@ import (
 )
 
 var (
+	inMemory       bool
 	useHttp        bool
 	host           string
 	serverPort     int
@@ -43,7 +44,17 @@ var (
 			if err2 != nil {
 				log.Fatal(err2)
 			}
+			var afs *afero.Afero
+			if inMemory {
+				var fs = afero.NewMemMapFs()
+				afs = &afero.Afero{Fs: fs}
+			} else {
+				var fs = afero.NewOsFs()
+				afs = &afero.Afero{Fs: fs}
+			}
 			ibsenServer := api.IbsenServer{
+				InMemory:     inMemory,
+				Afs:          afs,
 				DataPath:     absolutePath,
 				UseHttp:      useHttp,
 				Host:         host,
@@ -213,6 +224,7 @@ func init() {
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "config file")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "config file")
+	cmdServer.Flags().BoolVarP(&inMemory, "inMemory", "i", false, "run in-memory only")
 	cmdCat.Flags().BoolVarP(&toBase64, "base64", "b", false, "Convert messages to base64")
 	cmdClient.Flags().IntVarP(&entries, "entries", "e", entries, "Number of entries in each batch")
 	cmdBenchWrite.Flags().IntVarP(&entryByteSize, "entryByteSize", "s", 100, "Test data entry size in bytes")

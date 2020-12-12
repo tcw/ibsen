@@ -1,4 +1,4 @@
-package ext4
+package logStorage
 
 import (
 	"github.com/spf13/afero"
@@ -29,7 +29,7 @@ func NewTopicManager(afs *afero.Afero, rootPath string, maxBlockSize int64) (Top
 }
 
 func (tr *TopicManager) UpdateTopicsFromStorage() error {
-	directories, err := listUnhiddenDirectories(tr.afs, tr.topicsRootPath)
+	directories, err := listUnhiddenDirectoriesInDirectory(tr.afs, tr.topicsRootPath)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
