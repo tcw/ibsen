@@ -1,19 +1,22 @@
 package ext4
 
 import (
+	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
-	"os"
 )
 
 type TopicManager struct {
+	afs            *afero.Afero
 	topicsRootPath string
 	topics         map[string]*BlockManager
 	maxBlockSize   int64
 }
 
-func NewTopicManager(rootPath string, maxBlockSize int64) (TopicManager, error) {
+func NewTopicManager(afs *afero.Afero, rootPath string, maxBlockSize int64) (TopicManager, error) {
+
 	var topics = map[string]*BlockManager{}
 	register := TopicManager{
+		afs:            afs,
 		maxBlockSize:   maxBlockSize,
 		topicsRootPath: rootPath,
 		topics:         topics,
@@ -26,12 +29,12 @@ func NewTopicManager(rootPath string, maxBlockSize int64) (TopicManager, error) 
 }
 
 func (tr *TopicManager) UpdateTopicsFromStorage() error {
-	directories, err := listUnhiddenDirectories(tr.topicsRootPath)
+	directories, err := listUnhiddenDirectories(tr.afs, tr.topicsRootPath)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
 	for _, topic := range directories {
-		registry, err := NewBlockManger(tr.topicsRootPath, topic, tr.maxBlockSize)
+		registry, err := NewBlockManger(tr.afs, tr.topicsRootPath, topic, tr.maxBlockSize)
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
@@ -44,11 +47,11 @@ func (tr *TopicManager) CreateTopic(topic string) (bool, error) {
 	if tr.doesTopicExist(topic) {
 		return false, nil
 	}
-	err := os.Mkdir(tr.topicsRootPath+separator+topic, 0777) //Todo: more restrictive
+	err := tr.afs.Mkdir(tr.topicsRootPath+separator+topic, 0777) //Todo: more restrictive
 	if err != nil {
 		return false, errore.WrapWithContext(err)
 	}
-	registry, err := NewBlockManger(tr.topicsRootPath, topic, tr.maxBlockSize)
+	registry, err := NewBlockManger(tr.afs, tr.topicsRootPath, topic, tr.maxBlockSize)
 	if err != nil {
 		return false, errore.WrapWithContext(err)
 	}
@@ -64,7 +67,7 @@ func (tr *TopicManager) DropTopic(topic string) (bool, error) {
 	}
 	oldLocation := tr.topicsRootPath + separator + topic
 	newLocation := tr.topicsRootPath + separator + "." + topic
-	err := os.Rename(oldLocation, newLocation)
+	err := tr.afs.Rename(oldLocation, newLocation)
 	if err != nil {
 		return false, errore.WrapWithContext(err)
 	}

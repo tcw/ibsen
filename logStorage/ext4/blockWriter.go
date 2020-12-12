@@ -1,12 +1,13 @@
 package ext4
 
 import (
+	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"hash/crc32"
-	"os"
 )
 
 type BlockWriterParams struct {
+	Afs       *afero.Afero
 	Filename  string
 	LogEntry  [][]byte
 	offset    uint64
@@ -14,11 +15,11 @@ type BlockWriterParams struct {
 }
 
 func (bw BlockWriterParams) WriteBatch() (uint64, int64, error) {
-	writer, err := OpenFileForWrite(bw.Filename)
+	writer, err := OpenFileForWrite(bw.Afs, bw.Filename)
 	if err != nil {
 		return bw.offset, bw.blockSize, errore.WrapWithContext(err)
 	}
-	offset, blockSize, err := writeBatchToFile(writer, bw.LogEntry, bw.offset, bw.blockSize)
+	offset, blockSize, err := bw.writeBatchToFile(writer)
 	if err != nil {
 		return offset, blockSize, errore.WrapWithContext(err)
 	}
@@ -29,11 +30,11 @@ func (bw BlockWriterParams) WriteBatch() (uint64, int64, error) {
 	return offset, blockSize, nil
 }
 
-func writeBatchToFile(file *os.File, logEntry [][]byte, currentOffset uint64, currentBlockSize int64) (uint64, int64, error) {
+func (bw BlockWriterParams) writeBatchToFile(file afero.File) (uint64, int64, error) {
 	var bytes []byte
-	offset := currentOffset
-	size := currentBlockSize
-	for _, entry := range logEntry {
+	offset := bw.offset
+	size := bw.blockSize
+	for _, entry := range bw.LogEntry {
 		offset = offset + 1
 		bytes = append(bytes, createByteEntry(entry, offset)...)
 	}

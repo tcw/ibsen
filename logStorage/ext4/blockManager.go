@@ -3,12 +3,14 @@ package ext4
 import (
 	"errors"
 	"fmt"
+	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"hash/crc32"
 	"sort"
 )
 
 type BlockManager struct {
+	asf              *afero.Afero
 	rootPath         string
 	topic            string
 	blocks           []int64
@@ -21,8 +23,9 @@ var EndOfBlock = errors.New("end of block")
 
 var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
-func NewBlockManger(rootPath string, topic string, maxBlockSize int64) (BlockManager, error) {
+func NewBlockManger(afs *afero.Afero, rootPath string, topic string, maxBlockSize int64) (BlockManager, error) {
 	registry := BlockManager{
+		asf:          afs,
 		rootPath:     rootPath,
 		topic:        topic,
 		maxBlockSize: maxBlockSize,
@@ -36,7 +39,7 @@ func NewBlockManger(rootPath string, topic string, maxBlockSize int64) (BlockMan
 
 func (br *BlockManager) updateBlocksFromStorage() error {
 	var blocks []int64
-	files, err := listFilesInDirectory(br.rootPath + separator + br.topic)
+	files, err := listFilesInDirectory(br.asf, br.rootPath+separator+br.topic)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -53,13 +56,13 @@ func (br *BlockManager) updateBlocksFromStorage() error {
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
 	br.blocks = blocks
 
-	blockSize, err := blockSize(br.CurrentBlockFileName())
+	blockSize, err := blockSize(br.asf, br.CurrentBlockFileName())
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
 	br.currentBlockSize = blockSize
 
-	offset, err := findLastOffset(br.CurrentBlockFileName())
+	offset, err := findLastOffset(br.asf, br.CurrentBlockFileName())
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -145,6 +148,7 @@ func (br *BlockManager) WriteBatch(logEntry [][]byte) error {
 		br.createNewBlock()
 	}
 	writer := BlockWriterParams{
+		Afs:       br.asf,
 		Filename:  br.CurrentBlockFileName(),
 		LogEntry:  logEntry,
 		offset:    br.currentOffset,

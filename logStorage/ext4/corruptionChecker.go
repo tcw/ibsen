@@ -2,21 +2,21 @@ package ext4
 
 import (
 	"fmt"
+	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"hash/crc32"
 	"io"
-	"os"
 	"sort"
 	"strings"
 )
 
-func performCorruptionCheck(rootPath string) error {
-	topics, err := listUnhiddenDirectories(rootPath)
+func performCorruptionCheck(afs *afero.Afero, rootPath string) error {
+	topics, err := listUnhiddenDirectories(afs, rootPath)
 	if err != nil {
 		return err
 	}
 	for _, v := range topics {
-		filesInDirectory, err := listFilesInDirectory(rootPath + separator + v)
+		filesInDirectory, err := listFilesInDirectory(afs, rootPath+separator+v)
 		if err != nil {
 			return err
 		}
@@ -27,13 +27,13 @@ func performCorruptionCheck(rootPath string) error {
 		sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
 		lastBlock := blocks[len(blocks)-1]
 		blockFileName := createBlockFileName(lastBlock)
-		file, err := OpenFileForRead(blockFileName)
+		file, err := OpenFileForRead(afs, blockFileName)
 		if err != nil {
 			return err
 		}
 		safePoint, err := checkForCorruption(file)
 		if err != nil {
-			err := correctFile(file.Name(), safePoint)
+			err := correctFile(afs, file.Name(), safePoint)
 			if err != nil {
 				return errore.WrapWithContext(err)
 			}
@@ -42,19 +42,19 @@ func performCorruptionCheck(rootPath string) error {
 	return nil
 }
 
-func correctFile(filename string, safePoint int) error {
+func correctFile(afs *afero.Afero, filename string, safePoint int) error {
 	orgFileName := filename
 	corruptFile := strings.Replace(filename, ".log", ".corrupt", -1)
-	err := os.Rename(filename, corruptFile)
+	err := afs.Rename(filename, corruptFile)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	file, err := OpenFileForRead(corruptFile)
+	file, err := OpenFileForRead(afs, corruptFile)
 	defer file.Close()
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	correctedFile, err := OpenFileForWrite(orgFileName)
+	correctedFile, err := OpenFileForWrite(afs, orgFileName)
 	defer correctedFile.Sync()
 	defer correctedFile.Close()
 	if err != nil {
@@ -86,7 +86,7 @@ func correctFile(filename string, safePoint int) error {
 	}
 }
 
-func checkForCorruption(file *os.File) (int, error) {
+func checkForCorruption(file afero.File) (int, error) {
 	var currentOffset int64 = -1
 	var lastSafePoint int = 0
 	for {

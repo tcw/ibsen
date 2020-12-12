@@ -1,8 +1,9 @@
 package ext4
 
 import (
+	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
-	"io/ioutil"
 	"os"
 	"sync"
 	"testing"
@@ -12,8 +13,13 @@ const oneMB = 1024 * 1024 * 1
 const testTopic1 = "testTopic1"
 const testTopic2 = "testTopic2"
 
-func createTestDir(t *testing.T) string {
-	testDir, err := ioutil.TempDir("", "ibsenTest")
+func newAfero() *afero.Afero {
+	var fs = afero.NewMemMapFs()
+	return &afero.Afero{Fs: fs}
+}
+
+func createTestDir(t *testing.T, afs *afero.Afero) string {
+	testDir, err := afs.TempDir("", "ibsenTest")
 	t.Log("created test dir: ", testDir)
 	if err != nil {
 		t.Error(err)
@@ -22,9 +28,11 @@ func createTestDir(t *testing.T) string {
 }
 
 func TestLogStorage_Create(t *testing.T) {
-	dir := createTestDir(t)
-	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
+	defer afs.Fs.RemoveAll(dir)
+
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
@@ -38,9 +46,11 @@ func TestLogStorage_Create(t *testing.T) {
 }
 
 func TestLogStorage_Drop(t *testing.T) {
-	dir := createTestDir(t)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
@@ -58,8 +68,8 @@ func TestLogStorage_Drop(t *testing.T) {
 	if !drop {
 		t.Fail()
 	}
-	directory := doesTopicExist(dir, "."+testTopic1)
-	if !directory {
+	exists, _ := afs.Exists("." + testTopic1)
+	if exists {
 		t.Error("Topic has not been moved to . file")
 		t.Fail()
 	}
@@ -67,9 +77,10 @@ func TestLogStorage_Drop(t *testing.T) {
 
 //Todo: create real status
 func TestLogStorage_ListTopics(t *testing.T) {
-	dir := createTestDir(t)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
@@ -98,9 +109,10 @@ func TestLogStorage_ListTopics(t *testing.T) {
 }
 
 func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
-	dir := createTestDir(t)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
@@ -154,9 +166,10 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 }
 
 func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
-	dir := createTestDir(t)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
@@ -220,9 +233,10 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 }
 
 func TestLogStorage_Corruption(t *testing.T) {
-	dir := createTestDir(t)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
@@ -250,7 +264,7 @@ func TestLogStorage_Corruption(t *testing.T) {
 	}
 	topics := storage.topicRegister.topics
 	blockFileName := topics[testTopic1].CurrentBlockFileName()
-	file, err := OpenFileForReadWrite(blockFileName)
+	file, err := OpenFileForReadWrite(afs, blockFileName)
 	corruption, err := checkForCorruption(file)
 	if err != nil {
 		t.Error(err, corruption)
@@ -262,17 +276,17 @@ func TestLogStorage_Corruption(t *testing.T) {
 	}
 	file.Sync()
 	file.Close()
-	file, err = OpenFileForReadWrite(blockFileName)
+	file, err = OpenFileForReadWrite(afs, blockFileName)
 	corruption, err = checkForCorruption(file)
 	if err == nil {
 		t.Error("Did not detect corruption")
 	}
 	file.Close()
-	err = correctFile(blockFileName, corruption)
+	err = correctFile(afs, blockFileName, corruption)
 	if err != nil {
-		t.Error(err)
+		t.Error(errore.SprintTrace(err))
 	}
-	file, err = OpenFileForReadWrite(blockFileName)
+	file, err = OpenFileForReadWrite(afs, blockFileName)
 	corruption, err = checkForCorruption(file)
 	if err != nil {
 		t.Error(err, corruption)

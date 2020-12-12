@@ -1,18 +1,21 @@
 package ext4
 
 import (
+	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
 )
 
 type TopicReader struct {
+	afs               *afero.Afero
 	blockManager      *BlockManager
 	currentOffset     uint64
 	currentBlockIndex uint
 }
 
-func NewTopicRead(manager *BlockManager) (*TopicReader, error) {
+func NewTopicRead(afs *afero.Afero, manager *BlockManager) (*TopicReader, error) {
 	return &TopicReader{
+		afs:               afs,
 		blockManager:      manager,
 		currentOffset:     0,
 		currentBlockIndex: 0,
@@ -29,7 +32,7 @@ func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam logStorage.
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	file, err := OpenFileForRead(blockFileName)
+	file, err := OpenFileForRead(t.afs, blockFileName)
 	err = ReadLogBlockFromOffsetNotIncluding(file, readBatchParam)
 	if err != nil {
 		return errore.WrapWithContext(err)
@@ -53,7 +56,7 @@ func (t *TopicReader) readBatchFromBlock(readBatchParam logStorage.ReadBatchPara
 		if err == EndOfBlock {
 			return nil
 		}
-		read, err := OpenFileForRead(filename)
+		read, err := OpenFileForRead(t.afs, filename)
 		if err != nil {
 			errC := read.Close()
 			if errC != nil {

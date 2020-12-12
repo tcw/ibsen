@@ -2,14 +2,14 @@ package ext4
 
 import (
 	"bufio"
+	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
 	"io"
-	"os"
 	"sync"
 )
 
-func ReadLogBlockFromOffsetNotIncluding(file *os.File, readBatchParam logStorage.ReadBatchParam) error {
+func ReadLogBlockFromOffsetNotIncluding(file afero.File, readBatchParam logStorage.ReadBatchParam) error {
 
 	if readBatchParam.Offset > 0 {
 		err := fastForwardToOffset(file, int64(readBatchParam.Offset))
@@ -29,7 +29,7 @@ func ReadLogBlockFromOffsetNotIncluding(file *os.File, readBatchParam logStorage
 	return nil
 }
 
-func ReadLogInBatchesToEnd(file *os.File, partialBatch []logStorage.LogEntry, logChan chan *logStorage.LogEntryBatch,
+func ReadLogInBatchesToEnd(file afero.File, partialBatch []logStorage.LogEntry, logChan chan *logStorage.LogEntryBatch,
 	wg *sync.WaitGroup, batchSize int) (logStorage.LogEntryBatch, bool, error) {
 
 	hasSent := false

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/spf13/afero"
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/api/httpApi"
 	"github.com/tcw/ibsen/logStorage"
@@ -56,7 +57,10 @@ func (ibs *IbsenServer) Start() {
 
 	useCpuProfiling(ibs.CpuProfile)
 
-	storage, err := ext4.NewLogStorage(ibs.DataPath, int64(ibs.MaxBlockSize)*1024*1024)
+	var fs = afero.NewOsFs()
+	afs := &afero.Afero{Fs: fs}
+
+	storage, err := ext4.NewLogStorage(afs, ibs.DataPath, int64(ibs.MaxBlockSize)*1024*1024)
 	if err != nil {
 		log.Println(err)
 		return

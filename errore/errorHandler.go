@@ -39,7 +39,7 @@ func SprintTrace(err error) string {
 	builder := strings.Builder{}
 	trace := Trace(err)
 	for _, line := range trace {
-		builder.Write([]byte(line))
+		builder.Write([]byte(line + "\n"))
 	}
 	return builder.String()
 }

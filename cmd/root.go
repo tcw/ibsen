@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/tcw/ibsen/api"
 	"github.com/tcw/ibsen/client"
@@ -164,7 +165,9 @@ var (
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			client.ReadTopic(args[0], toBase64)
+			var fs = afero.NewOsFs()
+			afs := &afero.Afero{Fs: fs}
+			client.ReadTopic(afs, args[0], toBase64)
 		},
 	}
 

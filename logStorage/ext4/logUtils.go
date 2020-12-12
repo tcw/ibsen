@@ -3,19 +3,19 @@ package ext4
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
 
-const separator = string(os.PathSeparator)
+const separator = string(os.PathSeparator) //Todo: how in Afero
 
-func OpenFileForReadWrite(fileName string) (*os.File, error) {
-	f, err := os.OpenFile(fileName,
+func OpenFileForReadWrite(afs *afero.Afero, fileName string) (afero.File, error) {
+	f, err := afs.OpenFile(fileName,
 		os.O_CREATE|os.O_RDWR, 0700)
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
@@ -23,20 +23,23 @@ func OpenFileForReadWrite(fileName string) (*os.File, error) {
 	return f, nil
 }
 
-func OpenFileForWrite(fileName string) (*os.File, error) {
-	f, err := os.OpenFile(fileName,
-		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+func OpenFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
+	f, err := afs.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
 	return f, nil
 }
 
-func OpenFileForRead(fileName string) (*os.File, error) {
-	if !doesFileExist(fileName) {
+func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
+	exists, err := afs.Exists(fileName)
+	if err != nil {
+		return nil, errore.NewWithContext(fmt.Sprintf("Failes checking if file %s exist", fileName))
+	}
+	if !exists {
 		return nil, errore.NewWithContext(fmt.Sprintf("File %s does not exist", fileName))
 	}
-	f, err := os.OpenFile(fileName,
+	f, err := afs.OpenFile(fileName,
 		os.O_RDONLY, 0400)
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
@@ -44,11 +47,16 @@ func OpenFileForRead(fileName string) (*os.File, error) {
 	return f, nil
 }
 
-func blockSize(fileName string) (int64, error) {
-	if !doesFileExist(fileName) {
+func blockSize(asf *afero.Afero, fileName string) (int64, error) {
+	exists, err := asf.Exists(fileName)
+	if err != nil {
+		return 0, errore.NewWithContext(fmt.Sprintf("Failes checking if file %s exist", fileName))
+	}
+	if !exists {
 		return 0, errore.NewWithContext(fmt.Sprintf("File %s does not exist", fileName))
 	}
-	file, err := os.OpenFile(fileName,
+
+	file, err := asf.OpenFile(fileName,
 		os.O_RDONLY, 0400)
 	fi, err := file.Stat()
 	if err != nil {
@@ -65,19 +73,9 @@ func createBlockFileName(blockName int64) string {
 	return fmt.Sprintf("%020d.log", blockName)
 }
 
-func doesTopicExist(rootPath string, topicName string) bool {
-	_, err := os.Stat(rootPath + separator + topicName)
-	return !os.IsNotExist(err)
-}
-
-func doesFileExist(path string) bool {
-	_, err := os.Stat(path)
-	return !os.IsNotExist(err)
-}
-
-func listUnhiddenDirectories(root string) ([]string, error) {
+func listUnhiddenDirectories(afs *afero.Afero, root string) ([]string, error) {
 	var files []string
-	fileInfo, err := ioutil.ReadDir(root)
+	fileInfo, err := afs.ReadDir(root)
 	if err != nil {
 		return files, errore.WrapWithContext(err)
 	}
@@ -93,9 +91,9 @@ func listUnhiddenDirectories(root string) ([]string, error) {
 	return files, nil
 }
 
-func findLastOffset(blockFileName string) (int64, error) {
+func findLastOffset(afs *afero.Afero, blockFileName string) (int64, error) {
 	var offsetFound int64 = -1
-	file, err := OpenFileForRead(blockFileName)
+	file, err := OpenFileForRead(afs, blockFileName)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
@@ -131,7 +129,7 @@ func findLastOffset(blockFileName string) (int64, error) {
 	}
 }
 
-func fastForwardToOffset(file *os.File, offset int64) error {
+func fastForwardToOffset(file afero.File, offset int64) error {
 	var offsetFound int64 = -1
 	for {
 		if offsetFound == offset {
@@ -156,7 +154,7 @@ func fastForwardToOffset(file *os.File, offset int64) error {
 			return errore.WrapWithContext(err)
 		}
 		size := fromLittleEndian(bytes)
-		_, err = file.Seek(int64(size), 1)
+		_, err = (file).Seek(int64(size), 1)
 		if err != nil {
 			println(err)
 			return err
@@ -164,9 +162,9 @@ func fastForwardToOffset(file *os.File, offset int64) error {
 	}
 }
 
-func listFilesInDirectory(dir string) ([]string, error) {
+func listFilesInDirectory(afs *afero.Afero, dir string) ([]string, error) {
 	var files []string
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	err := afs.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if path != dir {
 			files = append(files, path)
 		}

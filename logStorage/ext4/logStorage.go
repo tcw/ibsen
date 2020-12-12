@@ -1,20 +1,22 @@
 package ext4
 
 import (
+	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
 )
 
 type LogStorage struct {
+	afs           *afero.Afero
 	topicRegister *TopicManager
 }
 
-func NewLogStorage(rootPath string, maxBlockSize int64) (LogStorage, error) {
-	topics, err := NewTopicManager(rootPath, maxBlockSize)
+func NewLogStorage(afs *afero.Afero, rootPath string, maxBlockSize int64) (LogStorage, error) {
+	topics, err := NewTopicManager(afs, rootPath, maxBlockSize)
 	if err != nil {
 		return LogStorage{}, errore.WrapWithContext(err)
 	}
-	return LogStorage{&topics}, nil
+	return LogStorage{afs, &topics}, nil
 }
 
 var _ logStorage.LogStorage = LogStorage{} // Verify that interface is implemented.
@@ -53,7 +55,7 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 }
 
 func (e LogStorage) ReadBatchFromOffsetNotIncluding(readBatchParam logStorage.ReadBatchParam) error {
-	read, err := NewTopicRead(e.topicRegister.topics[readBatchParam.Topic])
+	read, err := NewTopicRead(e.afs, e.topicRegister.topics[readBatchParam.Topic])
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
