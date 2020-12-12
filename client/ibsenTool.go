@@ -52,7 +52,13 @@ func ReadTopic(readPath string, toBase64 bool) {
 				err := errore.WrapWithContext(err)
 				log.Fatal(errore.SprintTrace(err))
 			}
-			err = reader.ReadBatchFromOffsetNotIncluding(logChannel, &wg, 1000, 0)
+			err = reader.ReadBatchFromOffsetNotIncluding(logStorage.ReadBatchParam{
+				LogChan:   logChannel,
+				Wg:        &wg,
+				Topic:     "",
+				BatchSize: 1000,
+				Offset:    0,
+			})
 			if err != nil {
 				err := errore.WrapWithContext(err)
 				log.Fatal(errore.SprintTrace(err))
@@ -63,7 +69,13 @@ func ReadTopic(readPath string, toBase64 bool) {
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
 			openFile, err := ext4.OpenFileForRead(readPath)
-			err = ext4.ReadLogBlockFromOffsetNotIncluding(openFile, logChannel, &wg, 1000, 0)
+			err = ext4.ReadLogBlockFromOffsetNotIncluding(openFile, logStorage.ReadBatchParam{
+				LogChan:   logChannel,
+				Wg:        &wg,
+				Topic:     "",
+				BatchSize: 1000,
+				Offset:    0,
+			})
 			if err != nil {
 				err := errore.WrapWithContext(err)
 				log.Fatal(errore.SprintTrace(err))

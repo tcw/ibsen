@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/tcw/ibsen/errore"
 	"hash/crc32"
-	"os"
 	"sort"
 )
 
@@ -141,48 +140,21 @@ func (br *BlockManager) createBlockFileName(offset int64) string {
 	return fmt.Sprintf("%020d.log", offset)
 }
 
-func (br *BlockManager) WriteBatch(logEntry *[][]byte) error {
+func (br *BlockManager) WriteBatch(logEntry [][]byte) error {
 	if br.currentBlockSize > br.maxBlockSize {
 		br.createNewBlock()
 	}
-	writer, err := OpenFileForWrite(br.CurrentBlockFileName())
-	if err != nil {
-		return errore.WrapWithContext(err)
+	writer := BlockWriterParams{
+		Filename:  br.CurrentBlockFileName(),
+		LogEntry:  logEntry,
+		offset:    br.currentOffset,
+		blockSize: br.currentBlockSize,
 	}
-	err = br.writeBatchToFile(writer, logEntry)
-	if err != nil {
-		return errore.WrapWithContext(err)
-	}
-	err = writer.Close()
-	if err != nil {
-		return errore.WrapWithContext(err)
-	}
-	return nil
-}
-
-func (br *BlockManager) writeBatchToFile(file *os.File, logEntry *[][]byte) error {
-	var bytes []byte
-	for _, v := range *logEntry {
-		br.incrementCurrentOffset(1)
-		bytes = append(bytes, createByteEntry(br, v)...)
-	}
-	n, err := file.Write(bytes)
-	br.incrementCurrentByteSize(n)
+	offset, blockSize, err := writer.WriteBatch()
+	br.currentOffset = offset
+	br.currentBlockSize = blockSize
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
 	return nil
-}
-
-func createByteEntry(br *BlockManager, entry []byte) []byte {
-	offset := offsetToLittleEndian(br.currentOffset)
-	byteSize := byteSizeToLittleEndian(len(entry))
-	checksum := crc32.Checksum(offset, crc32q)
-	checksum = crc32.Update(checksum, crc32q, byteSize)
-	checksum = crc32.Update(checksum, crc32q, entry)
-	check := uint32ToLittleEndian(checksum)
-	bytes := append(offset, check...)
-	bytes = append(bytes, byteSize...)
-	bytes = append(bytes, entry...)
-	return bytes
 }

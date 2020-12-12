@@ -6,7 +6,9 @@ import (
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/testdata"
 	"io"
 	"log"
@@ -78,6 +80,7 @@ func (s server) Create(ctx context.Context, topic *Topic) (*CreateStatus, error)
 	if err != nil {
 		err = errore.WrapWithContext(err)
 		log.Println(errore.SprintTrace(err))
+		return nil, status.Errorf(codes.Internal, "Failed while creating topic %s", topic.Name)
 	}
 	return &CreateStatus{
 		Created: create,
@@ -89,6 +92,7 @@ func (s server) Drop(ctx context.Context, topic *Topic) (*DropStatus, error) {
 	if err != nil {
 		err = errore.WrapWithContext(err)
 		log.Println(errore.SprintTrace(err))
+		return nil, status.Errorf(codes.Internal, "Failed while dropping topic %s", topic.Name)
 	}
 	return &DropStatus{
 		Dropped: dropped,
@@ -99,12 +103,12 @@ func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus,
 	start := time.Now()
 	n, err := s.logStorage.WriteBatch(&logStorage.TopicBatchMessage{
 		Topic:   entries.Topic,
-		Message: &entries.Entries,
+		Message: entries.Entries,
 	})
 	if err != nil {
 		err = errore.WrapWithContext(err)
 		log.Println(errore.SprintTrace(err))
-		return nil, err
+		return nil, status.Error(codes.Unknown, "Error writing batch")
 	}
 
 	stop := time.Now()
@@ -128,19 +132,19 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 		if err != nil {
 			err = errore.WrapWithContext(err)
 			log.Println(errore.SprintTrace(err))
-			return err
+			return status.Error(codes.Unknown, "Error receiving writing streaming batch")
 		}
 		written, err := s.logStorage.WriteBatch(&logStorage.TopicBatchMessage{
 			Topic:   in.Topic,
-			Message: &in.Entries,
+			Message: in.Entries,
 		})
-		sum = sum + 1
-		entriesWritten = entriesWritten + int64(written)
 		if err != nil {
 			err = errore.WrapWithContext(err)
 			log.Println(errore.SprintTrace(err))
-			return err
+			return status.Error(codes.Unknown, "Error writing streaming batch")
 		}
+		sum = sum + 1
+		entriesWritten = entriesWritten + int64(written)
 	}
 	stop := time.Now()
 	timeElapsed := stop.Sub(start)
@@ -152,7 +156,7 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 	if err != nil {
 		err = errore.WrapWithContext(err)
 		log.Println(errore.SprintTrace(err))
-		return err
+		return status.Error(codes.Unknown, "Error sending status from writing streaming batch")
 	}
 	return nil
 }
@@ -162,22 +166,27 @@ func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
 	var wg sync.WaitGroup
 	go sendBatchMessage(logChan, &wg, outStream)
 
-	var err error
-	err = s.logStorage.ReadBatchFromOffsetNotIncluding(logChan, &wg, readParams.Topic, int(readParams.BatchSize), readParams.Offset)
+	err := s.logStorage.ReadBatchFromOffsetNotIncluding(logStorage.ReadBatchParam{
+		LogChan:   logChan,
+		Wg:        &wg,
+		Topic:     readParams.Topic,
+		BatchSize: int(readParams.BatchSize),
+		Offset:    readParams.Offset,
+	})
 
 	if err != nil {
 		err = errore.WrapWithContext(err)
 		log.Println(errore.SprintTrace(err))
-		return err
+		return status.Error(codes.Unknown, "Error reading streaming")
 	}
 	wg.Wait()
 	return nil
 }
 
 func (s server) Status(context.Context, *Empty) (*TopicsStatus, error) {
-	status := s.logStorage.Status()
+	logStatus := s.logStorage.Status()
 	statuses := make([]*TopicStatus, 0)
-	for _, message := range status {
+	for _, message := range logStatus {
 		statuses = append(statuses, &TopicStatus{
 			Topic:        message.Topic,
 			Blocks:       int64(message.Blocks),

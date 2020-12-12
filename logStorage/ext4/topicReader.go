@@ -3,7 +3,6 @@ package ext4
 import (
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
-	"sync"
 )
 
 type TopicReader struct {
@@ -20,8 +19,8 @@ func NewTopicRead(manager *BlockManager) (*TopicReader, error) {
 	}, nil
 }
 
-func (t *TopicReader) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, offset uint64) error {
-	currentBlockIndex, err := t.blockManager.findBlockIndexContainingOffset(offset)
+func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam logStorage.ReadBatchParam) error {
+	currentBlockIndex, err := t.blockManager.findBlockIndexContainingOffset(readBatchParam.Offset)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -31,14 +30,14 @@ func (t *TopicReader) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.L
 		return errore.WrapWithContext(err)
 	}
 	file, err := OpenFileForRead(blockFileName)
-	err = ReadLogBlockFromOffsetNotIncluding(file, logChan, wg, batchSize, offset)
+	err = ReadLogBlockFromOffsetNotIncluding(file, readBatchParam)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	return t.readBatchFromBlock(logChan, wg, batchSize, blockIndex+1)
+	return t.readBatchFromBlock(readBatchParam, blockIndex+1)
 }
 
-func (t *TopicReader) readBatchFromBlock(c chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, block int) error {
+func (t *TopicReader) readBatchFromBlock(readBatchParam logStorage.ReadBatchParam, block int) error {
 	blockIndex := block
 	var entriesBytes []logStorage.LogEntry
 	for {
@@ -47,8 +46,8 @@ func (t *TopicReader) readBatchFromBlock(c chan *logStorage.LogEntryBatch, wg *s
 			return errore.WrapWithContext(err)
 		}
 		if err == EndOfBlock && entriesBytes != nil {
-			wg.Add(1)
-			c <- &logStorage.LogEntryBatch{Entries: entriesBytes}
+			readBatchParam.Wg.Add(1)
+			readBatchParam.LogChan <- &logStorage.LogEntryBatch{Entries: entriesBytes}
 			return nil
 		}
 		if err == EndOfBlock {
@@ -62,7 +61,9 @@ func (t *TopicReader) readBatchFromBlock(c chan *logStorage.LogEntryBatch, wg *s
 			}
 			return errore.WrapWithContext(err)
 		}
-		partial, hasSent, err := ReadLogInBatchesToEnd(read, entriesBytes, c, wg, batchSize)
+		partial, hasSent, err := ReadLogInBatchesToEnd(read, entriesBytes, readBatchParam.LogChan,
+			readBatchParam.Wg, readBatchParam.BatchSize)
+
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}

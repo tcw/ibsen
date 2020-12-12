@@ -3,7 +3,6 @@ package ext4
 import (
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/logStorage"
-	"sync"
 )
 
 type LogStorage struct {
@@ -50,15 +49,15 @@ func (e LogStorage) WriteBatch(topicMessage *logStorage.TopicBatchMessage) (int,
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
-	return len(*topicMessage.Message), nil
+	return len(topicMessage.Message), nil
 }
 
-func (e LogStorage) ReadBatchFromOffsetNotIncluding(logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int, offset uint64) error {
-	read, err := NewTopicRead(e.topicRegister.topics[topic])
+func (e LogStorage) ReadBatchFromOffsetNotIncluding(readBatchParam logStorage.ReadBatchParam) error {
+	read, err := NewTopicRead(e.topicRegister.topics[readBatchParam.Topic])
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	err = read.ReadBatchFromOffsetNotIncluding(logChan, wg, batchSize, offset)
+	err = read.ReadBatchFromOffsetNotIncluding(readBatchParam)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}

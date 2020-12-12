@@ -9,22 +9,22 @@ import (
 	"sync"
 )
 
-func ReadLogBlockFromOffsetNotIncluding(file *os.File, logChan chan *logStorage.LogEntryBatch, wg *sync.WaitGroup, batchSize int, offset uint64) error {
+func ReadLogBlockFromOffsetNotIncluding(file *os.File, readBatchParam logStorage.ReadBatchParam) error {
 
-	if offset > 0 {
-		err := fastForwardToOffset(file, int64(offset))
+	if readBatchParam.Offset > 0 {
+		err := fastForwardToOffset(file, int64(readBatchParam.Offset))
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
 	}
 
-	partialBatch, _, err := ReadLogInBatchesToEnd(file, nil, logChan, wg, batchSize)
+	partialBatch, _, err := ReadLogInBatchesToEnd(file, nil, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
 	if partialBatch.Entries != nil {
-		wg.Add(1)
-		logChan <- &logStorage.LogEntryBatch{Entries: partialBatch.Entries}
+		readBatchParam.Wg.Add(1)
+		readBatchParam.LogChan <- &logStorage.LogEntryBatch{Entries: partialBatch.Entries}
 	}
 	return nil
 }

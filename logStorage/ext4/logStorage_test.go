@@ -115,7 +115,7 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 	for i := 0; i < 50000; i++ {
 		n, err := storage.WriteBatch(&logStorage.TopicBatchMessage{
 			Topic: testTopic1,
-			Message: &[][]byte{
+			Message: [][]byte{
 				[]byte("hello1"),
 				[]byte("hello2"),
 			},
@@ -132,7 +132,13 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 	var wg sync.WaitGroup
 
 	go func() {
-		err = storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, testTopic1, 2, 0)
+		err = storage.ReadBatchFromOffsetNotIncluding(logStorage.ReadBatchParam{
+			LogChan:   logChan,
+			Wg:        &wg,
+			Topic:     testTopic1,
+			BatchSize: 2,
+			Offset:    0,
+		})
 		if err != nil {
 			t.Error(err)
 		}
@@ -163,7 +169,7 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 	}
 	n, err := storage.WriteBatch(&logStorage.TopicBatchMessage{
 		Topic: testTopic1,
-		Message: &[][]byte{
+		Message: [][]byte{
 			[]byte("hello1"),
 			[]byte("hello2"),
 		},
@@ -176,7 +182,7 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 	}
 	n, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
 		Topic: testTopic1,
-		Message: &[][]byte{
+		Message: [][]byte{
 			[]byte("hello3"),
 			[]byte("hello4"),
 		},
@@ -191,7 +197,13 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 	var wg sync.WaitGroup
 
 	go func() {
-		err = storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, testTopic1, 2, 2)
+		err = storage.ReadBatchFromOffsetNotIncluding(logStorage.ReadBatchParam{
+			LogChan:   logChan,
+			Wg:        &wg,
+			Topic:     testTopic1,
+			BatchSize: 2,
+			Offset:    2,
+		})
 		if err != nil {
 			t.Error(err)
 		}
@@ -224,14 +236,14 @@ func TestLogStorage_Corruption(t *testing.T) {
 	var bytes = []byte("hello1hello1hello1hello1hello1hello1hello1hello1")
 	_, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
 		Topic:   testTopic1,
-		Message: &[][]byte{bytes},
+		Message: [][]byte{bytes},
 	})
 	if err != nil {
 		t.Error(err)
 	}
 	_, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
 		Topic:   testTopic1,
-		Message: &[][]byte{bytes},
+		Message: [][]byte{bytes},
 	})
 	if err != nil {
 		t.Error(err)

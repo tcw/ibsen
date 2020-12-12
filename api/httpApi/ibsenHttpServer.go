@@ -74,7 +74,7 @@ func (ibsen *IbsenHttpServer) writeEntry(w http.ResponseWriter, r *http.Request)
 
 	_, err := ibsen.Storage.WriteBatch(&logStorage.TopicBatchMessage{
 		Topic:   vars["topic"],
-		Message: &bytes,
+		Message: bytes,
 	})
 	if err != nil {
 		w.WriteHeader(500)
@@ -107,7 +107,13 @@ func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err = ibsen.Storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, vars["topic"], 1000, offset)
+	err = ibsen.Storage.ReadBatchFromOffsetNotIncluding(logStorage.ReadBatchParam{
+		LogChan:   logChan,
+		Wg:        &wg,
+		Topic:     vars["topic"],
+		BatchSize: 1000,
+		Offset:    offset,
+	})
 
 	if err != nil {
 		log.Println(err)

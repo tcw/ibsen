@@ -85,3 +85,16 @@ For darwin bench
 ```shell script
 ibsen client bench read <topic>
 ```
+
+## Todo
+
+- index cache files
+- humanized error messages
+- better command completion
+- infinite read streaming (no pull) ?
+- embedded etcd for clustering ?
+- topic aliasing
+- improved error recovery/analysis
+- io separated tests (better interfaces)
+- allow reading from the lowest block number
+- block compression (Zstandard,snappy)

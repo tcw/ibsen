@@ -9,8 +9,16 @@ type LogStorage interface {
 	Drop(topic string) (bool, error)
 	Status() []*TopicStatusMessage
 	WriteBatch(topicBatchMessage *TopicBatchMessage) (int, error)
-	ReadBatchFromOffsetNotIncluding(logChan chan *LogEntryBatch, wg *sync.WaitGroup, topic string, batchSize int, offset uint64) error
+	ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchParam) error
 	Close()
+}
+
+type ReadBatchParam struct {
+	LogChan   chan *LogEntryBatch
+	Wg        *sync.WaitGroup
+	Topic     string
+	BatchSize int
+	Offset    uint64
 }
 
 type LogEntryBatch struct {
@@ -46,7 +54,7 @@ type TopicMessage struct {
 
 type TopicBatchMessage struct {
 	Topic   string
-	Message *[][]byte
+	Message [][]byte
 }
 
 type LogEntry struct {
