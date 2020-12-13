@@ -38,17 +38,24 @@ var (
 		Short:            "start a ibsen server",
 		Long:             `server`,
 		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(1),
+		Args:             cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
-			absolutePath, err2 := filepath.Abs(args[0])
-			if err2 != nil {
-				log.Fatal(err2)
-			}
+
 			var afs *afero.Afero
+			absolutePath := "/tmp/data"
 			if inMemory {
 				var fs = afero.NewMemMapFs()
 				afs = &afero.Afero{Fs: fs}
 			} else {
+				var err error
+				if len(args) != 1 {
+					fmt.Println("No file path to ibsen storage was given, use -i to run in-memory or specify path")
+					return
+				}
+				absolutePath, err = filepath.Abs(args[0])
+				if err != nil {
+					log.Fatal(err)
+				}
 				var fs = afero.NewOsFs()
 				afs = &afero.Afero{Fs: fs}
 			}

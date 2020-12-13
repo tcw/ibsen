@@ -55,7 +55,7 @@ func (ic *IbsenClient) Status() {
 	status := ic.Status
 	prettyJSON, err := json.MarshalIndent(status, "", "    ")
 	if err != nil {
-		log.Print(err)
+		log.Print(errore.SprintTrace(err))
 	}
 	stdout := os.Stdout
 	writer := bufio.NewWriter(stdout)
@@ -240,7 +240,9 @@ func (ic *IbsenClient) BenchRead(topic string, offset uint64, batchSize uint32) 
 	elapsedTime := stop.Sub(start)
 	milliWithFraction := float64(elapsedTime.Nanoseconds()) / float64(time.Millisecond)
 	fmt.Printf("Read entries:\t%d\nBatch size:\t%d\nTime:\t%f ms\n", totalEntriesRead, batchSize, milliWithFraction)
-	fmt.Printf("Used %d nano seconds per entry\n", elapsedTime.Nanoseconds()/totalEntriesRead)
+	if totalEntriesRead > 0 {
+		fmt.Printf("Used %d nano seconds per entry\n", elapsedTime.Nanoseconds()/totalEntriesRead)
+	}
 }
 
 func createTestValues(entrySizeBytes int) []byte {

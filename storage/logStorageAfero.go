@@ -19,7 +19,6 @@ func NewLogStorage(afs *afero.Afero, rootPath string, maxBlockSize int64) (LogSt
 }
 
 var _ LogStorage = LogStorageAfero{} // Verify that interface is implemented.
-//var _ storage.LogStorageAfero = (*LogStorageAfero{})(nil) // Verify that interface is implemented.
 
 func (e LogStorageAfero) Create(topic string) (bool, error) {
 	return e.topicRegister.CreateTopic(topic)
@@ -36,7 +35,7 @@ func (e LogStorageAfero) Status() []*TopicStatusMessage {
 		messages = append(messages, &TopicStatusMessage{
 			Topic:        manager.topic,
 			Blocks:       len(manager.blocks),
-			Offset:       int64(manager.currentOffset),
+			Offset:       int64(manager.offset),
 			MaxBlockSize: manager.maxBlockSize,
 			Path:         manager.rootPath,
 		})
@@ -54,7 +53,14 @@ func (e LogStorageAfero) WriteBatch(topicMessage *TopicBatchMessage) (int, error
 }
 
 func (e LogStorageAfero) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchParam) error {
-	read, err := NewTopicRead(e.afs, e.topicRegister.topics[readBatchParam.Topic])
+	blockManager := e.topicRegister.topics[readBatchParam.Topic]
+	if blockManager == nil {
+		return nil
+	}
+	if readBatchParam.Offset == blockManager.offset {
+		return nil
+	}
+	read, err := NewTopicReader(e.afs, blockManager)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}

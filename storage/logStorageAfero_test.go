@@ -37,7 +37,7 @@ func TestLogStorage_Create(t *testing.T) {
 	}
 	create, err := storage.Create(testTopic1)
 	if err != nil {
-		t.Error(err)
+		t.Error(errore.SprintTrace(err))
 	}
 	if !create {
 		t.Failed()
@@ -262,7 +262,10 @@ func TestLogStorage_Corruption(t *testing.T) {
 		t.Error(err)
 	}
 	topics := storage.topicRegister.topics
-	blockFileName := topics[testTopic1].CurrentBlockFileName()
+	blockFileName, err := topics[testTopic1].currentBlockFileName()
+	if err != nil {
+		t.Error(err)
+	}
 	file, err := OpenFileForReadWrite(afs, blockFileName)
 	corruption, err := checkForCorruption(file)
 	if err != nil {

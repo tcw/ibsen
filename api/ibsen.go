@@ -118,7 +118,7 @@ func (ibs *IbsenServer) startGRPCServer(storage storage.LogStorage) {
 	fmt.Print(ibsenFiglet)
 	err := ibsenGrpcServer.StartGRPC()
 	if err != nil {
-		log.Fatal(errore.SprintTrace(err))
+		log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
 	}
 }
 
@@ -143,11 +143,11 @@ func acquireLock(lockFile string, done chan bool, doneCleanUp chan bool, locked 
 		<-done
 		err = file.Close()
 		if err != nil {
-			log.Println(err)
+			log.Println(errore.SprintTrace(errore.WrapWithContext(err)))
 		}
 		err = os.Remove(lockFile)
 		if err != nil {
-			log.Println(err)
+			log.Println(errore.SprintTrace(errore.WrapWithContext(err)))
 		}
 		log.Printf("Removed file lock with id [%s]\n", ibsenId)
 		doneCleanUp <- true

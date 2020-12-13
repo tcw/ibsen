@@ -47,7 +47,7 @@ func ReadTopic(afs *afero.Afero, readPath string, toBase64 bool) {
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
 			manger, err := storage.NewBlockManger(afs, dir, topic, 1024*1024*10)
-			reader, err := storage.NewTopicRead(afs, &manger)
+			reader, err := storage.NewTopicReader(afs, &manger)
 			if err != nil {
 				err := errore.WrapWithContext(err)
 				log.Fatal(errore.SprintTrace(err))

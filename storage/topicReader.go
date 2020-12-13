@@ -12,7 +12,7 @@ type TopicReader struct {
 	currentBlockIndex uint
 }
 
-func NewTopicRead(afs *afero.Afero, manager *BlockManager) (*TopicReader, error) {
+func NewTopicReader(afs *afero.Afero, manager *BlockManager) (*TopicReader, error) {
 	return &TopicReader{
 		afs:               afs,
 		blockManager:      manager,
@@ -22,7 +22,10 @@ func NewTopicRead(afs *afero.Afero, manager *BlockManager) (*TopicReader, error)
 }
 
 func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchParam) error {
-	currentBlockIndex, err := t.blockManager.findBlockIndexContainingOffset(readBatchParam.Offset)
+	currentBlockIndex, err := t.blockManager.FindBlockIndexContainingOffset(readBatchParam.Offset)
+	if err == BlockNotFound {
+		return BlockNotFound
+	}
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -36,10 +39,10 @@ func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchPa
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	return t.readBatchFromBlock(readBatchParam, blockIndex+1)
+	return t.readCompleteBlocksInBatchesToTail(readBatchParam, blockIndex+1)
 }
 
-func (t *TopicReader) readBatchFromBlock(readBatchParam ReadBatchParam, block int) error {
+func (t *TopicReader) readCompleteBlocksInBatchesToTail(readBatchParam ReadBatchParam, block int) error {
 	blockIndex := block
 	var entriesBytes []LogEntry
 	for {
