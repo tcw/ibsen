@@ -69,7 +69,6 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 	RegisterIbsenServer(grpcServer, &server{
 		logStorage: igs.Storage,
 	})
-
 	return grpcServer.Serve(lis)
 }
 

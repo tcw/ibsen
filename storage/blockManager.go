@@ -112,6 +112,7 @@ func (br *BlockManager) loadBlockStatusFromStorage() error {
 }
 
 func (br *BlockManager) setCurrentState(sortedBlocks []int64) error {
+	br.blocks = sortedBlocks
 	blockFileName, err := br.currentBlockFileName()
 	if err != nil {
 		return errore.WrapWithContext(err)
@@ -127,7 +128,6 @@ func (br *BlockManager) setCurrentState(sortedBlocks []int64) error {
 		return errore.WrapWithContext(err)
 	}
 
-	br.blocks = sortedBlocks
 	br.blockSize = sizeOfLastBlock
 	br.offset = uint64(offset)
 	return nil

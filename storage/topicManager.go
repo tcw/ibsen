@@ -3,6 +3,7 @@ package storage
 import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
+	"log"
 )
 
 type TopicManager struct {
@@ -33,12 +34,20 @@ func (tr *TopicManager) UpdateTopicsFromStorage() error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
+	managerChan := make(chan BlockManager)
 	for _, topic := range directories {
-		registry, err := NewBlockManger(tr.afs, tr.topicsRootPath, topic, tr.maxBlockSize)
-		if err != nil {
-			return errore.WrapWithContext(err)
-		}
-		tr.topics[topic] = &registry
+		go func(topic string) {
+			blockManger, err := NewBlockManger(tr.afs, tr.topicsRootPath, topic, tr.maxBlockSize)
+			if err != nil {
+				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+			}
+			managerChan <- blockManger
+		}(topic)
+	}
+	for range directories {
+		manager := <-managerChan
+		topic := manager.topic
+		tr.topics[topic] = &manager
 	}
 	return nil
 }

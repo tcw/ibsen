@@ -6,11 +6,13 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tcw/ibsen/api"
 	"github.com/tcw/ibsen/client"
+	"github.com/tcw/ibsen/consensus"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
@@ -59,7 +61,10 @@ var (
 				var fs = afero.NewOsFs()
 				afs = &afero.Afero{Fs: fs}
 			}
+			writeLock := absolutePath + string(os.PathSeparator) + ".writeLock"
+			lock := consensus.NewFileLock(afs, writeLock, time.Second*20)
 			ibsenServer := api.IbsenServer{
+				Lock:         lock,
 				InMemory:     inMemory,
 				Afs:          afs,
 				DataPath:     absolutePath,
