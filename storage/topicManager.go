@@ -16,17 +16,17 @@ type TopicManager struct {
 func NewTopicManager(afs *afero.Afero, rootPath string, maxBlockSize int64) (TopicManager, error) {
 
 	var topics = map[string]*BlockManager{}
-	register := TopicManager{
+	topicManager := TopicManager{
 		afs:            afs,
 		maxBlockSize:   maxBlockSize,
 		topicsRootPath: rootPath,
 		topics:         topics,
 	}
-	err := register.UpdateTopicsFromStorage()
+	err := topicManager.UpdateTopicsFromStorage()
 	if err != nil {
 		return TopicManager{}, errore.WrapWithContext(err)
 	}
-	return register, nil
+	return topicManager, nil
 }
 
 func (tr *TopicManager) UpdateTopicsFromStorage() error {

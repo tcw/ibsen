@@ -98,3 +98,12 @@ ibsen client bench read <topic>
 - io separated tests (better interfaces)
 - allow reading from the lowest block number
 - block compression (Zstandard,snappy)
+
+## Benchmarks
+
+To free pagecache:
+echo 1 > /proc/sys/vm/drop_caches
+To free reclaimable slab objects (includes dentries and inodes):
+echo 2 > /proc/sys/vm/drop_caches
+To free slab objects and pagecache:
+echo 3 > /proc/sys/vm/drop_caches
