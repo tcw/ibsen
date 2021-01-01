@@ -3,11 +3,12 @@ package api
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
+	"github.com/spf13/afero"
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/api/httpApi"
-	"github.com/tcw/ibsen/logStorage"
-	"github.com/tcw/ibsen/logStorage/ext4"
+	"github.com/tcw/ibsen/consensus"
+	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/storage"
 	"log"
 	"net/http"
 	"os"
@@ -20,12 +21,6 @@ import (
 
 var ibsenGrpcServer *grpcApi.IbsenGrpcServer
 var httpServer *http.Server
-var writeLock string
-var done = make(chan bool)
-var doneCleanup = make(chan bool)
-var locked = make(chan bool)
-var ibsenId = uuid.New().String()
-
 var ibsenFiglet = `
                            _____ _                    
                           |_   _| |                   
@@ -41,6 +36,9 @@ var ibsenFiglet = `
 var fProfile *os.File
 
 type IbsenServer struct {
+	Lock         consensus.Lock
+	InMemory     bool
+	Afs          *afero.Afero
 	DataPath     string
 	UseHttp      bool
 	Host         string
@@ -52,28 +50,43 @@ type IbsenServer struct {
 
 func (ibs *IbsenServer) Start() {
 	go ibs.initSignals()
-	waitForWriteLock(ibs.DataPath)
+
+	exists, err := ibs.Afs.Exists(ibs.DataPath)
+	if err != nil {
+		log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+	}
+	if !exists {
+		log.Fatalf("path [%s] does not exist, will not start unless existing path is specified", ibs.DataPath)
+	}
+
+	if ibs.InMemory {
+		log.Println("Running in-memory only!")
+	} else {
+		log.Printf("Waiting for single writer lock on file [%s]...\n", ibs.DataPath)
+		if !ibs.Lock.AcquireLock() {
+			log.Fatalf("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.DataPath)
+		}
+	}
 
 	useCpuProfiling(ibs.CpuProfile)
 
-	storage, err := ext4.NewLogStorage(ibs.DataPath, int64(ibs.MaxBlockSize)*1024*1024)
+	start := time.Now()
+	logStorage, err := storage.NewLogStorage(ibs.Afs, ibs.DataPath, int64(ibs.MaxBlockSize)*1024*1024)
+	stop := time.Now()
+	log.Printf("loaded existing topic in [%s]", stop.Sub(start).String())
 	if err != nil {
-		log.Println(err)
+		log.Println(errore.SprintTrace(err))
 		return
 	}
 	if ibs.UseHttp {
-		ibs.startHTTPServer(storage)
+		ibs.startHTTPServer(logStorage)
 	} else {
-		ibs.startGRPCServer(storage)
+		err := ibs.startGRPCServer(logStorage)
+		if err != nil {
+			log.Printf(errore.SprintTrace(err))
+			ibs.ShutdownCleanly()
+		}
 	}
-	<-doneCleanup
-}
-
-func waitForWriteLock(dataPath string) {
-	writeLock = dataPath + string(os.PathSeparator) + ".writeLock"
-	log.Printf("Waiting for exclusive write lock on file [%s]...\n", writeLock)
-	go acquireLock(writeLock, done, doneCleanup, locked)
-	<-locked
 }
 
 func useCpuProfiling(cpuProfile string) {
@@ -90,7 +103,7 @@ func useCpuProfiling(cpuProfile string) {
 	}
 }
 
-func (ibs *IbsenServer) startHTTPServer(storage logStorage.LogStorage) {
+func (ibs *IbsenServer) startHTTPServer(storage storage.LogStorage) {
 	ibsenHttpServer := httpApi.NewIbsenHttpServer(storage)
 	ibsenHttpServer.Port = uint16(ibs.Port)
 	log.Printf("Ibsen http/1.1 server started on port [%d]\n", ibsenHttpServer.Port)
@@ -98,50 +111,17 @@ func (ibs *IbsenServer) startHTTPServer(storage logStorage.LogStorage) {
 	httpServer = ibsenHttpServer.StartHttpServer()
 }
 
-func (ibs *IbsenServer) startGRPCServer(storage logStorage.LogStorage) {
+func (ibs *IbsenServer) startGRPCServer(storage storage.LogStorage) error {
 	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage)
 	ibsenGrpcServer.Port = uint16(ibs.Port)
 	ibsenGrpcServer.Host = ibs.Host
 	log.Printf("Ibsen grpc server started on [%s:%d]\n", ibsenGrpcServer.Host, ibsenGrpcServer.Port)
 	fmt.Print(ibsenFiglet)
-	var err2 error
-	err2 = ibsenGrpcServer.StartGRPC()
-	if err2 != nil {
-		log.Fatal(err2)
+	err := ibsenGrpcServer.StartGRPC()
+	if err != nil {
+		return errore.WrapWithContext(err)
 	}
-}
-
-func acquireLock(lockFile string, done chan bool, doneCleanUp chan bool, locked chan bool) {
-	for {
-		file, err := os.OpenFile(lockFile,
-			os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
-
-		if err != nil {
-			log.Printf("Unable to acquire lock due to error: %s", err.Error())
-			time.Sleep(time.Second * 3)
-			continue
-		}
-		_, err = file.Write([]byte(ibsenId))
-		if err != nil {
-			log.Printf("Unable to acquire lock due to error: %s", err.Error())
-			time.Sleep(time.Second * 3)
-			continue
-		}
-		log.Printf("Got file lock with id [%s]\n", ibsenId)
-		locked <- true
-		<-done
-		err = file.Close()
-		if err != nil {
-			log.Println(err)
-		}
-		err = os.Remove(lockFile)
-		if err != nil {
-			log.Println(err)
-		}
-		log.Printf("Removed file lock with id [%s]\n", ibsenId)
-		doneCleanUp <- true
-		break
-	}
+	return nil
 }
 
 func (ibs *IbsenServer) initSignals() {
@@ -173,8 +153,31 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 			log.Println(err)
 		}
 	} else {
-		ibsenGrpcServer.IbsenServer.GracefulStop()
-		log.Println("shutdown gRPC server")
+		log.Printf("gracefully stopping grpc server on port [%d]...", ibs.Port)
+
+		stopped := make(chan struct{})
+		go func() {
+			ibsenGrpcServer.IbsenServer.GracefulStop()
+			close(stopped)
+		}()
+
+		t := time.NewTimer(5 * time.Second)
+		select {
+		case <-t.C:
+			log.Println("stopped gRPC server forcefully")
+			ibsenGrpcServer.IbsenServer.Stop()
+		case <-stopped:
+			t.Stop()
+		}
+	}
+
+	if !ibs.InMemory {
+		isReleased := ibs.Lock.ReleaseLock()
+		if isReleased {
+			log.Printf("single writer lock [%s] was released!\n", ibs.DataPath)
+		} else {
+			log.Printf("unable to release single writer lock [%s]\n", ibs.DataPath)
+		}
 	}
 
 	if ibs.CpuProfile != "" {
@@ -185,34 +188,26 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 			log.Fatal(err)
 		}
 	}
-
-	done <- true
-
 }
 
 func (ibs *IbsenServer) signalHandler(signal os.Signal) {
-	log.Printf("\nCaught signal: %+v", signal)
-	log.Println("\nWait for Ibsen to shutdown...")
+	log.Printf("\nIbsen server recieved signal: %+v", signal)
 
 	switch signal {
-
 	case syscall.SIGHUP:
-		ibs.ShutdownCleanly()
-
+		fallthrough
 	case syscall.SIGINT:
-		ibs.ShutdownCleanly()
-
+		fallthrough
 	case syscall.SIGTERM:
-		ibs.ShutdownCleanly()
-
+		fallthrough
 	case syscall.SIGQUIT:
-		ibs.ShutdownCleanly()
-
+		fallthrough
 	case syscall.SIGABRT:
+		log.Printf("recived system signal [%s]. Starting gracefully shutdown...", signal.String())
 		ibs.ShutdownCleanly()
-
+		break
 	default:
-		log.Printf("Unexpected system signal [%s] sent to Ibsen. Trying to gracefully shutdown, without any garanties...", signal.String())
+		log.Printf("recived unexpected system signal [%s]. Trying to gracefully shutdown, without any garanties...", signal.String())
 		ibs.ShutdownCleanly()
 	}
 }

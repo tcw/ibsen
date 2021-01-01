@@ -1,8 +1,8 @@
-package ext4
+package storage
 
 import (
-	"github.com/tcw/ibsen/logStorage"
-	"io/ioutil"
+	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/errore"
 	"os"
 	"sync"
 	"testing"
@@ -12,8 +12,13 @@ const oneMB = 1024 * 1024 * 1
 const testTopic1 = "testTopic1"
 const testTopic2 = "testTopic2"
 
-func createTestDir(t *testing.T) string {
-	testDir, err := ioutil.TempDir("", "ibsenTest")
+func newAfero() *afero.Afero {
+	var fs = afero.NewMemMapFs()
+	return &afero.Afero{Fs: fs}
+}
+
+func createTestDir(t *testing.T, afs *afero.Afero) string {
+	testDir, err := afs.TempDir("", "ibsenTest")
 	t.Log("created test dir: ", testDir)
 	if err != nil {
 		t.Error(err)
@@ -22,15 +27,17 @@ func createTestDir(t *testing.T) string {
 }
 
 func TestLogStorage_Create(t *testing.T) {
-	dir := createTestDir(t)
-	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
+	defer afs.Fs.RemoveAll(dir)
+
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
 	create, err := storage.Create(testTopic1)
 	if err != nil {
-		t.Error(err)
+		t.Error(errore.SprintTrace(err))
 	}
 	if !create {
 		t.Failed()
@@ -38,9 +45,11 @@ func TestLogStorage_Create(t *testing.T) {
 }
 
 func TestLogStorage_Drop(t *testing.T) {
-	dir := createTestDir(t)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
@@ -58,8 +67,8 @@ func TestLogStorage_Drop(t *testing.T) {
 	if !drop {
 		t.Fail()
 	}
-	directory := doesTopicExist(dir, "."+testTopic1)
-	if !directory {
+	exists, _ := afs.Exists("." + testTopic1)
+	if exists {
 		t.Error("Topic has not been moved to . file")
 		t.Fail()
 	}
@@ -67,9 +76,10 @@ func TestLogStorage_Drop(t *testing.T) {
 
 //Todo: create real status
 func TestLogStorage_ListTopics(t *testing.T) {
-	dir := createTestDir(t)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
@@ -98,9 +108,10 @@ func TestLogStorage_ListTopics(t *testing.T) {
 }
 
 func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
-	dir := createTestDir(t)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
@@ -113,9 +124,9 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 	}
 
 	for i := 0; i < 50000; i++ {
-		n, err := storage.WriteBatch(&logStorage.TopicBatchMessage{
+		n, err := storage.WriteBatch(&TopicBatchMessage{
 			Topic: testTopic1,
-			Message: &[][]byte{
+			Message: [][]byte{
 				[]byte("hello1"),
 				[]byte("hello2"),
 			},
@@ -128,11 +139,17 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 		}
 	}
 
-	logChan := make(chan logStorage.LogEntryBatch)
+	logChan := make(chan *LogEntryBatch)
 	var wg sync.WaitGroup
 
 	go func() {
-		err = storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, testTopic1, 2, 0)
+		err = storage.ReadBatchFromOffsetNotIncluding(ReadBatchParam{
+			LogChan:   logChan,
+			Wg:        &wg,
+			Topic:     testTopic1,
+			BatchSize: 2,
+			Offset:    0,
+		})
 		if err != nil {
 			t.Error(err)
 		}
@@ -148,9 +165,10 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 }
 
 func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
-	dir := createTestDir(t)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
@@ -161,9 +179,9 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 	if !create {
 		t.Failed()
 	}
-	n, err := storage.WriteBatch(&logStorage.TopicBatchMessage{
+	n, err := storage.WriteBatch(&TopicBatchMessage{
 		Topic: testTopic1,
-		Message: &[][]byte{
+		Message: [][]byte{
 			[]byte("hello1"),
 			[]byte("hello2"),
 		},
@@ -174,9 +192,9 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 	if n == 0 {
 		t.Fail()
 	}
-	n, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
+	n, err = storage.WriteBatch(&TopicBatchMessage{
 		Topic: testTopic1,
-		Message: &[][]byte{
+		Message: [][]byte{
 			[]byte("hello3"),
 			[]byte("hello4"),
 		},
@@ -187,11 +205,17 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 	if n == 0 {
 		t.Fail()
 	}
-	logChan := make(chan logStorage.LogEntryBatch)
+	logChan := make(chan *LogEntryBatch)
 	var wg sync.WaitGroup
 
 	go func() {
-		err = storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, testTopic1, 2, 2)
+		err = storage.ReadBatchFromOffsetNotIncluding(ReadBatchParam{
+			LogChan:   logChan,
+			Wg:        &wg,
+			Topic:     testTopic1,
+			BatchSize: 2,
+			Offset:    2,
+		})
 		if err != nil {
 			t.Error(err)
 		}
@@ -208,9 +232,10 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 }
 
 func TestLogStorage_Corruption(t *testing.T) {
-	dir := createTestDir(t)
+	afs := newAfero()
+	dir := createTestDir(t, afs)
 	defer os.RemoveAll(dir)
-	storage, err := NewLogStorage(dir, oneMB)
+	storage, err := NewLogStorage(afs, dir, oneMB)
 	if err != nil {
 		t.Error(err)
 	}
@@ -222,23 +247,26 @@ func TestLogStorage_Corruption(t *testing.T) {
 		t.Fail()
 	}
 	var bytes = []byte("hello1hello1hello1hello1hello1hello1hello1hello1")
-	_, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
+	_, err = storage.WriteBatch(&TopicBatchMessage{
 		Topic:   testTopic1,
-		Message: &[][]byte{bytes},
+		Message: [][]byte{bytes},
 	})
 	if err != nil {
 		t.Error(err)
 	}
-	_, err = storage.WriteBatch(&logStorage.TopicBatchMessage{
+	_, err = storage.WriteBatch(&TopicBatchMessage{
 		Topic:   testTopic1,
-		Message: &[][]byte{bytes},
+		Message: [][]byte{bytes},
 	})
 	if err != nil {
 		t.Error(err)
 	}
 	topics := storage.topicRegister.topics
-	blockFileName := topics[testTopic1].CurrentBlockFileName()
-	file, err := OpenFileForReadWrite(blockFileName)
+	blockFileName, err := topics[testTopic1].currentBlockFileName()
+	if err != nil {
+		t.Error(err)
+	}
+	file, err := OpenFileForReadWrite(afs, blockFileName)
 	corruption, err := checkForCorruption(file)
 	if err != nil {
 		t.Error(err, corruption)
@@ -250,17 +278,17 @@ func TestLogStorage_Corruption(t *testing.T) {
 	}
 	file.Sync()
 	file.Close()
-	file, err = OpenFileForReadWrite(blockFileName)
+	file, err = OpenFileForReadWrite(afs, blockFileName)
 	corruption, err = checkForCorruption(file)
 	if err == nil {
 		t.Error("Did not detect corruption")
 	}
 	file.Close()
-	err = correctFile(blockFileName, corruption)
+	err = correctFile(afs, blockFileName, corruption)
 	if err != nil {
-		t.Error(err)
+		t.Error(errore.SprintTrace(err))
 	}
-	file, err = OpenFileForReadWrite(blockFileName)
+	file, err = OpenFileForReadWrite(afs, blockFileName)
 	corruption, err = checkForCorruption(file)
 	if err != nil {
 		t.Error(err, corruption)

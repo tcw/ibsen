@@ -3,9 +3,12 @@ package grpcApi
 import (
 	"context"
 	"fmt"
-	"github.com/tcw/ibsen/logStorage"
+	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/storage"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/testdata"
 	"io"
 	"log"
@@ -16,7 +19,7 @@ import (
 )
 
 type server struct {
-	logStorage logStorage.LogStorage
+	logStorage storage.LogStorage
 }
 
 type IbsenGrpcServer struct {
@@ -26,10 +29,10 @@ type IbsenGrpcServer struct {
 	KeyFile     string
 	UseTls      bool
 	IbsenServer *grpc.Server
-	Storage     logStorage.LogStorage
+	Storage     storage.LogStorage
 }
 
-func NewIbsenGrpcServer(storage logStorage.LogStorage) *IbsenGrpcServer {
+func NewIbsenGrpcServer(storage storage.LogStorage) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
 		Host:     "0.0.0.0",
 		Port:     50001,
@@ -43,7 +46,7 @@ func NewIbsenGrpcServer(storage logStorage.LogStorage) *IbsenGrpcServer {
 func (igs *IbsenGrpcServer) StartGRPC() error {
 	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", igs.Host, igs.Port))
 	if err != nil {
-		return err
+		return errore.WrapWithContext(err)
 	}
 	var opts []grpc.ServerOption
 	opts = []grpc.ServerOption{
@@ -56,7 +59,7 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 		creds, err := credentials.NewServerTLSFromFile(absCert, absKey)
 		opts = append(opts, grpc.Creds(creds))
 		if err != nil {
-			return err
+			return errore.WrapWithContext(err)
 		}
 	}
 	grpcServer := grpc.NewServer(opts...)
@@ -66,7 +69,6 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 	RegisterIbsenServer(grpcServer, &server{
 		logStorage: igs.Storage,
 	})
-
 	return grpcServer.Serve(lis)
 }
 
@@ -74,6 +76,11 @@ var _ IbsenServer = &server{}
 
 func (s server) Create(ctx context.Context, topic *Topic) (*CreateStatus, error) {
 	create, err := s.logStorage.Create(topic.Name)
+	if err != nil {
+		err = errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
+		return nil, status.Errorf(codes.Internal, "Failed while creating topic %s", topic.Name)
+	}
 	return &CreateStatus{
 		Created: create,
 	}, err
@@ -81,6 +88,11 @@ func (s server) Create(ctx context.Context, topic *Topic) (*CreateStatus, error)
 
 func (s server) Drop(ctx context.Context, topic *Topic) (*DropStatus, error) {
 	dropped, err := s.logStorage.Drop(topic.Name)
+	if err != nil {
+		err = errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
+		return nil, status.Errorf(codes.Internal, "Failed while dropping topic %s", topic.Name)
+	}
 	return &DropStatus{
 		Dropped: dropped,
 	}, err
@@ -88,12 +100,14 @@ func (s server) Drop(ctx context.Context, topic *Topic) (*DropStatus, error) {
 
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
 	start := time.Now()
-	n, err := s.logStorage.WriteBatch(&logStorage.TopicBatchMessage{
+	n, err := s.logStorage.WriteBatch(&storage.TopicBatchMessage{
 		Topic:   entries.Topic,
-		Message: &entries.Entries,
+		Message: entries.Entries,
 	})
 	if err != nil {
-		return nil, err
+		err = errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
+		return nil, status.Error(codes.Unknown, "Error writing batch")
 	}
 
 	stop := time.Now()
@@ -115,19 +129,21 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 			break
 		}
 		if err != nil {
-			log.Printf("Failed reading input stream, error: %s", err)
-			return err
+			err = errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
+			return status.Error(codes.Unknown, "Error receiving writing streaming batch")
 		}
-		written, err := s.logStorage.WriteBatch(&logStorage.TopicBatchMessage{
+		written, err := s.logStorage.WriteBatch(&storage.TopicBatchMessage{
 			Topic:   in.Topic,
-			Message: &in.Entries,
+			Message: in.Entries,
 		})
+		if err != nil {
+			err = errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
+			return status.Error(codes.Unknown, "Error writing streaming batch")
+		}
 		sum = sum + 1
 		entriesWritten = entriesWritten + int64(written)
-		if err != nil {
-			log.Printf("Failed writing input stream after %d entries, error: %s", entriesWritten, err)
-			return err
-		}
 	}
 	stop := time.Now()
 	timeElapsed := stop.Sub(start)
@@ -137,30 +153,39 @@ func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
 		TimeNano: timeElapsed.Nanoseconds(),
 	})
 	if err != nil {
-		log.Println(err)
+		err = errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
+		return status.Error(codes.Unknown, "Error sending status from writing streaming batch")
 	}
 	return nil
 }
 
 func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
-	logChan := make(chan logStorage.LogEntryBatch)
+	logChan := make(chan *storage.LogEntryBatch)
 	var wg sync.WaitGroup
 	go sendBatchMessage(logChan, &wg, outStream)
 
-	var err error
-	err = s.logStorage.ReadBatchFromOffsetNotIncluding(logChan, &wg, readParams.Topic, int(readParams.BatchSize), readParams.Offset)
+	err := s.logStorage.ReadBatchFromOffsetNotIncluding(storage.ReadBatchParam{
+		LogChan:   logChan,
+		Wg:        &wg,
+		Topic:     readParams.Topic,
+		BatchSize: int(readParams.BatchSize),
+		Offset:    readParams.Offset,
+	})
 
 	if err != nil {
-		return err
+		err = errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
+		return status.Error(codes.Unknown, "Error reading streaming")
 	}
 	wg.Wait()
 	return nil
 }
 
 func (s server) Status(context.Context, *Empty) (*TopicsStatus, error) {
-	status := s.logStorage.Status()
+	logStatus := s.logStorage.Status()
 	statuses := make([]*TopicStatus, 0)
-	for _, message := range status {
+	for _, message := range logStatus {
 		statuses = append(statuses, &TopicStatus{
 			Topic:        message.Topic,
 			Blocks:       int64(message.Blocks),
@@ -178,19 +203,32 @@ func (s server) Close() {
 	s.logStorage.Close()
 }
 
-func sendBatchMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadServer) {
+func sendBatchMessage(logChan chan *storage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadServer) {
 	for {
-		entry := <-logChan
-		if entry.Size() == 0 {
+		entryBatch := <-logChan
+		if entryBatch.Size() == 0 {
 			break
 		}
 		err := outStream.Send(&OutputEntries{
-			Offset:  uint64(entry.Offset()),
-			Entries: entry.ToArray(),
+			Entries: convert(entryBatch),
 		})
 		if err != nil {
-			log.Println(err)
+			err = errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
+			return
 		}
 		wg.Done()
 	}
+}
+
+func convert(entryBatch *storage.LogEntryBatch) []*Entry {
+	entries := entryBatch.Entries
+	outEntries := make([]*Entry, len(entries))
+	for i, entry := range entries {
+		outEntries[i] = &Entry{
+			Offset:  entry.Offset,
+			Content: entry.Entry,
+		}
+	}
+	return outEntries
 }

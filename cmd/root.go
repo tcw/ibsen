@@ -2,17 +2,21 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/tcw/ibsen/api"
 	"github.com/tcw/ibsen/client"
+	"github.com/tcw/ibsen/consensus"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
+	inMemory       bool
 	useHttp        bool
 	host           string
 	serverPort     int
@@ -36,13 +40,33 @@ var (
 		Short:            "start a ibsen server",
 		Long:             `server`,
 		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(1),
+		Args:             cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
-			absolutePath, err2 := filepath.Abs(args[0])
-			if err2 != nil {
-				log.Fatal(err2)
+
+			var afs *afero.Afero
+			absolutePath := "/tmp/data"
+			if inMemory {
+				var fs = afero.NewMemMapFs()
+				afs = &afero.Afero{Fs: fs}
+			} else {
+				var err error
+				if len(args) != 1 {
+					fmt.Println("No file path to ibsen storage was given, use -i to run in-memory or specify path")
+					return
+				}
+				absolutePath, err = filepath.Abs(args[0])
+				if err != nil {
+					log.Fatal(err)
+				}
+				var fs = afero.NewOsFs()
+				afs = &afero.Afero{Fs: fs}
 			}
+			writeLock := absolutePath + string(os.PathSeparator) + ".writeLock"
+			lock := consensus.NewFileLock(afs, writeLock, time.Second*20)
 			ibsenServer := api.IbsenServer{
+				Lock:         lock,
+				InMemory:     inMemory,
+				Afs:          afs,
 				DataPath:     absolutePath,
 				UseHttp:      useHttp,
 				Host:         host,
@@ -164,7 +188,9 @@ var (
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			client.ReadTopic(args[0], toBase64)
+			var fs = afero.NewOsFs()
+			afs := &afero.Afero{Fs: fs}
+			client.ReadTopic(afs, args[0], toBase64)
 		},
 	}
 
@@ -210,6 +236,7 @@ func init() {
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "config file")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "config file")
+	cmdServer.Flags().BoolVarP(&inMemory, "inMemory", "i", false, "run in-memory only")
 	cmdCat.Flags().BoolVarP(&toBase64, "base64", "b", false, "Convert messages to base64")
 	cmdClient.Flags().IntVarP(&entries, "entries", "e", entries, "Number of entries in each batch")
 	cmdBenchWrite.Flags().IntVarP(&entryByteSize, "entryByteSize", "s", 100, "Test data entry size in bytes")

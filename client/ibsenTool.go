@@ -3,8 +3,9 @@ package client
 import (
 	"encoding/base64"
 	"fmt"
-	"github.com/tcw/ibsen/logStorage"
-	"github.com/tcw/ibsen/logStorage/ext4"
+	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/storage"
 	"log"
 	"os"
 	"path"
@@ -12,64 +13,84 @@ import (
 	"sync"
 )
 
-func ReadTopic(readPath string, toBase64 bool) {
+func ReadTopic(afs *afero.Afero, readPath string, toBase64 bool) {
 
 	if readPath != "" {
 		abs, err := filepath.Abs(readPath)
 		if err != nil {
-			log.Println("Absolute:", abs)
+			err := errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
 		}
 		f, err := os.OpenFile(abs,
 			os.O_RDONLY, 0400)
 		if err != nil {
-			log.Println(err)
+			err := errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
 			return
 		}
 		stat, err := f.Stat()
 		if err != nil {
-			log.Println(err)
+			err := errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
 			return
 		}
 		isDir := stat.IsDir()
 		err = f.Close()
 		if err != nil {
-			log.Println(err)
+			err := errore.WrapWithContext(err)
+			log.Println(errore.SprintTrace(err))
 			return
 		}
 		if isDir {
 			dir, topic := path.Split(abs)
-			logChannel := make(chan logStorage.LogEntryBatch)
+			logChannel := make(chan *storage.LogEntryBatch)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
-			manger, err := ext4.NewBlockManger(dir, topic, 1024*1024*10)
-			reader, err := ext4.NewTopicRead(&manger)
+			manger, err := storage.NewBlockManger(afs, dir, topic, 1024*1024*10)
+			reader, err := storage.NewTopicReader(afs, &manger)
 			if err != nil {
-				log.Fatal(err)
+				err := errore.WrapWithContext(err)
+				log.Fatal(errore.SprintTrace(err))
 			}
-			err = reader.ReadBatchFromOffsetNotIncluding(logChannel, &wg, 1000, 0)
+			err = reader.ReadBatchFromOffsetNotIncluding(storage.ReadBatchParam{
+				LogChan:   logChannel,
+				Wg:        &wg,
+				Topic:     "",
+				BatchSize: 1000,
+				Offset:    0,
+			})
 			if err != nil {
-				log.Fatal(err)
+				err := errore.WrapWithContext(err)
+				log.Fatal(errore.SprintTrace(err))
 			}
 			wg.Wait()
 		} else {
-			logChannel := make(chan logStorage.LogEntryBatch)
+			logChannel := make(chan *storage.LogEntryBatch)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
-			openFile, err := ext4.OpenFileForRead(readPath)
-			err = ext4.ReadLogBlockFromOffsetNotIncluding(openFile, logChannel, &wg, 1000, 0)
+			openFile, err := storage.OpenFileForRead(afs, readPath)
+			err = storage.ReadLogBlockFromOffsetNotIncluding(openFile, storage.ReadBatchParam{
+				LogChan:   logChannel,
+				Wg:        &wg,
+				Topic:     "",
+				BatchSize: 1000,
+				Offset:    0,
+			})
 			if err != nil {
-				log.Println(err)
+				err := errore.WrapWithContext(err)
+				log.Fatal(errore.SprintTrace(err))
 			}
 			err = openFile.Close()
 			if err != nil {
-				println(err)
+				err := errore.WrapWithContext(err)
+				log.Println(errore.SprintTrace(err))
 			}
 			wg.Wait()
 		}
 	}
 }
 
-func writeToStdOut(c chan logStorage.LogEntryBatch, wg *sync.WaitGroup, toBase64 bool) {
+func writeToStdOut(c chan *storage.LogEntryBatch, wg *sync.WaitGroup, toBase64 bool) {
 	const textLine = "%d\t%s\n"
 	for {
 		entry := <-c

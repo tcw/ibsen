@@ -12,13 +12,13 @@ var completionCmd = &cobra.Command{
 
 Bash:
 
-$ source <(yourprogram completion bash)
+$ source <(ibsen completion bash)
 
 # To load completions for each session, execute once:
 Linux:
-  $ yourprogram completion bash > /etc/bash_completion.d/yourprogram
+  $ ibsen completion bash > /etc/bash_completion.d/ibsen
 MacOS:
-  $ yourprogram completion bash > /usr/local/etc/bash_completion.d/yourprogram
+  $ ibsen completion bash > /usr/local/etc/bash_completion.d/ibsen
 
 Zsh:
 
@@ -28,16 +28,16 @@ Zsh:
 $ echo "autoload -U compinit; compinit" >> ~/.zshrc
 
 # To load completions for each session, execute once:
-$ yourprogram completion zsh > "${fpath[1]}/_yourprogram"
+$ ibsen completion zsh > "${fpath[1]}/_yourprogram"
 
 # You will need to start a new shell for this setup to take effect.
 
 Fish:
 
-$ yourprogram completion fish | source
+$ ibsen completion fish | source
 
 # To load completions for each session, execute once:
-$ yourprogram completion fish > ~/.config/fish/completions/yourprogram.fish
+$ ibsen completion fish > ~/.config/fish/completions/ibsen.fish
 `,
 	DisableFlagsInUseLine: true,
 	ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},

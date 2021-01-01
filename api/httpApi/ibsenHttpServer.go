@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
-	"github.com/tcw/ibsen/logStorage"
+	"github.com/tcw/ibsen/storage"
 	"log"
 	"net/http"
 	"strconv"
@@ -17,10 +17,10 @@ import (
 type IbsenHttpServer struct {
 	Port        uint16
 	IbsenServer *http.Server
-	Storage     logStorage.LogStorage
+	Storage     storage.LogStorage
 }
 
-func NewIbsenHttpServer(storage logStorage.LogStorage) *IbsenHttpServer {
+func NewIbsenHttpServer(storage storage.LogStorage) *IbsenHttpServer {
 	server := IbsenHttpServer{
 		Port:    5001,
 		Storage: storage,
@@ -72,9 +72,9 @@ func (ibsen *IbsenHttpServer) writeEntry(w http.ResponseWriter, r *http.Request)
 		line = line + 1
 	}
 
-	_, err := ibsen.Storage.WriteBatch(&logStorage.TopicBatchMessage{
+	_, err := ibsen.Storage.WriteBatch(&storage.TopicBatchMessage{
 		Topic:   vars["topic"],
-		Message: &bytes,
+		Message: bytes,
 	})
 	if err != nil {
 		w.WriteHeader(500)
@@ -84,7 +84,7 @@ func (ibsen *IbsenHttpServer) writeEntry(w http.ResponseWriter, r *http.Request)
 func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 
-	logChan := make(chan logStorage.LogEntryBatch)
+	logChan := make(chan *storage.LogEntryBatch)
 	var wg sync.WaitGroup
 	w.WriteHeader(http.StatusOK)
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -107,7 +107,13 @@ func (ibsen *IbsenHttpServer) readEntry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err = ibsen.Storage.ReadBatchFromOffsetNotIncluding(logChan, &wg, vars["topic"], 1000, offset)
+	err = ibsen.Storage.ReadBatchFromOffsetNotIncluding(storage.ReadBatchParam{
+		LogChan:   logChan,
+		Wg:        &wg,
+		Topic:     vars["topic"],
+		BatchSize: 1000,
+		Offset:    offset,
+	})
 
 	if err != nil {
 		log.Println(err)
@@ -141,7 +147,7 @@ func (ibsen *IbsenHttpServer) dropTopic(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func sendMessage(logChan chan logStorage.LogEntryBatch, wg *sync.WaitGroup, w http.ResponseWriter, b64 bool) {
+func sendMessage(logChan chan *storage.LogEntryBatch, wg *sync.WaitGroup, w http.ResponseWriter, b64 bool) {
 	for {
 		entry := <-logChan
 		entries := entry.Entries
