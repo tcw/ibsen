@@ -35,8 +35,8 @@ func (bw BlockWriterParams) writeBatchToFile(file afero.File) (uint64, int64, er
 	offset := bw.offset
 	size := bw.blockSize
 	for _, entry := range bw.LogEntry {
-		offset = offset + 1
 		bytes = append(bytes, createByteEntry(entry, offset)...)
+		offset = offset + 1
 	}
 	n, err := file.Write(bytes)
 	size = size + int64(n)

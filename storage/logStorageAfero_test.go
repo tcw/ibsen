@@ -155,7 +155,7 @@ func TestLogStorage_WriteBatch_ReadBatch(t *testing.T) {
 		}
 	}()
 
-	for i := 1; i < 50001; i = i + 2 {
+	for i := 0; i < 50001; i = i + 2 {
 		entry := <-logChan
 		if entry.Entries[0].Offset != uint64(i) {
 			t.Log("expected ", i, " actual ", entry.Entries[0].Offset)
@@ -214,7 +214,7 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 			Wg:        &wg,
 			Topic:     testTopic1,
 			BatchSize: 2,
-			Offset:    2,
+			Offset:    1,
 		})
 		if err != nil {
 			t.Error(err)
@@ -223,10 +223,10 @@ func TestLogStorage_ReadBatchFromOffsetNotIncluding(t *testing.T) {
 
 	entry := <-logChan
 	t.Log(entry)
-	if entry.Entries[0].Offset != 3 {
+	if entry.Entries[0].Offset != 2 {
 		t.Fail()
 	}
-	if entry.Entries[1].Offset != 4 {
+	if entry.Entries[1].Offset != 3 {
 		t.Fail()
 	}
 }

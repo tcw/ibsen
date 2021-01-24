@@ -18,7 +18,6 @@ type BlockManager struct {
 	blockSize    int64
 }
 
-var EndOfBlock = errors.New("end of block")
 var BlockNotFound = errors.New("block not found")
 
 var crc32q = crc32.MakeTable(crc32.Castagnoli)
@@ -40,7 +39,7 @@ func NewBlockManger(afs *afero.Afero, rootPath string, topic string, maxBlockSiz
 
 func (br *BlockManager) GetBlockFilename(blockIndex int) (string, error) {
 	if blockIndex >= len(br.blocks) {
-		return "", EndOfBlock
+		return "", BlockNotFound
 	}
 	return br.rootPath + separator + br.topic + separator + createBlockFileName(br.blocks[blockIndex]), nil
 }
@@ -59,6 +58,10 @@ func (br *BlockManager) FindBlockIndexContainingOffset(offset uint64) (uint, err
 		}
 	}
 	return uint(len(br.blocks) - 1), nil
+}
+
+func (br *BlockManager) HasNextBlock(blockIndex int) bool {
+	return blockIndex < len(br.blocks)
 }
 
 func (br *BlockManager) WriteBatch(logEntry [][]byte) error {

@@ -69,7 +69,7 @@ func ReadTopic(afs *afero.Afero, readPath string, toBase64 bool) {
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
 			openFile, err := storage.OpenFileForRead(afs, readPath)
-			err = storage.ReadLogBlockFromOffsetNotIncluding(openFile, storage.ReadBatchParam{
+			err = storage.ReadLogFileFromOffsetNotIncluding(openFile, storage.ReadBatchParam{
 				LogChan:   logChannel,
 				Wg:        &wg,
 				Topic:     "",
@@ -96,9 +96,9 @@ func writeToStdOut(c chan *storage.LogEntryBatch, wg *sync.WaitGroup, toBase64 b
 		entry := <-c
 		for _, logEntry := range entry.Entries {
 			if toBase64 {
-				fmt.Printf(textLine, entry.Offset(), base64.StdEncoding.EncodeToString(logEntry.Entry))
+				fmt.Printf(textLine, logEntry.Offset, base64.StdEncoding.EncodeToString(logEntry.Entry))
 			} else {
-				fmt.Printf(textLine, entry.Offset(), string(logEntry.Entry))
+				fmt.Printf(textLine, logEntry.Offset, string(logEntry.Entry))
 			}
 		}
 		wg.Done()

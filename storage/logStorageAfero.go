@@ -60,11 +60,11 @@ func (e LogStorageAfero) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatc
 	if readBatchParam.Offset == blockManager.offset {
 		return nil
 	}
-	read, err := NewTopicReader(e.afs, blockManager)
+	topicReader, err := NewTopicReader(e.afs, blockManager)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	err = read.ReadBatchFromOffsetNotIncluding(readBatchParam)
+	err = topicReader.ReadBatchFromOffsetNotIncluding(readBatchParam)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}

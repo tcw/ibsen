@@ -12,7 +12,7 @@ import (
 	"sync"
 )
 
-func ReadLogBlockFromOffsetNotIncluding(file afero.File, readBatchParam ReadBatchParam) error {
+func ReadLogFileFromOffsetNotIncluding(file afero.File, readBatchParam ReadBatchParam) error {
 
 	if readBatchParam.Offset > 0 {
 		err := fastForwardToOffset(file, int64(readBatchParam.Offset))
@@ -21,7 +21,7 @@ func ReadLogBlockFromOffsetNotIncluding(file afero.File, readBatchParam ReadBatc
 		}
 	}
 
-	partialBatch, _, err := ReadLogInBatchesToEnd(file, nil, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
+	partialBatch, _, err := ReadLogFileInBatches(file, nil, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -32,7 +32,7 @@ func ReadLogBlockFromOffsetNotIncluding(file afero.File, readBatchParam ReadBatc
 	return nil
 }
 
-func ReadLogInBatchesToEnd(file afero.File, partialBatch []LogEntry, logChan chan *LogEntryBatch,
+func ReadLogFileInBatches(file afero.File, partialBatch []LogEntry, logChan chan *LogEntryBatch,
 	wg *sync.WaitGroup, batchSize int) (LogEntryBatch, bool, error) {
 
 	hasSent := false

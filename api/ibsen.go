@@ -1,11 +1,9 @@
 package api
 
 import (
-	"context"
 	"fmt"
 	"github.com/spf13/afero"
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
-	"github.com/tcw/ibsen/api/httpApi"
 	"github.com/tcw/ibsen/consensus"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/storage"
@@ -40,7 +38,6 @@ type IbsenServer struct {
 	InMemory     bool
 	Afs          *afero.Afero
 	DataPath     string
-	UseHttp      bool
 	Host         string
 	Port         int
 	MaxBlockSize int
@@ -78,14 +75,11 @@ func (ibs *IbsenServer) Start() {
 		log.Println(errore.SprintTrace(err))
 		return
 	}
-	if ibs.UseHttp {
-		ibs.startHTTPServer(logStorage)
-	} else {
-		err := ibs.startGRPCServer(logStorage)
-		if err != nil {
-			log.Printf(errore.SprintTrace(err))
-			ibs.ShutdownCleanly()
-		}
+
+	err = ibs.startGRPCServer(logStorage)
+	if err != nil {
+		log.Printf(errore.SprintTrace(err))
+		ibs.ShutdownCleanly()
 	}
 }
 
@@ -101,14 +95,6 @@ func useCpuProfiling(cpuProfile string) {
 		}
 		log.Printf("Started profiling, creating file %s", cpuProfile)
 	}
-}
-
-func (ibs *IbsenServer) startHTTPServer(storage storage.LogStorage) {
-	ibsenHttpServer := httpApi.NewIbsenHttpServer(storage)
-	ibsenHttpServer.Port = uint16(ibs.Port)
-	log.Printf("Ibsen http/1.1 server started on port [%d]\n", ibsenHttpServer.Port)
-	fmt.Print(ibsenFiglet)
-	httpServer = ibsenHttpServer.StartHttpServer()
 }
 
 func (ibs *IbsenServer) startGRPCServer(storage storage.LogStorage) error {
@@ -145,30 +131,21 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 		log.Printf("Ended memory profiling, writing to file %s", ibs.MemProfile)
 	}
 
-	if ibs.UseHttp {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*15)
-		defer cancel()
-		err := httpServer.Shutdown(ctx)
-		if err != nil {
-			log.Println(err)
-		}
-	} else {
-		log.Printf("gracefully stopping grpc server on port [%d]...", ibs.Port)
+	log.Printf("gracefully stopping grpc server on port [%d]...", ibs.Port)
 
-		stopped := make(chan struct{})
-		go func() {
-			ibsenGrpcServer.IbsenServer.GracefulStop()
-			close(stopped)
-		}()
+	stopped := make(chan struct{})
+	go func() {
+		ibsenGrpcServer.IbsenServer.GracefulStop()
+		close(stopped)
+	}()
 
-		t := time.NewTimer(5 * time.Second)
-		select {
-		case <-t.C:
-			log.Println("stopped gRPC server forcefully")
-			ibsenGrpcServer.IbsenServer.Stop()
-		case <-stopped:
-			t.Stop()
-		}
+	t := time.NewTimer(5 * time.Second)
+	select {
+	case <-t.C:
+		log.Println("stopped gRPC server forcefully")
+		ibsenGrpcServer.IbsenServer.Stop()
+	case <-stopped:
+		t.Stop()
 	}
 
 	if !ibs.InMemory {

@@ -17,7 +17,6 @@ import (
 
 var (
 	inMemory       bool
-	useHttp        bool
 	host           string
 	serverPort     int
 	maxBlockSizeMB int
@@ -68,7 +67,6 @@ var (
 				InMemory:     inMemory,
 				Afs:          afs,
 				DataPath:     absolutePath,
-				UseHttp:      useHttp,
 				Host:         host,
 				Port:         serverPort,
 				MaxBlockSize: maxBlockSizeMB,
@@ -219,18 +217,10 @@ func Execute() {
 }
 
 func init() {
-	useHttp, _ = strconv.ParseBool(getenv("IBSEN_HTTP", "false"))
-
-	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(5001)))
+	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(50001)))
 	host = getenv("IBSEN_HOST", "0.0.0.0")
 	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "100"))
 	entries, _ = strconv.Atoi(getenv("IBSEN_ENTRIES", "1000"))
-
-	cmdServer.Flags().BoolVarP(&useHttp, "http", "t", useHttp, "use http 1.1")
-	cmdServer.Flags().Lookup("http").NoOptDefVal = "true"
-	if !useHttp && serverPort == 5001 {
-		serverPort = 50001
-	}
 	rootCmd.Flags().IntVarP(&serverPort, "port", "p", serverPort, "config file (default is current directory)")
 	rootCmd.Flags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")

@@ -3,25 +3,27 @@ package storage
 import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
+	"io"
 )
 
 type TopicReader struct {
 	afs               *afero.Afero
 	blockManager      *BlockManager
-	currentOffset     uint64
 	currentBlockIndex uint
+	currentByteOffset int64
 }
 
 func NewTopicReader(afs *afero.Afero, manager *BlockManager) (*TopicReader, error) {
 	return &TopicReader{
 		afs:               afs,
 		blockManager:      manager,
-		currentOffset:     0,
 		currentBlockIndex: 0,
+		currentByteOffset: 0,
 	}, nil
 }
 
 func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchParam) error {
+
 	currentBlockIndex, err := t.blockManager.FindBlockIndexContainingOffset(readBatchParam.Offset)
 	if err == BlockNotFound {
 		return BlockNotFound
@@ -35,51 +37,78 @@ func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchPa
 		return errore.WrapWithContext(err)
 	}
 	file, err := OpenFileForRead(t.afs, blockFileName)
-	err = ReadLogBlockFromOffsetNotIncluding(file, readBatchParam)
+	err = ReadLogFileFromOffsetNotIncluding(file, readBatchParam)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	return t.readCompleteBlocksInBatchesToTail(readBatchParam, blockIndex+1)
+	if !t.blockManager.HasNextBlock(blockIndex) {
+		seekOffset, err := file.Seek(0, io.SeekCurrent)
+		if err != nil {
+			err = errore.WrapWithContext(err)
+		}
+		t.currentByteOffset = seekOffset
+	} else {
+		blockIndex, err = t.readBlocksInBatchesToTail(readBatchParam, blockIndex+1)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+	}
+	t.currentBlockIndex = uint(blockIndex)
+	return nil
 }
 
-func (t *TopicReader) readCompleteBlocksInBatchesToTail(readBatchParam ReadBatchParam, block int) error {
+func (t *TopicReader) readBlocksInBatchesToTail(readBatchParam ReadBatchParam, block int) (int, error) {
 	blockIndex := block
 	var entriesBytes []LogEntry
 	for {
 		filename, err := t.blockManager.GetBlockFilename(blockIndex)
-		if err != nil && err != EndOfBlock {
-			return errore.WrapWithContext(err)
-		}
-		if err == EndOfBlock && entriesBytes != nil {
-			readBatchParam.Wg.Add(1)
-			readBatchParam.LogChan <- &LogEntryBatch{Entries: entriesBytes}
-			return nil
-		}
-		if err == EndOfBlock {
-			return nil
-		}
-		read, err := OpenFileForRead(t.afs, filename)
-		if err != nil {
-			errC := read.Close()
-			if errC != nil {
-				return errore.WrapWithContext(errC)
+		if err == BlockNotFound {
+			if entriesBytes != nil {
+				readBatchParam.Wg.Add(1)
+				readBatchParam.LogChan <- &LogEntryBatch{Entries: entriesBytes}
 			}
-			return errore.WrapWithContext(err)
+			//TODO: add positional information
+			return blockIndex - 1, nil
 		}
-		partial, hasSent, err := ReadLogInBatchesToEnd(read, entriesBytes, readBatchParam.LogChan,
-			readBatchParam.Wg, readBatchParam.BatchSize)
-
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return blockIndex, errore.WrapWithContext(err)
+		}
+		file, err := OpenFileForRead(t.afs, filename)
+		if err != nil {
+			errC := file.Close()
+			if errC != nil {
+				err = errore.WrapWithContext(errC)
+			}
+			return blockIndex, errore.WrapWithContext(err)
+		}
+		logEntryBatch, hasSent, err := ReadLogFileInBatches(file, entriesBytes, readBatchParam.LogChan,
+			readBatchParam.Wg, readBatchParam.BatchSize)
+		if !t.blockManager.HasNextBlock(blockIndex) {
+			seekOffset, err := file.Seek(0, io.SeekCurrent)
+			if err != nil {
+				err = errore.WrapWithContext(err)
+			}
+			t.currentByteOffset = seekOffset
+		}
+		if err != nil {
+			errC := file.Close()
+			if errC != nil {
+				err = errore.WrapWithContext(errC)
+			}
+			return blockIndex, errore.WrapWithContext(err)
 		}
 		if hasSent {
 			entriesBytes = nil
 		}
-		entriesBytes = append(entriesBytes, partial.Entries...)
-		err = read.Close()
+		entriesBytes = append(entriesBytes, logEntryBatch.Entries...)
+		err = file.Close()
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return blockIndex, errore.WrapWithContext(err)
 		}
-		blockIndex = blockIndex + 1
+		if t.blockManager.HasNextBlock(blockIndex) {
+			blockIndex = blockIndex + 1
+		} else {
+			return blockIndex, nil
+		}
 	}
 }

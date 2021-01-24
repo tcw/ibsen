@@ -22,22 +22,12 @@ docker run --name ibsen_solveig -p 50001:50001 ibsen
 
 ```
 
-#### Run http 1.1 server version
-```shell script
-docker run --name ibsen_peer -e IBSEN_HTTP=true -p 5001:5001 ibsen
-
-```
-
 ## Usage
 
 ### GRPC
 
 clients are under development
 
-
-### Http 1.1
-
-see try.http 
 
 
 ## Development
@@ -97,7 +87,7 @@ ibsen client bench read <topic>
 - improved error recovery/analysis
 - io separated tests (better interfaces)
 - allow reading from the lowest block number
-- block compression (Zstandard,snappy)
+- block compression (Zstandard,snappy) ?
 
 ## Benchmarks
 
@@ -107,3 +97,9 @@ To free reclaimable slab objects (includes dentries and inodes):
 echo 2 > /proc/sys/vm/drop_caches
 To free slab objects and pagecache:
 echo 3 > /proc/sys/vm/drop_caches
+
+## Dir types
+
+$ sudo debugfs /dev/partition
+$ htree /
+htree: Not a hash-indexed directory
