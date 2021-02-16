@@ -117,6 +117,26 @@ var (
 		},
 	}
 
+	cmdClientReadStream = &cobra.Command{
+		Use:              "sread [topic] <offset>",
+		Short:            "sread entries from a topic",
+		Long:             `sread`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			ibsenClient := startClient()
+			if len(args) > 1 {
+				offset, err := strconv.ParseUint(args[1], 10, 64)
+				if err != nil {
+					fmt.Printf("Illegal offset [%s]", args[1])
+				}
+				ibsenClient.ReadSteamingTopic(args[0], offset, uint32(entries))
+			} else {
+				ibsenClient.ReadSteamingTopic(args[0], 0, uint32(entries))
+			}
+		},
+	}
+
 	cmdClientWrite = &cobra.Command{
 		Use:              "write [topic]",
 		Short:            "write entries to a topic",
@@ -234,7 +254,7 @@ func init() {
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdFile)
 	cmdFile.AddCommand(cmdCat, cmdCheck)
 	cmdBench.AddCommand(cmdBenchWrite, cmdBenchRead)
-	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientWrite, cmdBench, cmdClientStatus)
+	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientReadStream, cmdClientWrite, cmdBench, cmdClientStatus)
 }
 
 func getenv(key, fallback string) string {

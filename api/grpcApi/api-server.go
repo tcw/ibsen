@@ -165,7 +165,29 @@ func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
 	var wg sync.WaitGroup
 	go sendBatchMessage(logChan, &wg, outStream)
 
-	err := s.logStorage.ReadBatchFromOffsetNotIncluding(storage.ReadBatchParam{
+	err := s.logStorage.ReadBatch(storage.ReadBatchParam{
+		LogChan:   logChan,
+		Wg:        &wg,
+		Topic:     readParams.Topic,
+		BatchSize: int(readParams.BatchSize),
+		Offset:    readParams.Offset,
+	})
+
+	if err != nil {
+		err = errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
+		return status.Error(codes.Unknown, "Error reading streaming")
+	}
+	wg.Wait()
+	return nil
+}
+
+func (s server) ReadStream(readParams *ReadParams, outStream Ibsen_ReadStreamServer) error {
+	logChan := make(chan *storage.LogEntryBatch)
+	var wg sync.WaitGroup
+	go sendBatchMessage(logChan, &wg, outStream)
+
+	err := s.logStorage.ReadStreamingBatch(storage.ReadBatchParam{
 		LogChan:   logChan,
 		Wg:        &wg,
 		Topic:     readParams.Topic,

@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"io"
+	"sync"
 )
 
 type TopicReader struct {
@@ -20,6 +21,18 @@ func NewTopicReader(afs *afero.Afero, manager *BlockManager) (*TopicReader, erro
 		currentBlockIndex: 0,
 		currentByteOffset: 0,
 	}, nil
+}
+
+func (t *TopicReader) NextReadBatchParam(logChan chan *LogEntryBatch, wg *sync.WaitGroup, batchSize int) ReadBatchParam {
+	return ReadBatchParam{
+		LogChan:    logChan,
+		Wg:         wg,
+		Topic:      t.blockManager.topic,
+		BatchSize:  batchSize,
+		Offset:     t.blockManager.offset,
+		BlockIndex: int(t.currentBlockIndex),
+		ByteOffset: t.currentByteOffset,
+	}
 }
 
 func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchParam) error {

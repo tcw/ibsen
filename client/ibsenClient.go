@@ -103,6 +103,36 @@ func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) 
 	}
 }
 
+func (ic *IbsenClient) ReadSteamingTopic(topic string, offset uint64, batchSize uint32) {
+	entryStream, err := ic.Client.ReadStream(ic.Ctx, &grpcApi.ReadParams{
+		Topic:     topic,
+		Offset:    offset,
+		BatchSize: batchSize,
+	})
+	if err != nil {
+		err := errore.WrapWithContext(err)
+		log.Println(errore.SprintTrace(err))
+		return
+	}
+	stdout := os.Stdout
+	writer := bufio.NewWriter(stdout)
+	defer stdout.Close()
+	for {
+		in, err := entryStream.Recv()
+		entries := in.Entries
+		for _, entry := range entries {
+			line := fmt.Sprintf("%d\t%s\n", entry.Offset, string(entry.Content))
+			_, err = writer.Write([]byte(line))
+			if err != nil {
+				err := errore.WrapWithContext(err)
+				log.Println(errore.SprintTrace(err))
+				return
+			}
+		}
+		writer.Flush()
+	}
+}
+
 func (ic *IbsenClient) WriteTopic(topic string) {
 	r, err := ic.Client.WriteStream(ic.Ctx)
 	if err != nil {

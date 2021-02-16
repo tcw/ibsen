@@ -36,7 +36,7 @@ clients are under development
 
 #### GO
 ```shell script
-protoc --proto_path=api/grpc/golangApi ibsen.proto --go_out=plugins=grpc:./
+protoc --proto_path=api/grpcApi ibsen.proto --go_out=plugins=grpc:./
 ```
 
 #### Java

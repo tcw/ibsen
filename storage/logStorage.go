@@ -9,7 +9,8 @@ type LogStorage interface {
 	Drop(topic string) (bool, error)
 	Status() []*TopicStatusMessage
 	WriteBatch(topicBatchMessage *TopicBatchMessage) (int, error)
-	ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchParam) error
+	ReadBatch(readBatchParam ReadBatchParam) error
+	ReadStreamingBatch(readBatchParam ReadBatchParam) error
 	Close()
 }
 
@@ -47,11 +48,6 @@ func (e *LogEntryBatch) ToArray() [][]byte {
 		bytes = append(bytes, entry.Entry)
 	}
 	return bytes
-}
-
-type TopicMessage struct {
-	Topic   string
-	Message []byte
 }
 
 type TopicBatchMessage struct {

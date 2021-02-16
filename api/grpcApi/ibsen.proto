@@ -21,6 +21,8 @@ service Ibsen {
     }
     rpc read (ReadParams) returns (stream OutputEntries) {
     }
+    rpc readStream (ReadParams) returns (stream OutputEntries) {
+    }
 }
 
 message TopicsStatus {
