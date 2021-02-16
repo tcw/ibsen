@@ -6,8 +6,8 @@ import (
 )
 
 type LogStorageAfero struct {
-	afs           *afero.Afero
-	topicRegister *TopicManager
+	afs          *afero.Afero
+	topicManager *TopicManager
 }
 
 func NewLogStorage(afs *afero.Afero, rootPath string, maxBlockSize int64) (LogStorageAfero, error) {
@@ -21,15 +21,15 @@ func NewLogStorage(afs *afero.Afero, rootPath string, maxBlockSize int64) (LogSt
 var _ LogStorage = LogStorageAfero{} // Verify that interface is implemented.
 
 func (e LogStorageAfero) Create(topic string) (bool, error) {
-	return e.topicRegister.CreateTopic(topic)
+	return e.topicManager.CreateTopic(topic)
 }
 
 func (e LogStorageAfero) Drop(topic string) (bool, error) {
-	return e.topicRegister.DropTopic(topic)
+	return e.topicManager.DropTopic(topic)
 }
 
 func (e LogStorageAfero) Status() []*TopicStatusMessage {
-	topics := e.topicRegister.topics
+	topics := e.topicManager.topics
 	messages := make([]*TopicStatusMessage, 0)
 	for _, manager := range topics {
 		messages = append(messages, &TopicStatusMessage{
@@ -44,7 +44,10 @@ func (e LogStorageAfero) Status() []*TopicStatusMessage {
 }
 
 func (e LogStorageAfero) WriteBatch(topicMessage *TopicBatchMessage) (int, error) {
-	registry := e.topicRegister.topics[topicMessage.Topic]
+	registry := e.topicManager.topics[topicMessage.Topic]
+	if registry == nil {
+		return 0, errore.NewWithContext("No such topic")
+	}
 	err := registry.WriteBatch(topicMessage.Message)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
@@ -53,7 +56,7 @@ func (e LogStorageAfero) WriteBatch(topicMessage *TopicBatchMessage) (int, error
 }
 
 func (e LogStorageAfero) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchParam) error {
-	blockManager := e.topicRegister.topics[readBatchParam.Topic]
+	blockManager := e.topicManager.topics[readBatchParam.Topic]
 	if blockManager == nil {
 		return nil
 	}

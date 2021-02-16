@@ -201,7 +201,10 @@ func (ic *IbsenClient) BenchWrite(topic string, entryByteSize int, entriesInBatc
 		err := errore.WrapWithContext(err)
 		fmt.Println(errore.SprintTrace(err))
 	}
-	milliWithFracion := float64(recv.TimeNano) / float64(time.Millisecond)
+
+	timeUsed := float64(recv.TimeNano)
+	log.Println(timeUsed)
+	milliWithFracion := timeUsed / float64(time.Millisecond)
 	fmt.Printf("Entries written:\t%d\nEntry size:\t\t%d Bytes\nBatches:\t\t%d\nEntires each batch:\t%d\nTime:\t\t\t%f ms\n", recv.Wrote, entryByteSize, batches, entriesInBatch, milliWithFracion)
 	fmt.Printf("Used %d nano seconds per entry\n", recv.TimeNano/recv.Wrote)
 }

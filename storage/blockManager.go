@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/messaging"
 	"hash/crc32"
 	"sort"
 )
@@ -16,6 +17,7 @@ type BlockManager struct {
 	maxBlockSize int64
 	offset       uint64
 	blockSize    int64
+	offsetChange chan uint64
 }
 
 var BlockNotFound = errors.New("block not found")
@@ -28,13 +30,28 @@ func NewBlockManger(afs *afero.Afero, rootPath string, topic string, maxBlockSiz
 		rootPath:     rootPath,
 		topic:        topic,
 		maxBlockSize: maxBlockSize,
+		offsetChange: make(chan uint64),
 	}
 
 	err := manager.loadBlockStatusFromStorage()
 	if err != nil {
 		return BlockManager{}, errore.WrapWithContext(err)
 	}
+	go changeEventDispatch(&manager)
 	return manager, nil
+}
+
+func changeEventDispatch(manager *BlockManager) {
+	for {
+		offset := <-manager.offsetChange
+		messaging.Publish(messaging.Event{
+			Data: messaging.TopicChange{
+				Topic:  manager.topic,
+				Offset: offset,
+			},
+			Type: messaging.TopicChangeEventType,
+		})
+	}
 }
 
 func (br *BlockManager) GetBlockFilename(blockIndex int) (string, error) {
@@ -85,6 +102,10 @@ func (br *BlockManager) WriteBatch(logEntry [][]byte) error {
 	}
 	br.offset = offset
 	br.blockSize = blockSize
+	select {
+	case br.offsetChange <- offset:
+	default:
+	}
 	return nil
 }
 

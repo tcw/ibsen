@@ -16,7 +16,6 @@ import (
 )
 
 var (
-	inMemory       bool
 	host           string
 	serverPort     int
 	maxBlockSizeMB int
@@ -41,12 +40,13 @@ var (
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
-
+			inMemory := false
 			var afs *afero.Afero
 			absolutePath := "/tmp/data"
-			if inMemory {
+			if len(args) == 0 {
 				var fs = afero.NewMemMapFs()
 				afs = &afero.Afero{Fs: fs}
+				inMemory = true
 			} else {
 				var err error
 				if len(args) != 1 {
@@ -226,7 +226,6 @@ func init() {
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "config file")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "config file")
-	cmdServer.Flags().BoolVarP(&inMemory, "inMemory", "i", false, "run in-memory only")
 	cmdCat.Flags().BoolVarP(&toBase64, "base64", "b", false, "Convert messages to base64")
 	cmdClient.Flags().IntVarP(&entries, "entries", "e", entries, "Number of entries in each batch")
 	cmdBenchWrite.Flags().IntVarP(&entryByteSize, "entryByteSize", "s", 100, "Test data entry size in bytes")

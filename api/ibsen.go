@@ -6,6 +6,7 @@ import (
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/consensus"
 	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/messaging"
 	"github.com/tcw/ibsen/storage"
 	"log"
 	"net/http"
@@ -48,17 +49,20 @@ type IbsenServer struct {
 func (ibs *IbsenServer) Start() {
 	go ibs.initSignals()
 
-	exists, err := ibs.Afs.Exists(ibs.DataPath)
-	if err != nil {
-		log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
-	}
-	if !exists {
-		log.Fatalf("path [%s] does not exist, will not start unless existing path is specified", ibs.DataPath)
-	}
-
 	if ibs.InMemory {
 		log.Println("Running in-memory only!")
+		err := ibs.Afs.Mkdir(ibs.DataPath, 600)
+		if err != nil {
+			log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+		}
 	} else {
+		exists, err := ibs.Afs.Exists(ibs.DataPath)
+		if err != nil {
+			log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+		}
+		if !exists {
+			log.Fatalf("path [%s] does not exist, will not start unless existing path is specified", ibs.DataPath)
+		}
 		log.Printf("Waiting for single writer lock on file [%s]...\n", ibs.DataPath)
 		if !ibs.Lock.AcquireLock() {
 			log.Fatalf("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.DataPath)
@@ -75,6 +79,7 @@ func (ibs *IbsenServer) Start() {
 		log.Println(errore.SprintTrace(err))
 		return
 	}
+	messaging.StartGlobalEventDebugging()
 
 	err = ibs.startGRPCServer(logStorage)
 	if err != nil {
