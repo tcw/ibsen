@@ -99,9 +99,9 @@ func subscribeAllOnEventBus(eb *EventBus, ch DataChannel) {
 
 func StartGlobalEventDebugging() {
 	log.Println("started eventbus logging")
-	ch1 := make(chan Event)
-	GlobalEventBus.SubscribeAll(ch1)
-	go debugEventsToLog(ch1)
+	debugChannel := make(chan Event)
+	GlobalEventBus.SubscribeAll(debugChannel)
+	go debugEventsToLog(debugChannel)
 }
 
 func StopGlobalEventDebugging() {

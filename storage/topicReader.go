@@ -4,13 +4,13 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"io"
-	"sync"
 )
 
 type TopicReader struct {
 	afs               *afero.Afero
 	blockManager      *BlockManager
 	currentBlockIndex uint
+	currentOffset     uint64
 	currentByteOffset int64
 }
 
@@ -19,40 +19,29 @@ func NewTopicReader(afs *afero.Afero, manager *BlockManager) (*TopicReader, erro
 		afs:               afs,
 		blockManager:      manager,
 		currentBlockIndex: 0,
+		currentOffset:     0,
 		currentByteOffset: 0,
 	}, nil
 }
 
-func (t *TopicReader) NextReadBatchParam(logChan chan *LogEntryBatch, wg *sync.WaitGroup, batchSize int) ReadBatchParam {
-	return ReadBatchParam{
-		LogChan:    logChan,
-		Wg:         wg,
-		Topic:      t.blockManager.topic,
-		BatchSize:  batchSize,
-		Offset:     t.blockManager.offset,
-		BlockIndex: int(t.currentBlockIndex),
-		ByteOffset: t.currentByteOffset,
-	}
-}
-
-func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchParam) error {
+func (t *TopicReader) ReadFromOffset(readBatchParam ReadBatchParam) (ReadBatchParam, error) {
 
 	currentBlockIndex, err := t.blockManager.FindBlockIndexContainingOffset(readBatchParam.Offset)
 	if err == BlockNotFound {
-		return BlockNotFound
+		return ReadBatchParam{}, BlockNotFound
 	}
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return ReadBatchParam{}, errore.WrapWithContext(err)
 	}
 	blockIndex := int(currentBlockIndex)
 	blockFileName, err := t.blockManager.GetBlockFilename(blockIndex)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return ReadBatchParam{}, errore.WrapWithContext(err)
 	}
 	file, err := OpenFileForRead(t.afs, blockFileName)
-	err = ReadLogFileFromOffsetNotIncluding(file, readBatchParam)
+	err = ReadFileFromLogOffset(file, readBatchParam)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return ReadBatchParam{}, errore.WrapWithContext(err)
 	}
 	if !t.blockManager.HasNextBlock(blockIndex) {
 		seekOffset, err := file.Seek(0, io.SeekCurrent)
@@ -61,41 +50,24 @@ func (t *TopicReader) ReadBatchFromOffsetNotIncluding(readBatchParam ReadBatchPa
 		}
 		t.currentByteOffset = seekOffset
 	} else {
-		blockIndex, err = t.readBlocksInBatchesToTail(readBatchParam, blockIndex+1)
+		blockIndex, err = t.readBlocks(readBatchParam, blockIndex+1)
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return ReadBatchParam{}, errore.WrapWithContext(err)
 		}
 	}
 	t.currentBlockIndex = uint(blockIndex)
-	return nil
+	return ,nil
 }
 
-func (t *TopicReader) readBlocksInBatchesToTail(readBatchParam ReadBatchParam, block int) (int, error) {
+func (t *TopicReader) readBlocks(readBatchParam ReadBatchParam, block int) (int, error) {
 	blockIndex := block
-	var entriesBytes []LogEntry
+
 	for {
-		filename, err := t.blockManager.GetBlockFilename(blockIndex)
+		err := t.readBlock(readBatchParam, blockIndex)
 		if err == BlockNotFound {
-			if entriesBytes != nil {
-				readBatchParam.Wg.Add(1)
-				readBatchParam.LogChan <- &LogEntryBatch{Entries: entriesBytes}
-			}
-			//TODO: add positional information
-			return blockIndex - 1, nil
+			return i, nil // Todo: continue here!!
 		}
-		if err != nil {
-			return blockIndex, errore.WrapWithContext(err)
-		}
-		file, err := OpenFileForRead(t.afs, filename)
-		if err != nil {
-			errC := file.Close()
-			if errC != nil {
-				err = errore.WrapWithContext(errC)
-			}
-			return blockIndex, errore.WrapWithContext(err)
-		}
-		logEntryBatch, hasSent, err := ReadLogFileInBatches(file, entriesBytes, readBatchParam.LogChan,
-			readBatchParam.Wg, readBatchParam.BatchSize)
+
 		if !t.blockManager.HasNextBlock(blockIndex) {
 			seekOffset, err := file.Seek(0, io.SeekCurrent)
 			if err != nil {
@@ -103,17 +75,7 @@ func (t *TopicReader) readBlocksInBatchesToTail(readBatchParam ReadBatchParam, b
 			}
 			t.currentByteOffset = seekOffset
 		}
-		if err != nil {
-			errC := file.Close()
-			if errC != nil {
-				err = errore.WrapWithContext(errC)
-			}
-			return blockIndex, errore.WrapWithContext(err)
-		}
-		if hasSent {
-			entriesBytes = nil
-		}
-		entriesBytes = append(entriesBytes, logEntryBatch.Entries...)
+
 		err = file.Close()
 		if err != nil {
 			return blockIndex, errore.WrapWithContext(err)
@@ -124,4 +86,32 @@ func (t *TopicReader) readBlocksInBatchesToTail(readBatchParam ReadBatchParam, b
 			return blockIndex, nil
 		}
 	}
+}
+
+func (t *TopicReader) readBlock(readBatchParam ReadBatchParam, blockIndex int) error {
+	filename, err := t.blockManager.GetBlockFilename(blockIndex)
+	if err == BlockNotFound {
+		return err
+	}
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	file, err := OpenFileForRead(t.afs, filename)
+	if err != nil {
+		errC := file.Close()
+		if errC != nil {
+			err = errore.WrapWithContext(errC)
+		}
+		return  errore.WrapWithContext(err)
+	}
+	err = ReadFile(file, readBatchParam.LogChan,
+		readBatchParam.Wg, readBatchParam.BatchSize)
+	if err != nil {
+		errC := file.Close()
+		if errC != nil {
+			err = errore.WrapWithContext(errC)
+		}
+		return errore.WrapWithContext(err)
+	}
+	return nil
 }

@@ -12,7 +12,7 @@ import (
 	"sync"
 )
 
-func ReadLogFileFromOffsetNotIncluding(file afero.File, readBatchParam ReadBatchParam) error {
+func ReadFileFromLogOffset(file afero.File, readBatchParam ReadBatchParam) error {
 
 	if readBatchParam.Offset > 0 {
 		err := fastForwardToOffset(file, int64(readBatchParam.Offset))
@@ -21,61 +21,56 @@ func ReadLogFileFromOffsetNotIncluding(file afero.File, readBatchParam ReadBatch
 		}
 	}
 
-	partialBatch, _, err := ReadLogFileInBatches(file, nil, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
+	err := ReadFile(file, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
 	if err != nil {
 		return errore.WrapWithContext(err)
-	}
-	if partialBatch.Entries != nil {
-		readBatchParam.Wg.Add(1)
-		readBatchParam.LogChan <- &LogEntryBatch{Entries: partialBatch.Entries}
 	}
 	return nil
 }
 
-func ReadLogFileInBatches(file afero.File, partialBatch []LogEntry, logChan chan *LogEntryBatch,
-	wg *sync.WaitGroup, batchSize int) (LogEntryBatch, bool, error) {
+func ReadFile(file afero.File, logChan chan *LogEntryBatch,
+	wg *sync.WaitGroup, batchSize int) error {
 
-	hasSent := false
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
 	checksum := make([]byte, 4)
 	var entryBatch []LogEntry
-	if partialBatch != nil {
-		entryBatch = append(entryBatch, partialBatch...)
-	}
+
 	for {
 		if entryBatch != nil && len(entryBatch)%batchSize == 0 {
 			wg.Add(1)
 			logChan <- &LogEntryBatch{Entries: entryBatch}
-			hasSent = true
 			entryBatch = nil
 		}
-
 		_, err := io.ReadFull(reader, bytes)
 		if err == io.EOF {
-			return LogEntryBatch{Entries: entryBatch}, hasSent, nil
+			if entryBatch != nil {
+				wg.Add(1)
+				logChan <- &LogEntryBatch{Entries: entryBatch}
+			}
+			return nil
 		}
 		if err != nil {
-			return LogEntryBatch{}, false, errore.WrapWithContext(err)
+			return errore.WrapWithContext(err)
 		}
 		offset := int64(littleEndianToUint64(bytes))
 
 		_, err = io.ReadFull(reader, checksum)
 		if err != nil {
-			return LogEntryBatch{}, false, errore.WrapWithContext(err)
+			return errore.WrapWithContext(err)
 		}
 		checksumValue := littleEndianToUint32(bytes)
 
 		_, err = io.ReadFull(reader, bytes)
 		if err != nil {
-			return LogEntryBatch{}, false, errore.WrapWithContext(err)
+			return errore.WrapWithContext(err)
 		}
 		size := littleEndianToUint64(bytes)
 
 		entry := make([]byte, size)
 		_, err = io.ReadFull(reader, entry)
 		if err != nil {
-			return LogEntryBatch{}, false, errore.WrapWithContext(err)
+			return errore.WrapWithContext(err)
 		}
 		entryBatch = append(entryBatch, LogEntry{
 			Offset:   uint64(offset),

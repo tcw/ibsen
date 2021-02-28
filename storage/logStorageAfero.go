@@ -69,7 +69,7 @@ func (e LogStorageAfero) ReadBatch(readBatchParam ReadBatchParam) error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	err = topicReader.ReadBatchFromOffsetNotIncluding(readBatchParam)
+	err = topicReader.ReadFromOffset(readBatchParam)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -90,7 +90,7 @@ func (e LogStorageAfero) ReadStreamingBatch(readBatchParam ReadBatchParam) error
 	}
 	topicEventChannel := make(chan messaging.Event)
 	messaging.Subscribe(blockManager.topic, topicEventChannel)
-	err = topicReader.ReadBatchFromOffsetNotIncluding(readBatchParam)
+	err = topicReader.ReadFromOffset(readBatchParam)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -99,10 +99,10 @@ func (e LogStorageAfero) ReadStreamingBatch(readBatchParam ReadBatchParam) error
 		//Todo: fix duplication
 		case <-topicEventChannel:
 			param := topicReader.NextReadBatchParam(readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
-			err = topicReader.ReadBatchFromOffsetNotIncluding(param)
+			err = topicReader.ReadFromOffset(param)
 		case <-time.After(3 * time.Second):
 			param := topicReader.NextReadBatchParam(readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
-			err = topicReader.ReadBatchFromOffsetNotIncluding(param)
+			err = topicReader.ReadFromOffset(param)
 		}
 	}
 }
