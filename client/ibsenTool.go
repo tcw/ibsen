@@ -52,7 +52,7 @@ func ReadTopic(afs *afero.Afero, readPath string, toBase64 bool) {
 				err := errore.WrapWithContext(err)
 				log.Fatal(errore.SprintTrace(err))
 			}
-			err = reader.ReadFromOffset(storage.ReadBatchParam{
+			_, _, err = reader.ReadFromOffset(storage.ReadBatchParam{
 				LogChan:   logChannel,
 				Wg:        &wg,
 				Topic:     "",

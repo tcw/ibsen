@@ -15,13 +15,11 @@ type LogStorage interface {
 }
 
 type ReadBatchParam struct {
-	LogChan    chan *LogEntryBatch
-	Wg         *sync.WaitGroup
-	Topic      string
-	BatchSize  int
-	Offset     uint64
-	BlockIndex int
-	ByteOffset int64
+	LogChan   chan *LogEntryBatch
+	Wg        *sync.WaitGroup
+	Topic     string
+	BatchSize int
+	Offset    uint64
 }
 
 type LogEntryBatch struct {

@@ -12,6 +12,19 @@ import (
 	"sync"
 )
 
+func ReadFileFromLogInternalOffset(file afero.File, readBatchParam ReadBatchParam, internalOffset int64) error {
+	_, err := file.Seek(internalOffset, io.SeekStart)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+
+	err = ReadFile(file, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	return nil
+}
+
 func ReadFileFromLogOffset(file afero.File, readBatchParam ReadBatchParam) error {
 
 	if readBatchParam.Offset > 0 {
