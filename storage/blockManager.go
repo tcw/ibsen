@@ -6,7 +6,6 @@ import (
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/messaging"
 	"hash/crc32"
-	"sort"
 )
 
 type BlockManager struct {
@@ -119,16 +118,16 @@ func (br *BlockManager) currentBlockFileName() (string, error) {
 
 func (br *BlockManager) loadBlockStatusFromStorage() error {
 
-	hasBlocks, sortedBlocks, err := br.findAllBlocksInTopicOrderedAsc()
+	blocks, err := ListLogBlocksInTopicOrderedAsc(br.asf, br.rootPath, br.topic)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	if !hasBlocks {
+	if blocks.isEmpty() {
 		br.setInitBlock()
 		return nil
 	}
 
-	err = br.setCurrentState(sortedBlocks)
+	err = br.setCurrentState(blocks.Blocks)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -155,23 +154,6 @@ func (br *BlockManager) setCurrentState(sortedBlocks []int64) error {
 	br.blockSize = sizeOfLastBlock
 	br.offset = uint64(offset)
 	return nil
-}
-
-func (br *BlockManager) findAllBlocksInTopicOrderedAsc() (bool, []int64, error) {
-	var blocks []int64
-	files, err := listFilesInDirectoryRecursively(br.asf, br.rootPath+separator+br.topic)
-	if err != nil {
-		return false, blocks, errore.WrapWithContext(err)
-	}
-	if len(files) == 0 {
-		return false, blocks, nil
-	}
-	blocks, err = filesToBlocks(files)
-	if err != nil {
-		return false, blocks, errore.WrapWithContext(err)
-	}
-	sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
-	return true, blocks, nil
 }
 
 func (br *BlockManager) setInitBlock() {

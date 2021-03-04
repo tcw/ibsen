@@ -98,7 +98,6 @@ func (e LogStorageAfero) ReadStreamingBatch(readBatchParam ReadBatchParam) error
 	}
 	for {
 		select {
-		//Todo: fix duplication
 		case <-topicEventChannel:
 			blockIndex, internalOffset, err = topicReader.ReadFromInternalOffset(readBatchParam, blockIndex, internalOffset)
 			if err != nil {

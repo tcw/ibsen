@@ -18,10 +18,9 @@ import (
 
 type IbsenClient struct {
 	Client grpcApi.IbsenClient
-	Ctx    context.Context
 }
 
-func Start(target string) IbsenClient {
+func Connect(target string) IbsenClient {
 	conn, err := grpc.Dial(target, grpc.WithInsecure(), grpc.WithBlock(),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32),
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
@@ -31,17 +30,14 @@ func Start(target string) IbsenClient {
 	}
 
 	client := grpcApi.NewIbsenClient(conn)
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(30)*time.Second) //Todo: Handle cancel
 
 	return IbsenClient{
 		Client: client,
-		Ctx:    ctx,
 	}
 }
 
 func (ic *IbsenClient) CreateTopic(topic string) bool {
-
-	create, err := ic.Client.Create(ic.Ctx, &grpcApi.Topic{
+	create, err := ic.Client.Create(context.Background(), &grpcApi.Topic{
 		Name: topic,
 	})
 	if err != nil {
@@ -67,7 +63,7 @@ func (ic *IbsenClient) Status() {
 }
 
 func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) {
-	entryStream, err := ic.Client.Read(ic.Ctx, &grpcApi.ReadParams{
+	entryStream, err := ic.Client.Read(context.Background(), &grpcApi.ReadParams{
 		Topic:     topic,
 		Offset:    offset,
 		BatchSize: batchSize,
@@ -104,7 +100,9 @@ func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) 
 }
 
 func (ic *IbsenClient) ReadSteamingTopic(topic string, offset uint64, batchSize uint32) {
-	entryStream, err := ic.Client.ReadStream(ic.Ctx, &grpcApi.ReadParams{
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+	entryStream, err := ic.Client.ReadStream(ctx, &grpcApi.ReadParams{
 		Topic:     topic,
 		Offset:    offset,
 		BatchSize: batchSize,
@@ -134,7 +132,7 @@ func (ic *IbsenClient) ReadSteamingTopic(topic string, offset uint64, batchSize 
 }
 
 func (ic *IbsenClient) WriteTopic(topic string) {
-	r, err := ic.Client.WriteStream(ic.Ctx)
+	r, err := ic.Client.WriteStream(context.Background())
 	if err != nil {
 		err := errore.WrapWithContext(err)
 		log.Fatalf(errore.SprintTrace(err))
@@ -200,7 +198,8 @@ func (ic *IbsenClient) WriteTopic(topic string) {
 }
 
 func (ic *IbsenClient) BenchWrite(topic string, entryByteSize int, entriesInBatch int, batches int) {
-	r, err := ic.Client.WriteStream(ic.Ctx)
+
+	r, err := ic.Client.WriteStream(context.Background())
 	if err != nil {
 		err := errore.WrapWithContext(err)
 		log.Fatalf(errore.SprintTrace(err))
@@ -240,7 +239,7 @@ func (ic *IbsenClient) BenchWrite(topic string, entryByteSize int, entriesInBatc
 }
 
 func (ic *IbsenClient) BenchRead(topic string, offset uint64, batchSize uint32) {
-	entryStream, err := ic.Client.Read(ic.Ctx, &grpcApi.ReadParams{
+	entryStream, err := ic.Client.Read(context.Background(), &grpcApi.ReadParams{
 		Topic:     topic,
 		Offset:    offset,
 		BatchSize: batchSize,

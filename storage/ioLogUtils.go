@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"os"
-	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -45,39 +45,87 @@ func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	return f, nil
 }
 
-func listUnhiddenDirectoriesInDirectory(afs *afero.Afero, root string) ([]string, error) {
-	var files []string
-	fileInfo, err := afs.ReadDir(root)
-	if err != nil {
-		return files, errore.WrapWithContext(err)
-	}
-	for _, file := range fileInfo {
-		if file.IsDir() {
-			_, name := filepath.Split(file.Name())
-			isHidden := strings.HasPrefix(name, ".")
-			if !isHidden {
-				files = append(files, file.Name())
-			}
-		}
-	}
-	return files, nil
+func createBlockFileName(blockName int64) string {
+	return fmt.Sprintf("%020d.log", blockName)
 }
 
-func listFilesInDirectoryRecursively(afs *afero.Afero, dir string) ([]string, error) {
-	var files []string
-	err := afs.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if path != dir {
-			files = append(files, path)
-		}
-		return nil
-	})
+type TopicBlocks struct {
+	Topic  string
+	Blocks []int64
+}
+
+func emptyTopicBlocks(topic string) TopicBlocks {
+	return TopicBlocks{
+		Topic:  topic,
+		Blocks: make([]int64, 0),
+	}
+}
+
+func (tb *TopicBlocks) blockFilePathsOrderedAsc(rootPath string) []string {
+	var blocks []string
+
+	for _, block := range tb.Blocks {
+		blocks = append(blocks, rootPath+separator+tb.Topic+separator+createBlockFileName(block))
+	}
+	return blocks
+}
+
+func (tb *TopicBlocks) isEmpty() bool {
+	return tb.Blocks == nil || len(tb.Blocks) == 0
+}
+
+func ListLogBlocksInTopicOrderedAsc(afs *afero.Afero, rootPath string, topic string) (TopicBlocks, error) {
+	var blocks []int64
+	files, err := ListFilesInDirectory(afs, rootPath+separator+topic, "log")
+	if err != nil {
+		return emptyTopicBlocks(topic), errore.WrapWithContext(err)
+	}
+	if len(files) == 0 {
+		return TopicBlocks{}, nil
+	}
+	blocks, err = filesToBlocks(files)
+	if err != nil {
+		return emptyTopicBlocks(topic), errore.WrapWithContext(err)
+	}
+	sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
+	return TopicBlocks{
+		Topic:  topic,
+		Blocks: blocks,
+	}, nil
+}
+
+func ListUnhiddenEntriesDirectory(afs *afero.Afero, dir string) ([]string, error) {
+	var filenames []string
+	file, err := OpenFileForRead(afs, dir)
+	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
-	if files == nil {
-		files = make([]string, 0)
+	names, err := file.Readdirnames(0)
+	for _, name := range names {
+		isHidden := strings.HasPrefix(name, ".")
+		if !isHidden {
+			filenames = append(filenames, name)
+		}
 	}
-	return files, nil
+	return filenames, nil
+}
+
+func ListFilesInDirectory(afs *afero.Afero, dir string, filetype string) ([]string, error) {
+	var filenames []string
+	file, err := OpenFileForRead(afs, dir)
+	defer file.Close()
+	if err != nil {
+		return nil, errore.WrapWithContext(err)
+	}
+	names, err := file.Readdirnames(0)
+	for _, name := range names {
+		hasSuffix := strings.HasSuffix(name, "."+filetype)
+		if hasSuffix {
+			filenames = append(filenames, name)
+		}
+	}
+	return filenames, nil
 }
 
 func uint64ToLittleEndian(offset uint64) []byte {

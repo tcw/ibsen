@@ -1,35 +1,42 @@
 package index
 
 import (
-	"github.com/tcw/ibsen/storage"
-	"os"
+	"github.com/spf13/afero"
 )
 
 type Manager struct {
-	topicManger storage.TopicManager
+	afs *afero.Afero
 }
 
-func BuildIndices() {
-
-}
-
-func BuildIndex(topic string) {
+func (m *Manager) DropIndices() {
 
 }
 
-func buildBlockIndex(file os.File) {
+func (m *Manager) BuildIndices() {
 
 }
 
-func buildBlockIndexFromPosition(file os.File, byteOffset int64) {
+func (m *Manager) BuildIndex(topic string) {
 
 }
 
-func FindClosestIndex(topic string, offset uint64) OffsetIndex {
-	return OffsetIndex{} //Todo: implement
+func (m *Manager) DropIndex(topic string) {
+
 }
 
-type OffsetIndex struct {
+func (m *Manager) buildBlockIndex(file afero.File) {
+
+}
+
+func buildBlockIndexFromPosition(file afero.File, byteOffset int64) {
+
+}
+
+func FindClosestIndex(topic string, offset uint64) InternalIndexOffset {
+	return InternalIndexOffset{} //Todo: implement
+}
+
+type InternalIndexOffset struct {
 	blockIndex int32
 	byteOffset int64
 }

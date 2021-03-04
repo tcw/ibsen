@@ -30,7 +30,7 @@ func NewTopicManager(afs *afero.Afero, rootPath string, maxBlockSize int64) (Top
 }
 
 func (tr *TopicManager) UpdateTopicsFromStorage() error {
-	directories, err := listUnhiddenDirectoriesInDirectory(tr.afs, tr.topicsRootPath)
+	directories, err := ListUnhiddenEntriesDirectory(tr.afs, tr.topicsRootPath)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}

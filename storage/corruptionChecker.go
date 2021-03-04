@@ -11,12 +11,12 @@ import (
 )
 
 func performCorruptionCheck(afs *afero.Afero, rootPath string) error {
-	topics, err := listUnhiddenDirectoriesInDirectory(afs, rootPath)
+	topics, err := ListUnhiddenEntriesDirectory(afs, rootPath)
 	if err != nil {
 		return err
 	}
 	for _, v := range topics {
-		filesInDirectory, err := listFilesInDirectoryRecursively(afs, rootPath+separator+v)
+		filesInDirectory, err := ListFilesInDirectory(afs, rootPath+separator+v, "log")
 		if err != nil {
 			return err
 		}

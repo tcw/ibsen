@@ -226,7 +226,7 @@ var (
 
 func startClient() client.IbsenClient {
 	target := host + ":" + strconv.Itoa(serverPort)
-	return client.Start(target)
+	return client.Connect(target)
 }
 
 func Execute() {

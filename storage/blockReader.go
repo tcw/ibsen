@@ -116,10 +116,6 @@ func blockSize(asf *afero.Afero, fileName string) (int64, error) {
 	return fi.Size(), nil
 }
 
-func createBlockFileName(blockName int64) string {
-	return fmt.Sprintf("%020d.log", blockName)
-}
-
 func findLastOffset(afs *afero.Afero, blockFileName string) (int64, error) {
 	var offsetFound int64 = -1
 	file, err := OpenFileForRead(afs, blockFileName)
