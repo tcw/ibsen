@@ -4,27 +4,20 @@ import (
 	"github.com/spf13/afero"
 )
 
-type Manager struct {
-	afs *afero.Afero
+type TopicManager struct {
+	topic string
+	afs   *afero.Afero
 }
 
-func (m *Manager) DropIndices() {
-
-}
-
-func (m *Manager) BuildIndices() {
+func (m *TopicManager) BuildIndex() {
 
 }
 
-func (m *Manager) BuildIndex(topic string) {
+func (m *TopicManager) DropIndex() {
 
 }
 
-func (m *Manager) DropIndex(topic string) {
-
-}
-
-func (m *Manager) buildBlockIndex(file afero.File) {
+func (m *TopicManager) buildBlockIndex(file afero.File) {
 
 }
 

@@ -124,35 +124,6 @@ func TestOpenFileForWrite(t *testing.T) {
 	}
 }
 
-func TestTopicBlocks_blockFilePathsOrderedAsc(t *testing.T) {
-	type fields struct {
-		Topic  string
-		Blocks []int64
-	}
-	type args struct {
-		rootPath string
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   []string
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tb := &TopicBlocks{
-				Topic:  tt.fields.Topic,
-				Blocks: tt.fields.Blocks,
-			}
-			if got := tb.blockFilePathsOrderedAsc(tt.args.rootPath); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("blockFilePathsOrderedAsc() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestTopicBlocks_isEmpty(t *testing.T) {
 	type fields struct {
 		Topic  string
@@ -173,46 +144,6 @@ func TestTopicBlocks_isEmpty(t *testing.T) {
 			}
 			if got := tb.isEmpty(); got != tt.want {
 				t.Errorf("isEmpty() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func Test_createBlockFileName(t *testing.T) {
-	type args struct {
-		blockName int64
-	}
-	tests := []struct {
-		name string
-		args args
-		want string
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := createBlockFileName(tt.args.blockName); got != tt.want {
-				t.Errorf("createBlockFileName() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func Test_emptyTopicBlocks(t *testing.T) {
-	type args struct {
-		topic string
-	}
-	tests := []struct {
-		name string
-		args args
-		want TopicBlocks
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := emptyTopicBlocks(tt.args.topic); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("emptyTopicBlocks() = %v, want %v", got, tt.want)
 			}
 		})
 	}

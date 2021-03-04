@@ -26,7 +26,7 @@ func performCorruptionCheck(afs *afero.Afero, rootPath string) error {
 		}
 		sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
 		lastBlock := blocks[len(blocks)-1]
-		blockFileName := createBlockFileName(lastBlock)
+		blockFileName := createBlockFileName(lastBlock, "log")
 		file, err := OpenFileForRead(afs, blockFileName)
 		if err != nil {
 			return err

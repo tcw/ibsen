@@ -57,7 +57,7 @@ func (br *BlockManager) GetBlockFilename(blockIndex int) (string, error) {
 	if blockIndex >= len(br.blocks) {
 		return "", BlockNotFound
 	}
-	return br.rootPath + separator + br.topic + separator + createBlockFileName(br.blocks[blockIndex]), nil
+	return br.rootPath + separator + br.topic + separator + createBlockFileName(br.blocks[blockIndex], "log"), nil
 }
 
 func (br *BlockManager) FindBlockIndexContainingOffset(offset uint64) (uint, error) {
