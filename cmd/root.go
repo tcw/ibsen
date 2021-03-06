@@ -7,7 +7,9 @@ import (
 	"github.com/tcw/ibsen/api"
 	"github.com/tcw/ibsen/client"
 	"github.com/tcw/ibsen/consensus"
+	"github.com/tcw/ibsen/errore"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -67,13 +69,19 @@ var (
 				InMemory:     inMemory,
 				Afs:          afs,
 				DataPath:     absolutePath,
-				Host:         host,
-				Port:         serverPort,
 				MaxBlockSize: maxBlockSizeMB,
 				CpuProfile:   cpuProfile,
 				MemProfile:   memProfile,
 			}
-			ibsenServer.Start()
+			lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, serverPort))
+			if err != nil {
+				log.Println(errore.SprintTrace(err))
+				return
+			}
+			err = ibsenServer.Start(lis)
+			if err != nil {
+				log.Fatalf(errore.SprintTrace(err))
+			}
 		},
 	}
 

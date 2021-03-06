@@ -7,9 +7,10 @@ import (
 	"strings"
 )
 
-func NewWithContext(err string) error {
+func NewWithContext(format string, v ...interface{}) error {
 	pc, fn, line, _ := runtime.Caller(1)
 	functionName := runtime.FuncForPC(pc).Name()
+	err := fmt.Sprintf(format, v...)
 	return fmt.Errorf("file:[%s:%d] function:[%s] %w", fn, line, functionName, errors.New(err))
 }
 

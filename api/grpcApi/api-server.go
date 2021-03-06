@@ -2,7 +2,6 @@ package grpcApi
 
 import (
 	"context"
-	"fmt"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/storage"
 	"google.golang.org/grpc"
@@ -43,11 +42,7 @@ func NewIbsenGrpcServer(storage storage.LogStorage) *IbsenGrpcServer {
 	}
 }
 
-func (igs *IbsenGrpcServer) StartGRPC() error {
-	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", igs.Host, igs.Port))
-	if err != nil {
-		return errore.WrapWithContext(err)
-	}
+func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener) error {
 	var opts []grpc.ServerOption
 	opts = []grpc.ServerOption{
 		grpc.ConnectionTimeout(time.Second * 30),
@@ -69,7 +64,7 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 	RegisterIbsenServer(grpcServer, &server{
 		logStorage: igs.Storage,
 	})
-	return grpcServer.Serve(lis)
+	return grpcServer.Serve(listener)
 }
 
 var _ IbsenServer = &server{}

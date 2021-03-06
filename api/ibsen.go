@@ -9,6 +9,7 @@ import (
 	"github.com/tcw/ibsen/messaging"
 	"github.com/tcw/ibsen/storage"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -39,33 +40,31 @@ type IbsenServer struct {
 	InMemory     bool
 	Afs          *afero.Afero
 	DataPath     string
-	Host         string
-	Port         int
 	MaxBlockSize int
 	CpuProfile   string
 	MemProfile   string
 }
 
-func (ibs *IbsenServer) Start() {
+func (ibs *IbsenServer) Start(listener net.Listener) error {
 	go ibs.initSignals()
-
+	log.Printf("Using listener: %s", listener.Addr().String())
 	if ibs.InMemory {
 		log.Println("Running in-memory only!")
 		err := ibs.Afs.Mkdir(ibs.DataPath, 600)
 		if err != nil {
-			log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+			return errore.WrapWithContext(err)
 		}
 	} else {
 		exists, err := ibs.Afs.Exists(ibs.DataPath)
 		if err != nil {
-			log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+			return errore.WrapWithContext(err)
 		}
 		if !exists {
-			log.Fatalf("path [%s] does not exist, will not start unless existing path is specified", ibs.DataPath)
+			return errore.NewWithContext("path [%s] does not exist, will not start unless existing path is specified", ibs.DataPath)
 		}
 		log.Printf("Waiting for single writer lock on file [%s]...\n", ibs.DataPath)
 		if !ibs.Lock.AcquireLock() {
-			log.Fatalf("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.DataPath)
+			return errore.NewWithContext("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.DataPath)
 		}
 	}
 
@@ -76,16 +75,14 @@ func (ibs *IbsenServer) Start() {
 	stop := time.Now()
 	log.Printf("loaded existing topic in [%s]", stop.Sub(start).String())
 	if err != nil {
-		log.Println(errore.SprintTrace(err))
-		return
+		return errore.WrapWithContext(err)
 	}
 	messaging.StartGlobalEventDebugging()
-
-	err = ibs.startGRPCServer(logStorage)
+	err = ibs.startGRPCServer(listener, logStorage)
 	if err != nil {
-		log.Printf(errore.SprintTrace(err))
-		ibs.ShutdownCleanly()
+		return errore.WrapWithContext(err)
 	}
+	return nil
 }
 
 func useCpuProfiling(cpuProfile string) {
@@ -102,13 +99,12 @@ func useCpuProfiling(cpuProfile string) {
 	}
 }
 
-func (ibs *IbsenServer) startGRPCServer(storage storage.LogStorage) error {
+func (ibs *IbsenServer) startGRPCServer(lis net.Listener, storage storage.LogStorage) error {
 	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage)
-	ibsenGrpcServer.Port = uint16(ibs.Port)
-	ibsenGrpcServer.Host = ibs.Host
 	log.Printf("Ibsen grpc server started on [%s:%d]\n", ibsenGrpcServer.Host, ibsenGrpcServer.Port)
+	log.Printf("With listener: [%s]\n", lis.Addr().String())
 	fmt.Print(ibsenFiglet)
-	err := ibsenGrpcServer.StartGRPC()
+	err := ibsenGrpcServer.StartGRPC(lis)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -136,7 +132,7 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 		log.Printf("Ended memory profiling, writing to file %s", ibs.MemProfile)
 	}
 
-	log.Printf("gracefully stopping grpc server on port [%d]...", ibs.Port)
+	log.Println("gracefully stopping grpc server...")
 
 	stopped := make(chan struct{})
 	go func() {

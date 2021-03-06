@@ -20,6 +20,8 @@ type FileLock struct {
 	uniqueId     string
 }
 
+type NoFileLock struct{}
+
 func NewFileLock(afero *afero.Afero, lockFilePath string, waitFor time.Duration) FileLock {
 	return FileLock{
 		afero:        afero,
@@ -27,6 +29,14 @@ func NewFileLock(afero *afero.Afero, lockFilePath string, waitFor time.Duration)
 		waitFor:      waitFor,
 		uniqueId:     uuid.New().String(),
 	}
+}
+
+func (nfl NoFileLock) AcquireLock() bool {
+	return true
+}
+
+func (nfl NoFileLock) ReleaseLock() bool {
+	return true
 }
 
 func (fl FileLock) AcquireLock() bool {
