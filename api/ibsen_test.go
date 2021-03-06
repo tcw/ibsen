@@ -8,6 +8,7 @@ import (
 	"github.com/tcw/ibsen/errore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
+	"io"
 	"math"
 	"math/rand"
 	"net"
@@ -43,6 +44,11 @@ func TestIbsenServer_Create_Topic(t *testing.T) {
 
 func TestIbsenServer_Write_Read_Topic(t *testing.T) {
 
+	const entriesByteSize = 1000
+	const entriesInBatch = 100
+	const batches = 100
+	const expectedEntries = entriesInBatch * batches
+
 	lis := bufconn.Listen(bufSize)
 	server := createServer()
 	go serverStarter(t, lis, &server)
@@ -64,30 +70,39 @@ func TestIbsenServer_Write_Read_Topic(t *testing.T) {
 	if !create.Created {
 		t.Fail()
 	}
-	wrote, err := client.Write(ctx, &grpcApi.InputEntries{
-		Topic:   "testTopic",
-		Entries: createTestEntries(1000, 100),
-	})
-	if err != nil {
-		t.Error(errore.WrapWithContext(err))
-	}
-	if wrote.Wrote != 1000 {
-		t.Fail()
+	for i := 0; i < batches; i++ {
+		wrote, err := client.Write(ctx, &grpcApi.InputEntries{
+			Topic:   "testTopic",
+			Entries: createTestEntries(entriesInBatch, entriesByteSize),
+		})
+		if err != nil {
+			t.Error(errore.WrapWithContext(err))
+		}
+		if wrote.Wrote != entriesInBatch {
+			t.Fail()
+		}
 	}
 
 	read, err := client.Read(ctx, &grpcApi.ReadParams{
 		Topic:     "testTopic",
 		Offset:    0,
-		BatchSize: 10000,
+		BatchSize: 10,
 	})
 	if err != nil {
 		t.Error(errore.WrapWithContext(err))
 	}
-	recv, err := read.Recv()
-	if err != nil {
-		t.Error(errore.WrapWithContext(err))
+	entries := 0
+	for true {
+		recv, err := read.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Error(errore.WrapWithContext(err))
+		}
+		entries = entries + len(recv.Entries)
 	}
-	if len(recv.Entries) != 1000 {
+	if entries != expectedEntries {
 		t.Fail()
 	}
 }
@@ -140,7 +155,7 @@ func createServer() IbsenServer {
 		InMemory:     true,
 		Afs:          afs,
 		DataPath:     "/tmp/data",
-		MaxBlockSize: 10,
+		MaxBlockSize: 1,
 		CpuProfile:   "",
 		MemProfile:   "",
 	}
