@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const separator = string(os.PathSeparator)
+const Separator = string(os.PathSeparator)
 
 func OpenFileForReadWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	f, err := afs.OpenFile(fileName,
@@ -45,8 +45,16 @@ func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	return f, nil
 }
 
-func createBlockFileName(blockName int64, fileType string) string {
+func CreateBlockFileName(blockName int64, fileType string) string {
 	return fmt.Sprintf("%020d.%s", blockName, fileType)
+}
+
+func CreateLogBlockFilename(rootPath string, topic string, block int64) string {
+	return rootPath + Separator + topic + Separator + CreateBlockFileName(block, "log")
+}
+
+func CreateIndexBlockFilename(rootPath string, topic string, block int64) string {
+	return rootPath + Separator + topic + Separator + CreateBlockFileName(block, "index")
 }
 
 type TopicBlocks struct {
@@ -63,10 +71,32 @@ func EmptyTopicBlocks(topic string, fileType string) TopicBlocks {
 	}
 }
 
+func (tb *TopicBlocks) Size() int {
+	return len(tb.Blocks)
+}
+
+//LastBlock returns the content of the last block (offset from filename), if
+//no the block array is empty it returns BlockNotFound
+func (tb *TopicBlocks) LastBlock() (int64, error) {
+	size := tb.Size()
+	if size == 0 {
+		return 0, BlockNotFound
+	}
+	return tb.Blocks[size-1], nil
+}
+
+func (tb *TopicBlocks) LastBlockFileName(rootPath string) (string, error) {
+	block, err := tb.LastBlock()
+	if err != nil {
+		return "", err
+	}
+	return rootPath + Separator + tb.Topic + Separator + CreateBlockFileName(block, tb.FileType), nil
+}
+
 func (tb *TopicBlocks) BlockFilePathsOrderedAsc(rootPath string) []string {
 	var blocks []string
 	for _, block := range tb.Blocks {
-		blocks = append(blocks, rootPath+separator+tb.Topic+separator+createBlockFileName(block, tb.FileType))
+		blocks = append(blocks, rootPath+Separator+tb.Topic+Separator+CreateBlockFileName(block, tb.FileType))
 	}
 	return blocks
 }
@@ -119,7 +149,7 @@ func ListIndexBlocksInTopicOrderedAsc(afs *afero.Afero, rootPath string, topic s
 
 func listBlocksInTopicOrderedAsc(afs *afero.Afero, rootPath string, topic string, filetype string) (TopicBlocks, error) {
 	var blocks []int64
-	files, err := ListFilesInDirectory(afs, rootPath+separator+topic, filetype)
+	files, err := ListFilesInDirectory(afs, rootPath+Separator+topic, filetype)
 	if err != nil {
 		return EmptyTopicBlocks(topic, filetype), errore.WrapWithContext(err)
 	}

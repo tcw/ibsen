@@ -56,7 +56,7 @@ func (tr *TopicManager) CreateTopic(topic string) (bool, error) {
 	if tr.doesTopicExist(topic) {
 		return false, nil
 	}
-	err := tr.afs.Mkdir(tr.topicsRootPath+separator+topic, 0777) //Todo: more restrictive
+	err := tr.afs.Mkdir(tr.topicsRootPath+Separator+topic, 0777) //Todo: more restrictive
 	if err != nil {
 		return false, errore.WrapWithContext(err)
 	}
@@ -74,8 +74,8 @@ func (tr *TopicManager) DropTopic(topic string) (bool, error) {
 	if !tr.doesTopicExist(topic) {
 		return false, nil
 	}
-	oldLocation := tr.topicsRootPath + separator + topic
-	newLocation := tr.topicsRootPath + separator + "." + topic
+	oldLocation := tr.topicsRootPath + Separator + topic
+	newLocation := tr.topicsRootPath + Separator + "." + topic
 	err := tr.afs.Rename(oldLocation, newLocation)
 	if err != nil {
 		return false, errore.WrapWithContext(err)

@@ -16,7 +16,7 @@ func performCorruptionCheck(afs *afero.Afero, rootPath string) error {
 		return err
 	}
 	for _, v := range topics {
-		filesInDirectory, err := ListFilesInDirectory(afs, rootPath+separator+v, "log")
+		filesInDirectory, err := ListFilesInDirectory(afs, rootPath+Separator+v, "log")
 		if err != nil {
 			return err
 		}
@@ -26,7 +26,7 @@ func performCorruptionCheck(afs *afero.Afero, rootPath string) error {
 		}
 		sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
 		lastBlock := blocks[len(blocks)-1]
-		blockFileName := createBlockFileName(lastBlock, "log")
+		blockFileName := CreateBlockFileName(lastBlock, "log")
 		file, err := OpenFileForRead(afs, blockFileName)
 		if err != nil {
 			return err
