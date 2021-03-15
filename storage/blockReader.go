@@ -183,14 +183,14 @@ func fastForwardToOffset(file afero.File, offset int64) error {
 }
 
 type OffsetPosition struct {
-	Offset     int64
-	ByteOffset int64
+	Offset     uint64
+	ByteOffset uint64
 }
 
 func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int) ([]OffsetPosition, error) {
 	var entriesFound int = 0
 	var offsets []OffsetPosition
-	var offset int64
+	var offset uint64
 	var byteSum int64 = 0
 	for {
 		if entriesFound >= maxEntriesFound {
@@ -206,7 +206,7 @@ func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int) ([]OffsetPosi
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		offset = int64(littleEndianToUint64(bytes))
+		offset = littleEndianToUint64(bytes)
 		_, err = io.ReadFull(file, checksum)
 		byteSum = byteSum + 4
 		if err != nil {
@@ -225,7 +225,7 @@ func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int) ([]OffsetPosi
 		}
 		offsets = append(offsets, OffsetPosition{
 			Offset:     offset,
-			ByteOffset: byteSum,
+			ByteOffset: uint64(byteSum),
 		})
 		entriesFound = entriesFound + 1
 	}

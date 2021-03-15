@@ -1,9 +1,11 @@
 package index
 
 import (
+	"github.com/golang/protobuf/proto"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/storage"
+	"google.golang.org/protobuf/encoding/protowire"
 	"log"
 	"sync"
 )
@@ -12,7 +14,7 @@ type TopicManager struct {
 	topic    string
 	afs      *afero.Afero
 	rootPath string
-	mu sync.Mutex
+	mu       sync.Mutex
 }
 
 func (m *TopicManager) BuildIndex() error {
@@ -48,7 +50,7 @@ func (m *TopicManager) StartWatching() error {
 		return errore.WrapWithContext(err)
 	}
 	name, err := indexBlocks.LastBlockFileName(m.rootPath)
-	if err == storage.BlockNotFound{
+	if err == storage.BlockNotFound {
 		//index all blocks
 	}
 	log.Println(indexBlocks)
@@ -66,31 +68,39 @@ func (m *TopicManager) buildBlockIndex(block int64) error {
 		return errore.WrapWithContext(err)
 	}
 	byteOffset, err := m.findIndexBlockLastByteOffset(block)
-	if err != nil{
+	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	storage.ReadOffsetAndByteOffset(,1000)
+
+	hasMore := true
+	for hasMore {
+		positions, err := storage.ReadOffsetAndByteOffset(logFile, 1000)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+		if positions == nil {
+			hasMore = false
+		}
+	}
 
 }
 
-func (m *TopicManager)findIndexBlockLastByteOffset(block int64) (int64, error) {
+func (m *TopicManager) findIndexBlockLastByteOffset(block int64) (int64, error) {
 	indexBlockFilename := storage.CreateIndexBlockFilename(m.rootPath, m.topic, block)
 	indexFile, err := storage.OpenFileForRead(m.afs, indexBlockFilename)
-	if err != nil{
+	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
 	return findLastByteOffset(indexFile)
 }
 
 func findLastByteOffset(file afero.File) (int64, error) {
-	return 0,nil //todo: implement
+	return 0, nil //todo: implement
 }
-
 
 func FindClosestIndex(topic string, offset uint64) InternalIndexOffset {
 	return InternalIndexOffset{} //Todo: implement
 }
-
 
 type InternalIndexOffset struct {
 	blockIndex int32

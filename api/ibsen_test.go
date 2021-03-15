@@ -86,7 +86,7 @@ func TestIbsenServer_Write_Read_Topic(t *testing.T) {
 	read, err := client.Read(ctx, &grpcApi.ReadParams{
 		Topic:     "testTopic",
 		Offset:    0,
-		BatchSize: 10,
+		BatchSize: 103,
 	})
 	if err != nil {
 		t.Error(errore.WrapWithContext(err))
