@@ -1,11 +1,9 @@
 package index
 
 import (
-	"github.com/golang/protobuf/proto"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/storage"
-	"google.golang.org/protobuf/encoding/protowire"
 	"log"
 	"sync"
 )
@@ -49,7 +47,7 @@ func (m *TopicManager) StartWatching() error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	name, err := indexBlocks.LastBlockFileName(m.rootPath)
+	_, err = indexBlocks.LastBlockFileName(m.rootPath)
 	if err == storage.BlockNotFound {
 		//index all blocks
 	}
@@ -67,7 +65,7 @@ func (m *TopicManager) buildBlockIndex(block int64) error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	byteOffset, err := m.findIndexBlockLastByteOffset(block)
+	_, err = m.findIndexBlockLastByteOffset(block)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -82,7 +80,7 @@ func (m *TopicManager) buildBlockIndex(block int64) error {
 			hasMore = false
 		}
 	}
-
+	return nil
 }
 
 func (m *TopicManager) findIndexBlockLastByteOffset(block int64) (int64, error) {

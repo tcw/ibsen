@@ -9,8 +9,21 @@ import (
 	"io"
 )
 
-func writeToFile(file afero.File, offsetPositions []storage.OffsetPosition) error {
-	protowire.AppendVarint()
+func writeToFile(file afero.File, previousPosition storage.OffsetPosition, offsetPositions []storage.OffsetPosition) error {
+	var bytes []byte
+	lastPosition := previousPosition
+	for _, position := range offsetPositions {
+		bytes = protowire.AppendVarint(bytes, position.Offset-lastPosition.Offset)
+		bytes = protowire.AppendVarint(bytes, position.ByteOffset-lastPosition.ByteOffset)
+		lastPosition = storage.OffsetPosition{
+			Offset:     position.Offset,
+			ByteOffset: position.ByteOffset,
+		}
+	}
+	_, err := file.Write(bytes)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
 	return nil
 }
 
@@ -38,7 +51,8 @@ func readFromFile(afs *afero.Afero, indexFileName string) (map[Offset]ByteOffset
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		if isLittleEndianMSBSet(byteValue[0]) {
+		number = append(number, byteValue[0])
+		if !isLittleEndianMSBSet(byteValue[0]) {
 			varint, n := protowire.ConsumeVarint(number)
 			if n < 0 {
 				return nil, errore.NewWithContext("Vararg returned negative number, indicating a parsing error")
@@ -50,8 +64,7 @@ func readFromFile(afs *afero.Afero, indexFileName string) (map[Offset]ByteOffset
 				positions[Offset(offset)] = ByteOffset(byteOffset)
 			}
 			counter = counter + 1
-		} else {
-			number = append(number, byteValue[0])
+			number = make([]byte, 0)
 		}
 	}
 	return positions, err
