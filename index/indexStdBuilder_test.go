@@ -14,7 +14,7 @@ func newAfero() *afero.Afero {
 
 func Test_writeToFile(t *testing.T) {
 	afs := newAfero()
-	file, err := afs.TempFile("test", "testing-")
+	file, err := afs.Create("00000000000000000000.index")
 	if err != nil {
 		t.Error(err)
 	}
