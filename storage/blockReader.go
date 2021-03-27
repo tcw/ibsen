@@ -4,11 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"io"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 )
 
@@ -66,19 +65,19 @@ func ReadFile(file afero.File, logChan chan *LogEntryBatch,
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		offset := int64(littleEndianToUint64(bytes))
+		offset := int64(commons.LittleEndianToUint64(bytes))
 
 		_, err = io.ReadFull(reader, checksum)
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		checksumValue := littleEndianToUint32(bytes)
+		checksumValue := commons.LittleEndianToUint32(bytes)
 
 		_, err = io.ReadFull(reader, bytes)
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		size := littleEndianToUint64(bytes)
+		size := commons.LittleEndianToUint64(bytes)
 
 		entry := make([]byte, size)
 		_, err = io.ReadFull(reader, entry)
@@ -118,7 +117,7 @@ func blockSize(asf *afero.Afero, fileName string) (int64, error) {
 
 func findLastOffset(afs *afero.Afero, blockFileName string) (int64, error) {
 	var offsetFound int64 = 0
-	file, err := OpenFileForRead(afs, blockFileName)
+	file, err := commons.OpenFileForRead(afs, blockFileName)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
@@ -133,7 +132,7 @@ func findLastOffset(afs *afero.Afero, blockFileName string) (int64, error) {
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
 		}
-		offsetFound = int64(littleEndianToUint64(bytes))
+		offsetFound = int64(commons.LittleEndianToUint64(bytes))
 		_, err = io.ReadFull(file, checksum)
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
@@ -142,7 +141,7 @@ func findLastOffset(afs *afero.Afero, blockFileName string) (int64, error) {
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
 		}
-		size := littleEndianToUint64(bytes)
+		size := commons.LittleEndianToUint64(bytes)
 		_, err = file.Seek(int64(size), 1)
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
@@ -165,7 +164,7 @@ func fastForwardToOffset(file afero.File, offset int64) error {
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		offsetFound = int64(littleEndianToUint64(bytes))
+		offsetFound = int64(commons.LittleEndianToUint64(bytes))
 		_, err = io.ReadFull(file, checksum)
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -174,7 +173,7 @@ func fastForwardToOffset(file afero.File, offset int64) error {
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		size := littleEndianToUint64(bytes)
+		size := commons.LittleEndianToUint64(bytes)
 		_, err = (file).Seek(int64(size), 1)
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -187,7 +186,7 @@ type OffsetPosition struct {
 	ByteOffset uint64
 }
 
-func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int) ([]OffsetPosition, error) {
+func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int, modulo uint32) ([]OffsetPosition, error) {
 	var entriesFound int = 0
 	var offsets []OffsetPosition
 	var offset uint64
@@ -206,7 +205,7 @@ func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int) ([]OffsetPosi
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		offset = littleEndianToUint64(bytes)
+		offset = commons.LittleEndianToUint64(bytes)
 		_, err = io.ReadFull(file, checksum)
 		byteSum = byteSum + 4
 		if err != nil {
@@ -217,35 +216,18 @@ func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int) ([]OffsetPosi
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		size := littleEndianToUint64(bytes)
+		size := commons.LittleEndianToUint64(bytes)
 		byteSum = byteSum + int64(size)
 		_, err = (file).Seek(int64(size), 1)
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		offsets = append(offsets, OffsetPosition{
-			Offset:     offset,
-			ByteOffset: uint64(byteSum),
-		})
-		entriesFound = entriesFound + 1
-	}
-}
-
-func filesToBlocks(files []string) ([]int64, error) {
-	var blocks []int64
-	for _, file := range files {
-		splitFileName := strings.Split(file, ".")
-		if len(splitFileName) != 2 {
-			continue
-		}
-		if splitFileName[1] == "log" {
-			splitPath := strings.Split(splitFileName[0], Separator)
-			parseUint, err := strconv.ParseInt(splitPath[len(splitPath)-1], 10, 64)
-			if err != nil {
-				return nil, errore.WrapWithContext(err)
-			}
-			blocks = append(blocks, parseUint)
+		if (offset)%uint64(modulo) == 0 {
+			offsets = append(offsets, OffsetPosition{
+				Offset:     offset,
+				ByteOffset: uint64(byteSum),
+			})
+			entriesFound = entriesFound + 1
 		}
 	}
-	return blocks, nil
 }

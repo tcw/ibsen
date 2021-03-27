@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"io"
 )
@@ -39,7 +40,7 @@ func (t *TopicReader) readFrom(readBatchParam ReadBatchParam, blockIndex int, in
 	if err != nil {
 		return 0, 0, errore.WrapWithContext(err)
 	}
-	file, err := OpenFileForRead(t.afs, blockFileName)
+	file, err := commons.OpenFileForRead(t.afs, blockFileName)
 	if internalOffset == 0 {
 		err = ReadFileFromLogOffset(file, readBatchParam)
 	} else {
@@ -90,7 +91,7 @@ func (t *TopicReader) readBlock(readBatchParam ReadBatchParam, blockIndex int) e
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	file, err := OpenFileForRead(t.afs, filename)
+	file, err := commons.OpenFileForRead(t.afs, filename)
 	if err != nil {
 		errC := file.Close()
 		if errC != nil {

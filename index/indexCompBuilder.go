@@ -3,6 +3,7 @@ package index
 import (
 	"bufio"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/storage"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -27,11 +28,8 @@ func writeToFile(file afero.File, previousPosition storage.OffsetPosition, offse
 	return nil
 }
 
-type Offset uint64
-type ByteOffset uint64
-
 func readFromFile(afs *afero.Afero, indexFileName string) (map[Offset]ByteOffset, error) {
-	file, err := storage.OpenFileForRead(afs, indexFileName)
+	file, err := commons.OpenFileForRead(afs, indexFileName)
 	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)

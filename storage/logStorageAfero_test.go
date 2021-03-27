@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"os"
 	"sync"
@@ -266,7 +267,7 @@ func TestLogStorage_Corruption(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	file, err := OpenFileForReadWrite(afs, blockFileName)
+	file, err := commons.OpenFileForReadWrite(afs, blockFileName)
 	corruption, err := checkForCorruption(file)
 	if err != nil {
 		t.Error(err, corruption)
@@ -278,7 +279,7 @@ func TestLogStorage_Corruption(t *testing.T) {
 	}
 	file.Sync()
 	file.Close()
-	file, err = OpenFileForReadWrite(afs, blockFileName)
+	file, err = commons.OpenFileForReadWrite(afs, blockFileName)
 	corruption, err = checkForCorruption(file)
 	if err == nil {
 		t.Error("Did not detect corruption")
@@ -288,7 +289,7 @@ func TestLogStorage_Corruption(t *testing.T) {
 	if err != nil {
 		t.Error(errore.SprintTrace(err))
 	}
-	file, err = OpenFileForReadWrite(afs, blockFileName)
+	file, err = commons.OpenFileForReadWrite(afs, blockFileName)
 	corruption, err = checkForCorruption(file)
 	if err != nil {
 		t.Error(err, corruption)

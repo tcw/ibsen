@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"hash/crc32"
 	"io"
@@ -11,12 +12,12 @@ import (
 )
 
 func performCorruptionCheck(afs *afero.Afero, rootPath string) error {
-	topics, err := ListUnhiddenEntriesDirectory(afs, rootPath)
+	topics, err := commons.ListUnhiddenEntriesDirectory(afs, rootPath)
 	if err != nil {
 		return err
 	}
 	for _, v := range topics {
-		filesInDirectory, err := ListFilesInDirectory(afs, rootPath+Separator+v, "log")
+		filesInDirectory, err := commons.ListFilesInDirectory(afs, rootPath+commons.Separator+v, "log")
 		if err != nil {
 			return err
 		}
@@ -26,8 +27,8 @@ func performCorruptionCheck(afs *afero.Afero, rootPath string) error {
 		}
 		sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
 		lastBlock := blocks[len(blocks)-1]
-		blockFileName := CreateBlockFileName(lastBlock, "log")
-		file, err := OpenFileForRead(afs, blockFileName)
+		blockFileName := commons.CreateBlockFileName(lastBlock, "log")
+		file, err := commons.OpenFileForRead(afs, blockFileName)
 		if err != nil {
 			return err
 		}
@@ -49,12 +50,12 @@ func correctFile(afs *afero.Afero, filename string, safePoint int) error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	file, err := OpenFileForRead(afs, corruptFile)
+	file, err := commons.OpenFileForRead(afs, corruptFile)
 	defer file.Close()
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	correctedFile, err := OpenFileForWrite(afs, orgFileName)
+	correctedFile, err := commons.OpenFileForWrite(afs, orgFileName)
 	defer correctedFile.Sync()
 	defer correctedFile.Close()
 	if err != nil {
@@ -100,7 +101,7 @@ func checkForCorruption(file afero.File) (int, error) {
 		if err != nil {
 			return lastSafePoint, errore.WrapWithContext(err)
 		}
-		offset := int64(littleEndianToUint64(offsetBytes))
+		offset := int64(commons.LittleEndianToUint64(offsetBytes))
 		if currentOffset != -1 {
 			if currentOffset+1 != offset {
 				return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
@@ -112,13 +113,13 @@ func checkForCorruption(file afero.File) (int, error) {
 		if err != nil {
 			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
 		}
-		checksumValue := littleEndianToUint32(checksum)
+		checksumValue := commons.LittleEndianToUint32(checksum)
 
 		n, err = io.ReadFull(file, byteSizeBytes)
 		if err != nil {
 			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
 		}
-		size := littleEndianToUint64(byteSizeBytes)
+		size := commons.LittleEndianToUint64(byteSizeBytes)
 
 		entryBytes := make([]byte, size)
 		n, err4 := io.ReadFull(file, entryBytes)

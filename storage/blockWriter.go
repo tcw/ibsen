@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"hash/crc32"
 )
@@ -15,7 +16,7 @@ type BlockWriterParams struct {
 }
 
 func (bw BlockWriterParams) WriteBatch() (uint64, int64, error) {
-	writer, err := OpenFileForWrite(bw.Afs, bw.Filename)
+	writer, err := commons.OpenFileForWrite(bw.Afs, bw.Filename)
 	if err != nil {
 		return bw.offset, bw.blockSize, errore.WrapWithContext(err)
 	}
@@ -47,12 +48,12 @@ func (bw BlockWriterParams) writeBatchToFile(file afero.File) (uint64, int64, er
 }
 
 func createByteEntry(entry []byte, currentOffset uint64) []byte {
-	offset := uint64ToLittleEndian(currentOffset)
-	byteSize := intToLittleEndian(len(entry))
+	offset := commons.Uint64ToLittleEndian(currentOffset)
+	byteSize := commons.IntToLittleEndian(len(entry))
 	checksum := crc32.Checksum(offset, crc32q)
 	checksum = crc32.Update(checksum, crc32q, byteSize)
 	checksum = crc32.Update(checksum, crc32q, entry)
-	check := uint32ToLittleEndian(checksum)
+	check := commons.Uint32ToLittleEndian(checksum)
 	bytes := append(offset, check...)
 	bytes = append(bytes, byteSize...)
 	bytes = append(bytes, entry...)

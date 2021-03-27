@@ -1,4 +1,4 @@
-package storage
+package commons
 
 import (
 	"github.com/spf13/afero"
@@ -124,51 +124,6 @@ func TestOpenFileForWrite(t *testing.T) {
 	}
 }
 
-func TestTopicBlocks_isEmpty(t *testing.T) {
-	type fields struct {
-		Topic  string
-		Blocks []int64
-	}
-	tests := []struct {
-		name   string
-		fields fields
-		want   bool
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tb := &TopicBlocks{
-				Topic:  tt.fields.Topic,
-				Blocks: tt.fields.Blocks,
-			}
-			if got := tb.isEmpty(); got != tt.want {
-				t.Errorf("isEmpty() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func Test_intToLittleEndian(t *testing.T) {
-	type args struct {
-		number int
-	}
-	tests := []struct {
-		name string
-		args args
-		want []byte
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := intToLittleEndian(tt.args.number); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("intToLittleEndian() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func Test_ListUnhiddenEntriesDirectory(t *testing.T) {
 
 	var fs = afero.NewMemMapFs()
@@ -199,86 +154,6 @@ func Test_ListUnhiddenEntriesDirectory(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ListUnhiddenEntriesDirectory() got = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func Test_littleEndianToUint32(t *testing.T) {
-	type args struct {
-		bytes []byte
-	}
-	tests := []struct {
-		name string
-		args args
-		want uint32
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := littleEndianToUint32(tt.args.bytes); got != tt.want {
-				t.Errorf("littleEndianToUint32() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func Test_littleEndianToUint64(t *testing.T) {
-	type args struct {
-		bytes []byte
-	}
-	tests := []struct {
-		name string
-		args args
-		want uint64
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := littleEndianToUint64(tt.args.bytes); got != tt.want {
-				t.Errorf("littleEndianToUint64() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func Test_uint32ToLittleEndian(t *testing.T) {
-	type args struct {
-		number uint32
-	}
-	tests := []struct {
-		name string
-		args args
-		want []byte
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := uint32ToLittleEndian(tt.args.number); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("uint32ToLittleEndian() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func Test_uint64ToLittleEndian(t *testing.T) {
-	type args struct {
-		offset uint64
-	}
-	tests := []struct {
-		name string
-		args args
-		want []byte
-	}{
-		// TODO: Add test cases.
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := uint64ToLittleEndian(tt.args.offset); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("uint64ToLittleEndian() = %v, want %v", got, tt.want)
 			}
 		})
 	}

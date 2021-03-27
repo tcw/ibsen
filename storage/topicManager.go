@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"log"
 )
@@ -29,8 +30,12 @@ func NewTopicManager(afs *afero.Afero, rootPath string, maxBlockSize int64) (Top
 	return topicManager, nil
 }
 
+func (tr *TopicManager) GetBlockManager(topic string) *BlockManager {
+	return tr.topics[topic]
+}
+
 func (tr *TopicManager) UpdateTopicsFromStorage() error {
-	directories, err := ListUnhiddenEntriesDirectory(tr.afs, tr.topicsRootPath)
+	directories, err := commons.ListUnhiddenEntriesDirectory(tr.afs, tr.topicsRootPath)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -56,7 +61,7 @@ func (tr *TopicManager) CreateTopic(topic string) (bool, error) {
 	if tr.doesTopicExist(topic) {
 		return false, nil
 	}
-	err := tr.afs.Mkdir(tr.topicsRootPath+Separator+topic, 0777) //Todo: more restrictive
+	err := tr.afs.Mkdir(tr.topicsRootPath+commons.Separator+topic, 0777) //Todo: more restrictive
 	if err != nil {
 		return false, errore.WrapWithContext(err)
 	}
@@ -74,8 +79,8 @@ func (tr *TopicManager) DropTopic(topic string) (bool, error) {
 	if !tr.doesTopicExist(topic) {
 		return false, nil
 	}
-	oldLocation := tr.topicsRootPath + Separator + topic
-	newLocation := tr.topicsRootPath + Separator + "." + topic
+	oldLocation := tr.topicsRootPath + commons.Separator + topic
+	newLocation := tr.topicsRootPath + commons.Separator + "." + topic
 	err := tr.afs.Rename(oldLocation, newLocation)
 	if err != nil {
 		return false, errore.WrapWithContext(err)

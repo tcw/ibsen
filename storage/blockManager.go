@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/messaging"
 	"hash/crc32"
@@ -12,7 +13,7 @@ type BlockManager struct {
 	asf          *afero.Afero
 	rootPath     string
 	topic        string
-	blocks       []int64
+	blocks       []uint64
 	maxBlockSize int64
 	offset       uint64
 	blockSize    int64
@@ -53,11 +54,15 @@ func changeEventDispatch(manager *BlockManager) {
 	}
 }
 
+func (br *BlockManager) GetBlocks() []uint64 {
+	return br.blocks
+}
+
 func (br *BlockManager) GetBlockFilename(blockIndex int) (string, error) {
 	if blockIndex >= len(br.blocks) {
 		return "", BlockNotFound
 	}
-	return br.rootPath + Separator + br.topic + Separator + CreateBlockFileName(br.blocks[blockIndex], "log"), nil
+	return br.rootPath + commons.Separator + br.topic + commons.Separator + commons.CreateBlockFileName(br.blocks[blockIndex], "log"), nil
 }
 
 func (br *BlockManager) FindBlockIndexContainingOffset(offset uint64) (uint, error) {
@@ -69,7 +74,7 @@ func (br *BlockManager) FindBlockIndexContainingOffset(offset uint64) (uint, err
 	}
 
 	for i, v := range br.blocks {
-		if v > int64(offset) {
+		if v > offset {
 			return uint(i - 1), nil
 		}
 	}
@@ -118,11 +123,11 @@ func (br *BlockManager) currentBlockFileName() (string, error) {
 
 func (br *BlockManager) loadBlockStatusFromStorage() error {
 
-	blocks, err := ListLogBlocksInTopicOrderedAsc(br.asf, br.rootPath, br.topic)
+	blocks, err := commons.ListLogBlocksInTopicOrderedAsc(br.asf, br.rootPath, br.topic)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	if blocks.isEmpty() {
+	if blocks.IsEmpty() {
 		br.setInitBlock()
 		return nil
 	}
@@ -134,7 +139,7 @@ func (br *BlockManager) loadBlockStatusFromStorage() error {
 	return nil
 }
 
-func (br *BlockManager) setCurrentState(sortedBlocks []int64) error {
+func (br *BlockManager) setCurrentState(sortedBlocks []uint64) error {
 	br.blocks = sortedBlocks
 	blockFileName, err := br.currentBlockFileName()
 	if err != nil {
@@ -157,17 +162,17 @@ func (br *BlockManager) setCurrentState(sortedBlocks []int64) error {
 }
 
 func (br *BlockManager) setInitBlock() {
-	br.blocks = []int64{0}
+	br.blocks = []uint64{0}
 	br.blockSize = 0
 	br.offset = 0
 }
 
 func (br *BlockManager) createNewBlock() {
-	br.blocks = append(br.blocks, int64(br.offset))
+	br.blocks = append(br.blocks, br.offset)
 	br.blockSize = 0
 }
 
-func (br *BlockManager) lastBlock() int64 {
+func (br *BlockManager) lastBlock() uint64 {
 	if br.blocks == nil {
 		return 0
 	}

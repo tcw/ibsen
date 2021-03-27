@@ -1,16 +1,21 @@
-package storage
+package commons
 
 import (
 	"encoding/binary"
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/storage"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 const Separator = string(os.PathSeparator)
+
+type Offset uint64
+type ByteOffset uint64
 
 func OpenFileForReadWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	f, err := afs.OpenFile(fileName,
@@ -45,29 +50,29 @@ func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	return f, nil
 }
 
-func CreateBlockFileName(blockName int64, fileType string) string {
+func CreateBlockFileName(blockName uint64, fileType string) string {
 	return fmt.Sprintf("%020d.%s", blockName, fileType)
 }
 
-func CreateLogBlockFilename(rootPath string, topic string, block int64) string {
+func CreateLogBlockFilename(rootPath string, topic string, block uint64) string {
 	return rootPath + Separator + topic + Separator + CreateBlockFileName(block, "log")
 }
 
-func CreateIndexBlockFilename(rootPath string, topic string, block int64) string {
+func CreateIndexBlockFilename(rootPath string, topic string, block uint64) string {
 	return rootPath + Separator + topic + Separator + CreateBlockFileName(block, "index")
 }
 
 type TopicBlocks struct {
 	Topic    string
 	FileType string
-	Blocks   []int64
+	Blocks   []uint64
 }
 
 func EmptyTopicBlocks(topic string, fileType string) TopicBlocks {
 	return TopicBlocks{
 		Topic:    topic,
 		FileType: fileType,
-		Blocks:   make([]int64, 0),
+		Blocks:   make([]uint64, 0),
 	}
 }
 
@@ -77,10 +82,10 @@ func (tb *TopicBlocks) Size() int {
 
 //LastBlock returns the content of the last block (offset from filename), if
 //no the block array is empty it returns BlockNotFound
-func (tb *TopicBlocks) LastBlock() (int64, error) {
+func (tb *TopicBlocks) LastBlock() (uint64, error) {
 	size := tb.Size()
 	if size == 0 {
-		return 0, BlockNotFound
+		return 0, storage.BlockNotFound
 	}
 	return tb.Blocks[size-1], nil
 }
@@ -101,7 +106,7 @@ func (tb *TopicBlocks) BlockFilePathsOrderedAsc(rootPath string) []string {
 	return blocks
 }
 
-func (tb *TopicBlocks) isEmpty() bool {
+func (tb *TopicBlocks) IsEmpty() bool {
 	return tb.Blocks == nil || len(tb.Blocks) == 0
 }
 
@@ -148,7 +153,7 @@ func ListIndexBlocksInTopicOrderedAsc(afs *afero.Afero, rootPath string, topic s
 }
 
 func listBlocksInTopicOrderedAsc(afs *afero.Afero, rootPath string, topic string, filetype string) (TopicBlocks, error) {
-	var blocks []int64
+	var blocks []uint64
 	files, err := ListFilesInDirectory(afs, rootPath+Separator+topic, filetype)
 	if err != nil {
 		return EmptyTopicBlocks(topic, filetype), errore.WrapWithContext(err)
@@ -156,7 +161,7 @@ func listBlocksInTopicOrderedAsc(afs *afero.Afero, rootPath string, topic string
 	if len(files) == 0 {
 		return TopicBlocks{}, nil
 	}
-	blocks, err = filesToBlocks(files)
+	blocks, err = FilesToBlocks(files)
 	if err != nil {
 		return EmptyTopicBlocks(topic, filetype), errore.WrapWithContext(err)
 	}
@@ -167,28 +172,47 @@ func listBlocksInTopicOrderedAsc(afs *afero.Afero, rootPath string, topic string
 	}, nil
 }
 
-func uint64ToLittleEndian(offset uint64) []byte {
+func FilesToBlocks(files []string) ([]uint64, error) {
+	var blocks []uint64
+	for _, file := range files {
+		splitFileName := strings.Split(file, ".")
+		if len(splitFileName) != 2 {
+			continue
+		}
+		if splitFileName[1] == "log" {
+			splitPath := strings.Split(splitFileName[0], Separator)
+			parseUint, err := strconv.ParseUint(splitPath[len(splitPath)-1], 10, 64)
+			if err != nil {
+				return nil, errore.WrapWithContext(err)
+			}
+			blocks = append(blocks, parseUint)
+		}
+	}
+	return blocks, nil
+}
+
+func Uint64ToLittleEndian(offset uint64) []byte {
 	bytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(bytes, offset)
 	return bytes
 }
 
-func uint32ToLittleEndian(number uint32) []byte {
+func Uint32ToLittleEndian(number uint32) []byte {
 	bytes := make([]byte, 4)
 	binary.LittleEndian.PutUint32(bytes, number)
 	return bytes
 }
 
-func intToLittleEndian(number int) []byte {
+func IntToLittleEndian(number int) []byte {
 	bytes := make([]byte, 8)
 	binary.LittleEndian.PutUint32(bytes, uint32(number))
 	return bytes
 }
 
-func littleEndianToUint64(bytes []byte) uint64 {
+func LittleEndianToUint64(bytes []byte) uint64 {
 	return binary.LittleEndian.Uint64(bytes)
 }
 
-func littleEndianToUint32(bytes []byte) uint32 {
+func LittleEndianToUint32(bytes []byte) uint32 {
 	return binary.LittleEndian.Uint32(bytes)
 }

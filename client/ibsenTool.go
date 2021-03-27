@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/storage"
 	"log"
@@ -68,7 +69,7 @@ func ReadTopic(afs *afero.Afero, readPath string, toBase64 bool) {
 			logChannel := make(chan *storage.LogEntryBatch)
 			var wg sync.WaitGroup
 			go writeToStdOut(logChannel, &wg, toBase64)
-			openFile, err := storage.OpenFileForRead(afs, readPath)
+			openFile, err := commons.OpenFileForRead(afs, readPath)
 			err = storage.ReadFileFromLogOffset(openFile, storage.ReadBatchParam{
 				LogChan:   logChannel,
 				Wg:        &wg,
