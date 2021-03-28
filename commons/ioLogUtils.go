@@ -2,10 +2,10 @@ package commons
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
-	"github.com/tcw/ibsen/storage"
 	"os"
 	"sort"
 	"strconv"
@@ -14,8 +14,15 @@ import (
 
 const Separator = string(os.PathSeparator)
 
+var BlockNotFound = errors.New("block not found")
+
 type Offset uint64
 type ByteOffset uint64
+
+func DoesFileExist(fileName string) bool {
+	_, err := os.Stat(fileName)
+	return !errors.Is(err, os.ErrNotExist)
+}
 
 func OpenFileForReadWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	f, err := afs.OpenFile(fileName,
@@ -85,7 +92,7 @@ func (tb *TopicBlocks) Size() int {
 func (tb *TopicBlocks) LastBlock() (uint64, error) {
 	size := tb.Size()
 	if size == 0 {
-		return 0, storage.BlockNotFound
+		return 0, BlockNotFound
 	}
 	return tb.Blocks[size-1], nil
 }

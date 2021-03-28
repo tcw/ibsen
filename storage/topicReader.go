@@ -25,8 +25,8 @@ func (t *TopicReader) ReadFromInternalOffset(readBatchParam ReadBatchParam, bloc
 
 func (t *TopicReader) ReadFromOffset(readBatchParam ReadBatchParam) (int, int64, error) {
 	currentBlockIndex, err := t.blockManager.FindBlockIndexContainingOffset(readBatchParam.Offset)
-	if err == BlockNotFound {
-		return 0, 0, BlockNotFound
+	if err == commons.BlockNotFound {
+		return 0, 0, commons.BlockNotFound
 	}
 	if err != nil {
 		return 0, 0, errore.WrapWithContext(err)
@@ -69,7 +69,7 @@ func (t *TopicReader) readBlocksFrom(readBatchParam ReadBatchParam, block int) (
 
 	for {
 		err := t.readBlock(readBatchParam, blockIndex)
-		if err == BlockNotFound {
+		if err == commons.BlockNotFound {
 			return 0, nil
 		}
 		if err != nil {
@@ -85,7 +85,7 @@ func (t *TopicReader) readBlocksFrom(readBatchParam ReadBatchParam, block int) (
 
 func (t *TopicReader) readBlock(readBatchParam ReadBatchParam, blockIndex int) error {
 	filename, err := t.blockManager.GetBlockFilename(blockIndex)
-	if err == BlockNotFound {
+	if err == commons.BlockNotFound {
 		return err
 	}
 	if err != nil {

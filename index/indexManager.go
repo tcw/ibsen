@@ -11,7 +11,7 @@ type TopicsIndexManager struct {
 	TopicIndexManagers map[string]*TopicIndexManager
 }
 
-func NewTopicsIndexManager(afs *afero.Afero, rootPath string, topicManager *storage.TopicManager, modulo int32) (*TopicsIndexManager, error) {
+func NewTopicsIndexManager(afs *afero.Afero, rootPath string, topicManager *storage.TopicManager, modulo uint32) (*TopicsIndexManager, error) {
 	topics, err := commons.ListUnhiddenEntriesDirectory(afs, rootPath)
 	if err != nil {
 		return nil, err

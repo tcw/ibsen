@@ -28,14 +28,14 @@ func writeToFile(file afero.File, previousPosition storage.OffsetPosition, offse
 	return nil
 }
 
-func readFromFile(afs *afero.Afero, indexFileName string) (map[Offset]ByteOffset, error) {
+func readFromFile(afs *afero.Afero, indexFileName string) (map[commons.Offset]commons.ByteOffset, error) {
 	file, err := commons.OpenFileForRead(afs, indexFileName)
 	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
 	var byteValue = make([]byte, 1)
-	positions := make(map[Offset]ByteOffset)
+	positions := make(map[commons.Offset]commons.ByteOffset)
 	reader := bufio.NewReader(file)
 	var counter uint64 = 0
 	var number []byte
@@ -59,7 +59,7 @@ func readFromFile(afs *afero.Afero, indexFileName string) (map[Offset]ByteOffset
 				offset = offset + varint
 			} else {
 				byteOffset = byteOffset + varint
-				positions[Offset(offset)] = ByteOffset(byteOffset)
+				positions[commons.Offset(offset)] = commons.ByteOffset(byteOffset)
 			}
 			counter = counter + 1
 			number = make([]byte, 0)

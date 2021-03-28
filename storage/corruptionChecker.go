@@ -21,7 +21,7 @@ func performCorruptionCheck(afs *afero.Afero, rootPath string) error {
 		if err != nil {
 			return err
 		}
-		blocks, err := filesToBlocks(filesInDirectory)
+		blocks, err := commons.FilesToBlocks(filesInDirectory)
 		if len(blocks) == 0 {
 			continue
 		}

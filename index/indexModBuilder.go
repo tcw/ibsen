@@ -49,70 +49,104 @@ func CreateIndexModBlockFilename(rootPath string, topic string, block uint64, mo
 	return rootPath + commons.Separator + topic + commons.Separator + filename
 }
 
-func (tmi TopicModuloIndex) BuildIndex(blocks []uint64) {
-
+func (tmi TopicModuloIndex) BuildIndex(blocks []uint64, state IndexingState) (IndexingState, error) {
+	var currentState IndexingState
+	var err error
+	for _, block := range blocks {
+		indexBlockFilename := commons.CreateIndexBlockFilename(tmi.rootPath, tmi.topic, block)
+		fileExist := commons.DoesFileExist(indexBlockFilename)
+		if fileExist {
+			currentState, err = tmi.BuildIndexForExistingIndexFile(block, state)
+		} else {
+			currentState, err = tmi.BuildIndexForNewLogFile(block)
+		}
+		if err != nil {
+			return IndexingState{}, errore.WrapWithContext(err)
+		}
+	}
+	return currentState, nil
 }
 
-func (tmi TopicModuloIndex) BuildIndexForExistingIndexFile(block uint64, logBlockByteOffset commons.ByteOffset,
-	indexLastByteOffset commons.ByteOffset) (commons.ByteOffset, error) {
+func (tmi TopicModuloIndex) BuildIndexForExistingIndexFile(block uint64, state IndexingState) (IndexingState, error) {
 	logBlockFilename := commons.CreateLogBlockFilename(tmi.rootPath, tmi.topic, block)
+	indexBlockFileName := CreateIndexModBlockFilename(tmi.rootPath, tmi.topic, block, tmi.modulo)
 	logBlockFile, err := commons.OpenFileForRead(tmi.afs, logBlockFilename)
 	if err != nil {
-		return 0, errore.WrapWithContext(err)
+		return IndexingState{}, errore.WrapWithContext(err)
 	}
-	_, err = logBlockFile.Seek(int64(logBlockByteOffset), io.SeekStart)
+	lastLogByteOffset := state.logByteOffset
+
+	if state.IsEmpty() {
+		moduloIndex, err := ReadByteOffsetFromFile(tmi.afs, indexBlockFileName)
+		if err != nil {
+			return IndexingState{}, errore.WrapWithContext(err)
+		}
+		lastLogByteOffset = moduloIndex.getByteOffsetHead()
+	}
+
+	_, err = logBlockFile.Seek(int64(state.logByteOffset), io.SeekStart)
 	if err != nil {
-		return 0, errore.WrapWithContext(err)
+		return IndexingState{}, errore.WrapWithContext(err)
 	}
-	indexFileName := CreateIndexModBlockFilename(tmi.rootPath, tmi.topic, block, tmi.modulo)
-	lastIndexByteOffset := indexLastByteOffset
-	if indexLastByteOffset < 0 {
-		moduloIndex, err := ReadByteOffsetFromFile(tmi.afs, indexFileName)
-		if err != nil {
-			return 0, errore.WrapWithContext(err)
-		}
-		lastIndexByteOffset = moduloIndex.getByteOffsetHead()
-	}
-	indexFile, err := commons.OpenFileForWrite(tmi.afs, indexFileName)
+
+	indexBlockFile, err := commons.OpenFileForWrite(tmi.afs, indexBlockFileName)
+	var offsetPositions []storage.OffsetPosition
 	for {
-		offset, err := storage.ReadOffsetAndByteOffset(logBlockFile, 1000, tmi.modulo)
+		offsetPositions, err = storage.ReadOffsetAndByteOffset(logBlockFile, 1000, tmi.modulo)
 		if err != nil {
-			return 0, errore.WrapWithContext(err)
+			return IndexingState{}, errore.WrapWithContext(err)
 		}
-		if len(offset) == 0 {
+		if len(offsetPositions) == 0 {
 			break
 		}
-		lastIndexByteOffset, err = WriteByteOffsetToFile(indexFile, lastIndexByteOffset, toByteOffset(offset))
+		lastLogByteOffset, err = WriteByteOffsetToFile(indexBlockFile, lastLogByteOffset, toByteOffset(offsetPositions))
 		if err != nil {
-			return 0, errore.WrapWithContext(err)
+			return IndexingState{}, errore.WrapWithContext(err)
 		}
 	}
-	return lastIndexByteOffset, err
+	if len(offsetPositions) > 0 {
+		offsetPosition := offsetPositions[len(offsetPositions)-1]
+		return IndexingState{
+			block:         block,
+			logOffset:     commons.Offset(offsetPosition.Offset),
+			logByteOffset: commons.ByteOffset(offsetPosition.ByteOffset),
+		}, nil
+	}
+	return state, nil
 }
 
-func (tmi TopicModuloIndex) BuildIndexForNewLogFile(block uint64) (commons.ByteOffset, error) {
+func (tmi TopicModuloIndex) BuildIndexForNewLogFile(block uint64) (IndexingState, error) {
 	logBlockFilename := commons.CreateLogBlockFilename(tmi.rootPath, tmi.topic, block)
+	indexBlockFileName := CreateIndexModBlockFilename(tmi.rootPath, tmi.topic, block, tmi.modulo)
 	logBlockFile, err := commons.OpenFileForRead(tmi.afs, logBlockFilename)
 	if err != nil {
-		return 0, errore.WrapWithContext(err)
+		return IndexingState{}, errore.WrapWithContext(err)
 	}
-	indexFileName := CreateIndexModBlockFilename(tmi.rootPath, tmi.topic, block, tmi.modulo)
-	var lastByteOffset commons.ByteOffset = 0
-	indexFile, err := commons.OpenFileForWrite(tmi.afs, indexFileName)
+	var lastLogByteOffset commons.ByteOffset = 0
+	indexBlockFile, err := commons.OpenFileForWrite(tmi.afs, indexBlockFileName)
+	var offsetPositions []storage.OffsetPosition
 	for {
-		offset, err := storage.ReadOffsetAndByteOffset(logBlockFile, 1000, tmi.modulo)
+		offsetPositions, err = storage.ReadOffsetAndByteOffset(logBlockFile, 1000, tmi.modulo)
 		if err != nil {
-			return 0, errore.WrapWithContext(err)
+			return IndexingState{}, errore.WrapWithContext(err)
 		}
-		if len(offset) == 0 {
+		if len(offsetPositions) == 0 {
 			break
 		}
-		lastByteOffset, err = WriteByteOffsetToFile(indexFile, lastByteOffset, toByteOffset(offset))
+		lastLogByteOffset, err = WriteByteOffsetToFile(indexBlockFile, lastLogByteOffset, toByteOffset(offsetPositions))
 		if err != nil {
-			return 0, errore.WrapWithContext(err)
+			return IndexingState{}, errore.WrapWithContext(err)
 		}
 	}
-	return lastByteOffset, err
+	if len(offsetPositions) > 0 {
+		offsetPosition := offsetPositions[len(offsetPositions)-1]
+		return IndexingState{
+			block:         block,
+			logOffset:     commons.Offset(offsetPosition.Offset),
+			logByteOffset: commons.ByteOffset(offsetPosition.ByteOffset),
+		}, nil
+	}
+	return IndexingState{}, nil
 }
 
 func toByteOffset(offsetPositions []storage.OffsetPosition) []commons.ByteOffset {

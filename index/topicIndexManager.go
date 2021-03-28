@@ -12,7 +12,7 @@ type TopicIndexManager struct {
 	topicIndexer    *TopicModuloIndex
 	blocks          commons.TopicBlocks
 	logTopicManager *storage.TopicManager
-	IndexingState   *IndexingState
+	IndexingState   IndexingState
 	mu              *sync.Mutex
 }
 
@@ -39,27 +39,35 @@ func NewTopicIndexManager(params TopicIndexParams) (*TopicIndexManager, error) {
 		topicIndexer:    topicModuloIndex,
 		blocks:          blocks,
 		logTopicManager: params.topicManager,
-		IndexingState:   &IndexingState{},
+		IndexingState:   IndexingState{},
 		mu:              &sync.Mutex{},
 	}, nil
 }
 
 type IndexingState struct {
 	block         uint64
-	logOffset     uint64
-	logByteOffset uint64
-	ByteOffset    commons.ByteOffset
+	logOffset     commons.Offset
+	logByteOffset commons.ByteOffset
+}
+
+func (i IndexingState) IsEmpty() bool {
+	return i.block == 0
 }
 
 func (m *TopicIndexManager) BuildIndex() error {
 	indexBlocks := m.blocks
 	manager := m.logTopicManager.GetBlockManager(m.topicIndexer.topic)
 	logBlocks := manager.GetBlocks()
-	toBeIndexed, err := getBlockToBeIndexed(indexBlocks.Blocks, logBlocks)
+	toBeIndexed, err := getBlocksToBeIndexed(indexBlocks.Blocks, logBlocks)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	m.topicIndexer.
+	m.IndexingState, err = m.topicIndexer.BuildIndex(toBeIndexed, m.IndexingState)
+
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+
 	return nil
 }
 
@@ -88,7 +96,7 @@ type InternalIndexOffset struct {
 	byteOffset int64
 }
 
-func getBlockToBeIndexed(indexBlocks []uint64, logBlocks []uint64) ([]uint64, error) {
+func getBlocksToBeIndexed(indexBlocks []uint64, logBlocks []uint64) ([]uint64, error) {
 	idxBlockLength := len(indexBlocks)
 	logBlockLength := len(logBlocks)
 	if logBlockLength == 0 {

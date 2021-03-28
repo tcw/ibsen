@@ -2,6 +2,7 @@ package index
 
 import (
 	"fmt"
+	"github.com/tcw/ibsen/commons"
 	"testing"
 )
 
@@ -14,7 +15,7 @@ func Test_writeModToFile(t *testing.T) {
 	lastByteOffset, err := WriteByteOffsetToFile(
 		file,
 		0,
-		[]ByteOffset{100, 200})
+		[]commons.ByteOffset{100, 200})
 	if err != nil {
 		t.Error(err)
 	}

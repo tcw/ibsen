@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"errors"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
@@ -19,8 +18,6 @@ type BlockManager struct {
 	blockSize    int64
 	offsetChange chan uint64
 }
-
-var BlockNotFound = errors.New("block not found")
 
 var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
@@ -60,17 +57,17 @@ func (br *BlockManager) GetBlocks() []uint64 {
 
 func (br *BlockManager) GetBlockFilename(blockIndex int) (string, error) {
 	if blockIndex >= len(br.blocks) {
-		return "", BlockNotFound
+		return "", commons.BlockNotFound
 	}
 	return br.rootPath + commons.Separator + br.topic + commons.Separator + commons.CreateBlockFileName(br.blocks[blockIndex], "log"), nil
 }
 
 func (br *BlockManager) FindBlockIndexContainingOffset(offset uint64) (uint, error) {
 	if len(br.blocks) == 0 {
-		return 0, BlockNotFound
+		return 0, commons.BlockNotFound
 	}
 	if br.offset < offset {
-		return 0, BlockNotFound
+		return 0, commons.BlockNotFound
 	}
 
 	for i, v := range br.blocks {
