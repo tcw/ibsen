@@ -9,7 +9,7 @@ import (
 
 type LogStorageAfero struct {
 	afs          *afero.Afero
-	topicManager *TopicManager
+	TopicManager *TopicsManager
 }
 
 func NewLogStorage(afs *afero.Afero, rootPath string, maxBlockSize int64) (LogStorageAfero, error) {
@@ -23,15 +23,31 @@ func NewLogStorage(afs *afero.Afero, rootPath string, maxBlockSize int64) (LogSt
 var _ LogStorage = LogStorageAfero{} // Verify that interface is implemented.
 
 func (e LogStorageAfero) Create(topic string) (bool, error) {
-	return e.topicManager.CreateTopic(topic)
+	createTopic, err := e.TopicManager.CreateTopic(topic)
+	if err != nil {
+		return false, errore.WrapWithContext(err)
+	}
+	messaging.Publish(messaging.Event{
+		Data: topic,
+		Type: messaging.TopicCreatedEventType,
+	})
+	return createTopic, nil
 }
 
 func (e LogStorageAfero) Drop(topic string) (bool, error) {
-	return e.topicManager.DropTopic(topic)
+	dropTopic, err := e.TopicManager.DropTopic(topic)
+	if err != nil {
+		return false, errore.WrapWithContext(err)
+	}
+	messaging.Publish(messaging.Event{
+		Data: topic,
+		Type: messaging.TopicDroppedEventType,
+	})
+	return dropTopic, nil
 }
 
 func (e LogStorageAfero) Status() []*TopicStatusMessage {
-	topics := e.topicManager.topics
+	topics := e.TopicManager.topics
 	messages := make([]*TopicStatusMessage, 0)
 	for _, manager := range topics {
 		messages = append(messages, &TopicStatusMessage{
@@ -46,7 +62,7 @@ func (e LogStorageAfero) Status() []*TopicStatusMessage {
 }
 
 func (e LogStorageAfero) WriteBatch(topicMessage *TopicBatchMessage) (int, error) {
-	registry := e.topicManager.topics[topicMessage.Topic]
+	registry := e.TopicManager.topics[topicMessage.Topic]
 	if registry == nil {
 		return 0, errore.NewWithContext("No such topic")
 	}
@@ -58,7 +74,7 @@ func (e LogStorageAfero) WriteBatch(topicMessage *TopicBatchMessage) (int, error
 }
 
 func (e LogStorageAfero) ReadBatch(readBatchParam ReadBatchParam) error {
-	blockManager := e.topicManager.topics[readBatchParam.Topic]
+	blockManager := e.TopicManager.topics[readBatchParam.Topic]
 	if blockManager == nil {
 		return nil
 	}
@@ -77,7 +93,7 @@ func (e LogStorageAfero) ReadBatch(readBatchParam ReadBatchParam) error {
 }
 
 func (e LogStorageAfero) ReadStreamingBatch(readBatchParam ReadBatchParam) error {
-	blockManager := e.topicManager.topics[readBatchParam.Topic]
+	blockManager := e.TopicManager.topics[readBatchParam.Topic]
 	if blockManager == nil {
 		return nil
 	}

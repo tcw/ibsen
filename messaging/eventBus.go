@@ -6,6 +6,8 @@ import (
 )
 
 const TopicChangeEventType = "topic:change"
+const TopicCreatedEventType = "topic:created"
+const TopicDroppedEventType = "topic:dropped"
 
 type Event struct {
 	Data interface{}

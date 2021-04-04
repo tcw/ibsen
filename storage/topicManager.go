@@ -4,100 +4,181 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
-	"log"
+	"github.com/tcw/ibsen/messaging"
+	"hash/crc32"
 )
 
 type TopicManager struct {
-	afs            *afero.Afero
-	topicsRootPath string
-	topics         map[string]*BlockManager
-	maxBlockSize   int64
+	asf          *afero.Afero
+	rootPath     string
+	topic        string
+	blocks       []uint64
+	maxBlockSize int64
+	offset       uint64
+	blockSize    int64
+	offsetChange chan uint64
 }
 
-func NewTopicManager(afs *afero.Afero, rootPath string, maxBlockSize int64) (TopicManager, error) {
+var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
-	var topics = map[string]*BlockManager{}
-	topicManager := TopicManager{
-		afs:            afs,
-		maxBlockSize:   maxBlockSize,
-		topicsRootPath: rootPath,
-		topics:         topics,
+func NewBlockManger(afs *afero.Afero, rootPath string, topic string, maxBlockSize int64) (TopicManager, error) {
+	manager := TopicManager{
+		asf:          afs,
+		rootPath:     rootPath,
+		topic:        topic,
+		maxBlockSize: maxBlockSize,
+		offsetChange: make(chan uint64),
 	}
-	err := topicManager.UpdateTopicsFromStorage()
+
+	err := manager.loadBlockStatusFromStorage()
 	if err != nil {
 		return TopicManager{}, errore.WrapWithContext(err)
 	}
-	return topicManager, nil
+	go changeEventDispatch(&manager)
+	return manager, nil
 }
 
-func (tr *TopicManager) GetBlockManager(topic string) *BlockManager {
-	return tr.topics[topic]
+func changeEventDispatch(manager *TopicManager) {
+	for {
+		offset := <-manager.offsetChange
+		messaging.Publish(messaging.Event{
+			Data: messaging.TopicChange{
+				Topic:  manager.topic,
+				Offset: offset,
+			},
+			Type: messaging.TopicChangeEventType,
+		})
+	}
 }
 
-func (tr *TopicManager) UpdateTopicsFromStorage() error {
-	directories, err := commons.ListUnhiddenEntriesDirectory(tr.afs, tr.topicsRootPath)
+func (br *TopicManager) GetBlocks() []uint64 {
+	return br.blocks
+}
+
+func (br *TopicManager) GetBlockFilename(blockIndex int) (string, error) {
+	if blockIndex >= len(br.blocks) {
+		return "", commons.BlockNotFound
+	}
+	return br.rootPath + commons.Separator + br.topic + commons.Separator + commons.CreateBlockFileName(br.blocks[blockIndex], "log"), nil
+}
+
+func (br *TopicManager) FindBlockIndexContainingOffset(offset uint64) (uint, error) {
+	if len(br.blocks) == 0 {
+		return 0, commons.BlockNotFound
+	}
+	if br.offset < offset {
+		return 0, commons.BlockNotFound
+	}
+
+	for i, v := range br.blocks {
+		if v > offset {
+			return uint(i - 1), nil
+		}
+	}
+	return uint(len(br.blocks) - 1), nil
+}
+
+func (br *TopicManager) HasNextBlock(blockIndex int) bool {
+	return blockIndex < len(br.blocks)
+}
+
+func (br *TopicManager) WriteBatch(logEntry [][]byte) error {
+	if br.blockSize > br.maxBlockSize {
+		br.createNewBlock()
+	}
+	blockFileName, err := br.currentBlockFileName()
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	managerChan := make(chan BlockManager)
-	for _, topic := range directories {
-		go func(topic string) {
-			blockManger, err := NewBlockManger(tr.afs, tr.topicsRootPath, topic, tr.maxBlockSize)
-			if err != nil {
-				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
-			}
-			managerChan <- blockManger
-		}(topic)
+	writer := BlockWriterParams{
+		Afs:       br.asf,
+		Filename:  blockFileName,
+		LogEntry:  logEntry,
+		offset:    br.offset,
+		blockSize: br.blockSize,
 	}
-	for range directories {
-		manager := <-managerChan
-		topic := manager.topic
-		tr.topics[topic] = &manager
+	offset, blockSize, err := writer.WriteBatch()
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	br.offset = offset
+	br.blockSize = blockSize
+	select {
+	case br.offsetChange <- offset:
+	default:
 	}
 	return nil
 }
 
-func (tr *TopicManager) CreateTopic(topic string) (bool, error) {
-	if tr.doesTopicExist(topic) {
-		return false, nil
-	}
-	err := tr.afs.Mkdir(tr.topicsRootPath+commons.Separator+topic, 0777) //Todo: more restrictive
+func (br *TopicManager) currentBlockFileName() (string, error) {
+	filename, err := br.GetBlockFilename(br.lastBlockIndex())
 	if err != nil {
-		return false, errore.WrapWithContext(err)
+		return "", err
 	}
-	registry, err := NewBlockManger(tr.afs, tr.topicsRootPath, topic, tr.maxBlockSize)
-	if err != nil {
-		return false, errore.WrapWithContext(err)
-	}
-
-	tr.topics[topic] = &registry
-	return true, nil
+	return filename, nil
 }
 
-func (tr *TopicManager) DropTopic(topic string) (bool, error) {
+func (br *TopicManager) loadBlockStatusFromStorage() error {
 
-	if !tr.doesTopicExist(topic) {
-		return false, nil
-	}
-	oldLocation := tr.topicsRootPath + commons.Separator + topic
-	newLocation := tr.topicsRootPath + commons.Separator + "." + topic
-	err := tr.afs.Rename(oldLocation, newLocation)
+	blocks, err := commons.ListLogBlocksInTopicOrderedAsc(br.asf, br.rootPath, br.topic)
 	if err != nil {
-		return false, errore.WrapWithContext(err)
+		return errore.WrapWithContext(err)
 	}
-	delete(tr.topics, topic)
-	return true, nil
+	if blocks.IsEmpty() {
+		br.setInitBlock()
+		return nil
+	}
+
+	err = br.setCurrentState(blocks.Blocks)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	return nil
 }
 
-func (tr *TopicManager) ListTopics() ([]string, error) {
-	topics := make([]string, 0, len(tr.topics))
-	for k := range tr.topics {
-		topics = append(topics, k)
+func (br *TopicManager) setCurrentState(sortedBlocks []uint64) error {
+	br.blocks = sortedBlocks
+	blockFileName, err := br.currentBlockFileName()
+	if err != nil {
+		return errore.WrapWithContext(err)
 	}
-	return topics, nil
+
+	sizeOfLastBlock, err := blockSize(br.asf, blockFileName)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+
+	offset, err := findLastOffset(br.asf, blockFileName)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+
+	br.blockSize = sizeOfLastBlock
+	br.offset = uint64(offset)
+	return nil
 }
 
-func (tr *TopicManager) doesTopicExist(topic string) bool {
-	_, exists := tr.topics[topic]
-	return exists
+func (br *TopicManager) setInitBlock() {
+	br.blocks = []uint64{0}
+	br.blockSize = 0
+	br.offset = 0
+}
+
+func (br *TopicManager) createNewBlock() {
+	br.blocks = append(br.blocks, br.offset)
+	br.blockSize = 0
+}
+
+func (br *TopicManager) lastBlock() uint64 {
+	if br.blocks == nil {
+		return 0
+	}
+	return br.blocks[len(br.blocks)-1]
+}
+
+func (br *TopicManager) lastBlockIndex() int {
+	if br.blocks == nil {
+		return 0
+	}
+	return len(br.blocks) - 1
 }

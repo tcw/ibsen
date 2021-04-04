@@ -9,10 +9,10 @@ import (
 
 type TopicReader struct {
 	afs          *afero.Afero
-	blockManager *BlockManager
+	blockManager *TopicManager
 }
 
-func NewTopicReader(afs *afero.Afero, manager *BlockManager) (*TopicReader, error) {
+func NewTopicReader(afs *afero.Afero, manager *TopicManager) (*TopicReader, error) {
 	return &TopicReader{
 		afs:          afs,
 		blockManager: manager,

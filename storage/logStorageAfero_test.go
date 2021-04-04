@@ -262,7 +262,7 @@ func TestLogStorage_Corruption(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	topics := storage.topicManager.topics
+	topics := storage.TopicManager.topics
 	blockFileName, err := topics[testTopic1].currentBlockFileName()
 	if err != nil {
 		t.Error(err)

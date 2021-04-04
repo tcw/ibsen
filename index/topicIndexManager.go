@@ -56,8 +56,8 @@ func (i IndexingState) IsEmpty() bool {
 
 func (m *TopicIndexManager) BuildIndex() error {
 	indexBlocks := m.blocks
-	manager := m.logTopicManager.GetBlockManager(m.topicIndexer.topic)
-	logBlocks := manager.GetBlocks()
+
+	logBlocks := m.logTopicManager.GetBlocks()
 	toBeIndexed, err := getBlocksToBeIndexed(indexBlocks.Blocks, logBlocks)
 	if err != nil {
 		return errore.WrapWithContext(err)

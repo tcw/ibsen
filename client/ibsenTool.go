@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/index"
 	"github.com/tcw/ibsen/storage"
 	"log"
 	"os"
@@ -13,6 +14,22 @@ import (
 	"path/filepath"
 	"sync"
 )
+
+func ReadIndex(afs *afero.Afero, indexFile string) {
+	parsePath, err := index.ParsePath(indexFile)
+	if err != nil {
+		log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+	}
+	modIndex, err := index.ReadByteOffsetFromFile(afs, indexFile)
+	if err != nil {
+		log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+	}
+	modulo := parsePath.Modulo
+	offsets := modIndex.ByteOffsets
+	for i, offset := range offsets {
+		fmt.Printf("%d\t%d\n", (i*int(modulo))-1, offset)
+	}
+}
 
 func ReadTopic(afs *afero.Afero, readPath string, toBase64 bool) {
 

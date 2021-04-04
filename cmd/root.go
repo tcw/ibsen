@@ -220,6 +220,19 @@ var (
 		},
 	}
 
+	cmdCatIndex = &cobra.Command{
+		Use:              "icat [from file/directory]",
+		Short:            "icat a log file or topic directory",
+		Long:             `icat`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			var fs = afero.NewOsFs()
+			afs := &afero.Afero{Fs: fs}
+			client.ReadIndex(afs, args[0])
+		},
+	}
+
 	cmdCheck = &cobra.Command{
 		Use:              "check [from directory]",
 		Short:            "check for file entry corruption",
@@ -260,7 +273,7 @@ func init() {
 	cmdBenchWrite.Flags().IntVarP(&batches, "batches", "a", 1, "Number of batches")
 
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdFile)
-	cmdFile.AddCommand(cmdCat, cmdCheck)
+	cmdFile.AddCommand(cmdCat, cmdCatIndex, cmdCheck)
 	cmdBench.AddCommand(cmdBenchWrite, cmdBenchRead)
 	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientReadStream, cmdClientWrite, cmdBench, cmdClientStatus)
 }

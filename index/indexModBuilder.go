@@ -16,25 +16,25 @@ import (
 )
 
 type Block struct {
-	block  uint64
-	modulo uint32
+	Block  uint64
+	Modulo uint32
 }
 
 type ModuloIndex struct {
-	modulo      uint32
-	byteOffsets []commons.ByteOffset
+	Modulo      uint32
+	ByteOffsets []commons.ByteOffset
 }
 
 func (mi ModuloIndex) getClosestByteOffset(offset commons.Offset) (commons.ByteOffset, error) {
-	offsetIndex := uint32(math.Floor(float64(offset) / float64(mi.modulo)))
-	if int(offsetIndex) > (len(mi.byteOffsets)-1) || offsetIndex < 0 {
+	offsetIndex := uint32(math.Floor(float64(offset) / float64(mi.Modulo)))
+	if int(offsetIndex) > (len(mi.ByteOffsets)-1) || offsetIndex < 0 {
 		return 0, errore.NewWithContext("Unable to get closest index byte offset")
 	}
-	return mi.byteOffsets[offsetIndex], nil
+	return mi.ByteOffsets[offsetIndex], nil
 }
 
 func (mi ModuloIndex) getByteOffsetHead() commons.ByteOffset {
-	return mi.byteOffsets[len(mi.byteOffsets)-1]
+	return mi.ByteOffsets[len(mi.ByteOffsets)-1]
 }
 
 type TopicModuloIndex struct {
@@ -45,7 +45,7 @@ type TopicModuloIndex struct {
 }
 
 func CreateIndexModBlockFilename(rootPath string, topic string, block uint64, modulo uint32) string {
-	filename := fmt.Sprintf("%020d_*%d.%s", block, modulo, "index")
+	filename := fmt.Sprintf("%020d_%d.%s", block, modulo, "index")
 	return rootPath + commons.Separator + topic + commons.Separator + filename
 }
 
@@ -172,11 +172,11 @@ func WriteByteOffsetToFile(file afero.File, previousPosition commons.ByteOffset,
 }
 
 func ReadByteOffsetFromFile(afs *afero.Afero, indexFileName string) (ModuloIndex, error) {
-	indexBlock, err := parsePath(indexFileName)
+	indexBlock, err := ParsePath(indexFileName)
 	if err != nil {
 		return ModuloIndex{}, errore.WrapWithContext(err)
 	}
-	modulo := indexBlock.modulo
+	modulo := indexBlock.Modulo
 	file, err := commons.OpenFileForRead(afs, indexFileName)
 	defer file.Close()
 	if err != nil {
@@ -208,12 +208,12 @@ func ReadByteOffsetFromFile(afs *afero.Afero, indexFileName string) (ModuloIndex
 		}
 	}
 	return ModuloIndex{
-		modulo:      modulo,
-		byteOffsets: positions,
+		Modulo:      modulo,
+		ByteOffsets: positions,
 	}, nil
 }
 
-func parsePath(path string) (Block, error) {
+func ParsePath(path string) (Block, error) {
 	_, file := filepath.Split(path)
 	ext := filepath.Ext(file)
 	if ext != ".index" {
@@ -230,7 +230,7 @@ func parsePath(path string) (Block, error) {
 		return Block{}, err
 	}
 	return Block{
-		block:  block,
-		modulo: uint32(mod),
+		Block:  block,
+		Modulo: uint32(mod),
 	}, nil
 }

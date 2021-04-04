@@ -6,6 +6,7 @@ import (
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/consensus"
 	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/index"
 	"github.com/tcw/ibsen/messaging"
 	"github.com/tcw/ibsen/storage"
 	"log"
@@ -72,7 +73,12 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 
 	start := time.Now()
 	logStorage, err := storage.NewLogStorage(ibs.Afs, ibs.DataPath, int64(ibs.MaxBlockSize)*1024*1024)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
 	stop := time.Now()
+	manager, err := index.NewTopicsIndexManager(ibs.Afs, ibs.DataPath, logStorage.TopicManager, 10)
+	manager.StartIndexing()
 	log.Printf("loaded existing topic in [%s]", stop.Sub(start).String())
 	if err != nil {
 		return errore.WrapWithContext(err)
