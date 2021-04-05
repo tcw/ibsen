@@ -26,7 +26,7 @@ type ModuloIndex struct {
 }
 
 func (mi ModuloIndex) getClosestByteOffset(offset commons.Offset) (commons.ByteOffset, error) {
-	offsetIndex := uint32(math.Floor(float64(offset) / float64(mi.Modulo)))
+	offsetIndex := uint32(math.Floor(float64(offset+1) / float64(mi.Modulo)))
 	if int(offsetIndex) > (len(mi.ByteOffsets)-1) || offsetIndex < 0 {
 		return 0, errore.NewWithContext("Unable to get closest index byte offset")
 	}

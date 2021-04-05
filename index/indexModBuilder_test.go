@@ -2,9 +2,64 @@ package index
 
 import (
 	"fmt"
+	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/commons"
+	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/storage"
+	"log"
+	"math/rand"
 	"testing"
+	"time"
 )
+
+func TestTopicModuloIndex_BuildIndexForNewLogFile(t *testing.T) {
+
+	const rootPath = "test"
+	const topic = "topic1"
+	const modulo = 5
+
+	afs := newAfero()
+
+	start3 := time.Now()
+	_, err := createTestLog(afs, rootPath, topic, 0)
+	if err != nil {
+		t.Fatal(errore.WrapWithContext(err))
+	}
+	stop3 := time.Now()
+	fmt.Println(stop3.Sub(start3))
+	moduloIndex := TopicModuloIndex{
+		afs:      afs,
+		rootPath: rootPath,
+		topic:    topic,
+		modulo:   modulo,
+	}
+	start := time.Now()
+	file, err := moduloIndex.BuildIndexForNewLogFile(0)
+	if err != nil {
+		t.Fatal(errore.WrapWithContext(err))
+	}
+	if file.block != 0 {
+		t.Fail()
+	}
+	stop := time.Now()
+	fmt.Println(stop.Sub(start))
+	indexBlockFileName := CreateIndexModBlockFilename(rootPath, topic, 0, modulo)
+	readIndex(afs, indexBlockFileName)
+	start2 := time.Now()
+	fromFile, err := ReadByteOffsetFromFile(afs, indexBlockFileName)
+	stop2 := time.Now()
+	fmt.Println(stop2.Sub(start2))
+	offset, err := fromFile.getClosestByteOffset(46)
+	if err != nil {
+		t.Fatal(errore.WrapWithContext(err))
+	}
+	fmt.Println(offset)
+	stat, err := afs.Stat(indexBlockFileName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println(stat.Size() / 1024)
+}
 
 func Test_writeModToFile(t *testing.T) {
 	afs := newAfero()
@@ -32,5 +87,57 @@ func Test_writeModToFile(t *testing.T) {
 		t.Error(err)
 	}
 	fmt.Print(offsetMap)
+}
 
+func createTestLog(afs *afero.Afero, rootPath string, topic string, blockName uint64) (string, error) {
+	filename := commons.CreateLogBlockFilename(rootPath, topic, blockName)
+	writer := storage.BlockWriter{
+		Afs:      afs,
+		Filename: filename,
+		LogEntry: createTestEntries(100, 100),
+	}
+	offset, _, err := writer.WriteBatch()
+	if err != nil {
+		return "", errore.WrapWithContext(err)
+	}
+	fmt.Printf("Created log file [%s] with offset head [%d]\n", filename, offset)
+	return filename, nil
+}
+
+func createTestEntries(entries int, entriesByteSize int) [][]byte {
+	var bytes = make([][]byte, 0)
+
+	for i := 0; i < entries; i++ {
+		entry := createTestValues(entriesByteSize)
+		bytes = append(bytes, entry)
+	}
+	return bytes
+}
+
+func createTestValues(entrySizeBytes int) []byte {
+	rand.Seed(time.Now().UnixNano())
+
+	var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
+
+	b := make([]rune, entrySizeBytes)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+	}
+	return []byte(string(b))
+}
+
+func readIndex(afs *afero.Afero, indexFile string) {
+	parsePath, err := ParsePath(indexFile)
+	if err != nil {
+		log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+	}
+	modIndex, err := ReadByteOffsetFromFile(afs, indexFile)
+	if err != nil {
+		log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+	}
+	modulo := parsePath.Modulo
+	offsets := modIndex.ByteOffsets
+	for i, offset := range offsets {
+		fmt.Printf("%d\t%d\n", (i*int(modulo))-1, offset)
+	}
 }

@@ -90,7 +90,7 @@ func (br *TopicManager) WriteBatch(logEntry [][]byte) error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	writer := BlockWriterParams{
+	writer := BlockWriter{
 		Afs:       br.asf,
 		Filename:  blockFileName,
 		LogEntry:  logEntry,

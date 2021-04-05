@@ -7,7 +7,7 @@ import (
 	"hash/crc32"
 )
 
-type BlockWriterParams struct {
+type BlockWriter struct {
 	Afs       *afero.Afero
 	Filename  string
 	LogEntry  [][]byte
@@ -15,7 +15,7 @@ type BlockWriterParams struct {
 	blockSize int64
 }
 
-func (bw BlockWriterParams) WriteBatch() (uint64, int64, error) {
+func (bw BlockWriter) WriteBatch() (uint64, int64, error) {
 	writer, err := commons.OpenFileForWrite(bw.Afs, bw.Filename)
 	if err != nil {
 		return bw.offset, bw.blockSize, errore.WrapWithContext(err)
@@ -31,7 +31,7 @@ func (bw BlockWriterParams) WriteBatch() (uint64, int64, error) {
 	return offset, blockSize, nil
 }
 
-func (bw BlockWriterParams) writeBatchToFile(file afero.File) (uint64, int64, error) {
+func (bw BlockWriter) writeBatchToFile(file afero.File) (uint64, int64, error) {
 	var bytes []byte
 	offset := bw.offset
 	size := bw.blockSize

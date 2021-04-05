@@ -222,7 +222,7 @@ func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int, modulo uint32
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		if (offset)%uint64(modulo) == 0 {
+		if (offset)%uint64(modulo) == 0 { //todo: this is wrong
 			offsets = append(offsets, OffsetPosition{
 				Offset:     offset,
 				ByteOffset: uint64(byteSum),
