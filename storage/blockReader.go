@@ -93,6 +93,55 @@ func ReadFile(file afero.File, logChan chan *LogEntryBatch,
 	}
 }
 
+func ReadFileAndReturn(file afero.File, batchSize int) (LogEntryBatch, error) {
+
+	reader := bufio.NewReader(file)
+	bytes := make([]byte, 8)
+	checksum := make([]byte, 4)
+	var entryBatch []LogEntry
+
+	for {
+		if entryBatch != nil && len(entryBatch)%batchSize == 0 {
+			return LogEntryBatch{Entries: entryBatch}, nil
+		}
+		_, err := io.ReadFull(reader, bytes)
+		if err == io.EOF {
+			if entryBatch != nil {
+				return LogEntryBatch{}, errore.WrapWithContext(err)
+			}
+			return LogEntryBatch{Entries: entryBatch}, nil
+		}
+		if err != nil {
+			return LogEntryBatch{}, errore.WrapWithContext(err)
+		}
+		offset := int64(commons.LittleEndianToUint64(bytes))
+
+		_, err = io.ReadFull(reader, checksum)
+		if err != nil {
+			return LogEntryBatch{}, errore.WrapWithContext(err)
+		}
+		checksumValue := commons.LittleEndianToUint32(bytes)
+
+		_, err = io.ReadFull(reader, bytes)
+		if err != nil {
+			return LogEntryBatch{}, errore.WrapWithContext(err)
+		}
+		size := commons.LittleEndianToUint64(bytes)
+
+		entry := make([]byte, size)
+		_, err = io.ReadFull(reader, entry)
+		if err != nil {
+			return LogEntryBatch{}, errore.WrapWithContext(err)
+		}
+		entryBatch = append(entryBatch, LogEntry{
+			Offset:   uint64(offset),
+			Crc:      checksumValue,
+			ByteSize: int(size),
+			Entry:    entry,
+		})
+	}
+}
+
 func blockSize(asf *afero.Afero, fileName string) (int64, error) {
 	exists, err := asf.Exists(fileName)
 	if err != nil {
@@ -195,6 +244,7 @@ func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int, modulo uint32
 		if entriesFound >= maxEntriesFound {
 			return offsets, nil
 		}
+
 		bytes := make([]byte, 8)
 		checksum := make([]byte, 4)
 		_, err := io.ReadFull(file, bytes)
@@ -222,9 +272,9 @@ func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int, modulo uint32
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		if (offset)%uint64(modulo) == 0 { //todo: this is wrong
+		if offset != 0 && (offset+1)%uint64(modulo) == 0 {
 			offsets = append(offsets, OffsetPosition{
-				Offset:     offset,
+				Offset:     offset + 1,
 				ByteOffset: uint64(byteSum),
 			})
 			entriesFound = entriesFound + 1

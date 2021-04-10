@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"sync"
 )
 
@@ -24,6 +25,14 @@ type ReadBatchParam struct {
 
 type LogEntryBatch struct {
 	Entries []LogEntry
+}
+
+func (e *LogEntryBatch) FindFirst() (LogEntry, error) {
+	if e.Size() > 0 {
+		return e.Entries[0], nil
+	} else {
+		return LogEntry{}, errors.New("NOT_FOUND")
+	}
 }
 
 func (e *LogEntryBatch) Offset() int64 {

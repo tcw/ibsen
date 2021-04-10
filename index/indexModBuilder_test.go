@@ -20,45 +20,34 @@ func TestTopicModuloIndex_BuildIndexForNewLogFile(t *testing.T) {
 
 	afs := newAfero()
 
-	start3 := time.Now()
 	_, err := createTestLog(afs, rootPath, topic, 0)
 	if err != nil {
 		t.Fatal(errore.WrapWithContext(err))
 	}
-	stop3 := time.Now()
-	fmt.Println(stop3.Sub(start3))
 	moduloIndex := TopicModuloIndex{
 		afs:      afs,
 		rootPath: rootPath,
 		topic:    topic,
 		modulo:   modulo,
 	}
-	start := time.Now()
-	file, err := moduloIndex.BuildIndexForNewLogFile(0)
+
+	indexState, err := moduloIndex.BuildIndexForNewLogFile(0)
 	if err != nil {
 		t.Fatal(errore.WrapWithContext(err))
 	}
-	if file.block != 0 {
+	if indexState.block != 0 {
 		t.Fail()
 	}
-	stop := time.Now()
-	fmt.Println(stop.Sub(start))
 	indexBlockFileName := CreateIndexModBlockFilename(rootPath, topic, 0, modulo)
 	readIndex(afs, indexBlockFileName)
-	start2 := time.Now()
 	fromFile, err := ReadByteOffsetFromFile(afs, indexBlockFileName)
-	stop2 := time.Now()
-	fmt.Println(stop2.Sub(start2))
 	offset, err := fromFile.getClosestByteOffset(46)
 	if err != nil {
-		t.Fatal(errore.WrapWithContext(err))
+		t.Fatal(errore.SprintTrace(err))
 	}
-	fmt.Println(offset)
-	stat, err := afs.Stat(indexBlockFileName)
-	if err != nil {
-		t.Fatal(err)
+	if offset != 6000 {
+		t.Fail()
 	}
-	fmt.Println(stat.Size() / 1024)
 }
 
 func Test_writeModToFile(t *testing.T) {
@@ -137,7 +126,13 @@ func readIndex(afs *afero.Afero, indexFile string) {
 	}
 	modulo := parsePath.Modulo
 	offsets := modIndex.ByteOffsets
+	var lastoffset commons.ByteOffset = 0
 	for i, offset := range offsets {
-		fmt.Printf("%d\t%d\n", (i*int(modulo))-1, offset)
+		pos := (i * int(modulo)) - 1
+		if pos < 0 {
+			pos = 0
+		}
+		fmt.Printf("%d\t%d\t%d\n", pos, offset, offset-lastoffset)
+		lastoffset = offset
 	}
 }
