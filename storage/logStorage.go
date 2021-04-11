@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"github.com/tcw/ibsen/commons"
 	"sync"
 )
 
@@ -16,11 +17,12 @@ type LogStorage interface {
 }
 
 type ReadBatchParam struct {
-	LogChan   chan *LogEntryBatch
-	Wg        *sync.WaitGroup
-	Topic     string
-	BatchSize int
-	Offset    uint64
+	LogChan      chan *LogEntryBatch
+	Wg           *sync.WaitGroup
+	Topic        string
+	BatchSize    int
+	Offset       uint64
+	IbsenIndexer commons.IndexedOffset
 }
 
 type LogEntryBatch struct {

@@ -19,6 +19,15 @@ var BlockNotFound = errors.New("block not found")
 type Offset uint64
 type ByteOffset uint64
 
+type IndexedOffset struct {
+	Block      uint64
+	ByteOffset ByteOffset
+}
+
+func (idxOffset IndexedOffset) IsEmpty() bool {
+	return idxOffset.ByteOffset == 0
+}
+
 func DoesFileExist(fileName string) bool {
 	_, err := os.Stat(fileName)
 	return !errors.Is(err, os.ErrNotExist)
@@ -87,9 +96,9 @@ func (tb *TopicBlocks) Size() int {
 	return len(tb.Blocks)
 }
 
-//LastBlock returns the content of the last block (offset from filename), if
+//BlockHead returns the content of the last block (offset from filename), if
 //no the block array is empty it returns BlockNotFound
-func (tb *TopicBlocks) LastBlock() (uint64, error) {
+func (tb *TopicBlocks) BlockHead() (uint64, error) {
 	size := tb.Size()
 	if size == 0 {
 		return 0, BlockNotFound
@@ -97,8 +106,26 @@ func (tb *TopicBlocks) LastBlock() (uint64, error) {
 	return tb.Blocks[size-1], nil
 }
 
+func (tb *TopicBlocks) FindBlockContaining(offset Offset) (uint64, error) {
+	blockHead, err := tb.BlockHead()
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	if uint64(offset) >= blockHead {
+		return blockHead, nil
+	}
+	var lastBlock uint64 = 0
+	for _, block := range tb.Blocks {
+		if block > uint64(offset) {
+			return lastBlock, nil
+		}
+		lastBlock = block
+	}
+	return 0, BlockNotFound
+}
+
 func (tb *TopicBlocks) LastBlockFileName(rootPath string) (string, error) {
-	block, err := tb.LastBlock()
+	block, err := tb.BlockHead()
 	if err != nil {
 		return "", err
 	}

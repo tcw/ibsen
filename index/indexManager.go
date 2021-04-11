@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-type TopicsIndexManager struct {
+type FixedIntervalIndexManager struct {
 	afs                *afero.Afero
 	rootPath           string
 	modulo             uint32
@@ -18,7 +18,17 @@ type TopicsIndexManager struct {
 	TopicIndexManagers map[string]*TopicIndexManager
 }
 
-func NewTopicsIndexManager(afs *afero.Afero, rootPath string, topicsManager *storage.TopicsManager, modulo uint32) (*TopicsIndexManager, error) {
+type IbsenIndex interface {
+	StartIndexing()
+	GetClosestByteOffset(topic string, offset commons.Offset) (commons.IndexedOffset, error)
+	RebuildIndex(topic string) error
+	CreateIndex(topic string) error
+	DropIndex(topic string) error
+}
+
+var _ IbsenIndex = (*FixedIntervalIndexManager)(nil) //Verify that interface is implemented
+
+func NewTopicsIndexManager(afs *afero.Afero, rootPath string, topicsManager *storage.TopicsManager, modulo uint32) (*FixedIntervalIndexManager, error) {
 	topics, err := commons.ListUnhiddenEntriesDirectory(afs, rootPath)
 	if err != nil {
 		return nil, err
@@ -37,7 +47,7 @@ func NewTopicsIndexManager(afs *afero.Afero, rootPath string, topicsManager *sto
 		}
 		topicIndexManagers[topic] = manager
 	}
-	return &TopicsIndexManager{
+	return &FixedIntervalIndexManager{
 		afs:                afs,
 		rootPath:           rootPath,
 		modulo:             modulo,
@@ -46,16 +56,56 @@ func NewTopicsIndexManager(afs *afero.Afero, rootPath string, topicsManager *sto
 	}, err
 }
 
-func (tim *TopicsIndexManager) StartIndexing() {
-
+func (tim *FixedIntervalIndexManager) StartIndexing() {
 	topicEventChannel := make(chan messaging.Event)
-	messaging.SubscribeAll(topicEventChannel)
-
+	messaging.Subscribe(topicEventChannel)
 	go startIndexWatcher(topicEventChannel, tim)
-
 }
 
-func startIndexWatcher(topicEventChannel chan messaging.Event, tim *TopicsIndexManager) {
+func (tim *FixedIntervalIndexManager) GetClosestByteOffset(topic string, offset commons.Offset) (commons.IndexedOffset, error) {
+	index, err := tim.TopicIndexManagers[topic].FindClosestIndex(offset)
+	return index, errore.WrapWithContext(err)
+}
+
+func (tim *FixedIntervalIndexManager) CreateIndex(topic string) error {
+	manager, err := NewTopicIndexManager(TopicIndexParams{
+		afs:          tim.afs,
+		topic:        topic,
+		rootPath:     tim.rootPath,
+		topicManager: tim.topicsManager.GetBlockManager(topic),
+		modulo:       tim.modulo,
+	})
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	tim.TopicIndexManagers[topic] = manager
+	return nil
+}
+
+func (tim *FixedIntervalIndexManager) DropIndex(topic string) error {
+	index, err := tim.TopicIndexManagers[topic].DropIndex()
+	log.Printf("Dropped %d index blocks\n", index)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	tim.TopicIndexManagers[topic] = nil //todo: check if this creates trouble down the line
+	return nil
+}
+
+func (tim *FixedIntervalIndexManager) RebuildIndex(topic string) error {
+	index, err := tim.TopicIndexManagers[topic].DropIndex()
+	log.Printf("Dropped %d index blocks for rebuild\n", index)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	err = tim.TopicIndexManagers[topic].BuildIndex()
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	return nil
+}
+
+func startIndexWatcher(topicEventChannel chan messaging.Event, tim *FixedIntervalIndexManager) {
 	for {
 		select {
 		case event := <-topicEventChannel:
@@ -65,29 +115,14 @@ func startIndexWatcher(topicEventChannel chan messaging.Event, tim *TopicsIndexM
 				if err != nil {
 					log.Println(errore.SprintTrace(errore.WrapWithContext(err)))
 				}
-			} else if event.Type == messaging.TopicCreatedEventType {
-				manager, err := NewTopicIndexManager(TopicIndexParams{
-					afs:          tim.afs,
-					topic:        event.Data.(string),
-					rootPath:     tim.rootPath,
-					topicManager: tim.topicsManager.GetBlockManager(event.Data.(string)),
-					modulo:       tim.modulo,
-				})
-				if err != nil {
-					log.Println(errore.SprintTrace(errore.WrapWithContext(err)))
-				}
-				tim.TopicIndexManagers[event.Data.(string)] = manager
 			}
 		case <-time.After(10 * time.Second):
-			log.Printf("index check")
+			for s, manager := range tim.TopicIndexManagers {
+				err := manager.BuildIndex()
+				if err != nil {
+					log.Printf("Update of index %s failed", s)
+				}
+			}
 		}
 	}
-}
-
-func (tim *TopicsIndexManager) BuildIndex(topic string) error {
-	err := tim.TopicIndexManagers[topic].BuildIndex()
-	if err != nil {
-		return errore.WrapWithContext(err)
-	}
-	return nil
 }

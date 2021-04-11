@@ -7,6 +7,7 @@ import (
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"io"
+	"log"
 	"os"
 	"sync"
 )
@@ -25,6 +26,13 @@ func ReadFileFromLogInternalOffset(file afero.File, readBatchParam ReadBatchPara
 }
 
 func ReadFileFromLogOffset(file afero.File, readBatchParam ReadBatchParam) error {
+
+	if !readBatchParam.IbsenIndexer.IsEmpty() {
+		_, err := file.Seek(int64(readBatchParam.IbsenIndexer.ByteOffset), io.SeekStart)
+		if err != nil {
+			log.Printf("Unable to use index at block %d for topic %s\n", readBatchParam.IbsenIndexer.Block, readBatchParam.Topic)
+		}
+	}
 
 	if readBatchParam.Offset > 0 {
 		err := fastForwardToOffset(file, int64(readBatchParam.Offset))

@@ -41,7 +41,7 @@ func TestTopicModuloIndex_BuildIndexForNewLogFile(t *testing.T) {
 	indexBlockFileName := CreateIndexModBlockFilename(rootPath, topic, 0, modulo)
 	readIndex(afs, indexBlockFileName)
 	fromFile, err := ReadByteOffsetFromFile(afs, indexBlockFileName)
-	offset, err := fromFile.getClosestByteOffset(46)
+	offset, err := fromFile.getClosestByteOffset(44)
 	if err != nil {
 		t.Fatal(errore.SprintTrace(err))
 	}

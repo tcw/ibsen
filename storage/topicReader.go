@@ -24,7 +24,7 @@ func (t *TopicReader) ReadFromInternalOffset(readBatchParam ReadBatchParam, bloc
 }
 
 func (t *TopicReader) ReadFromOffset(readBatchParam ReadBatchParam) (int, int64, error) {
-	currentBlockIndex, err := t.blockManager.FindBlockIndexContainingOffset(readBatchParam.Offset)
+	currentBlockIndex, err := t.blockManager.FindLogBlockContainingOffset(readBatchParam.Offset)
 	if err == commons.BlockNotFound {
 		return 0, 0, commons.BlockNotFound
 	}

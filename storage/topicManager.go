@@ -62,7 +62,7 @@ func (br *TopicManager) GetBlockFilename(blockIndex int) (string, error) {
 	return br.rootPath + commons.Separator + br.topic + commons.Separator + commons.CreateBlockFileName(br.blocks[blockIndex], "log"), nil
 }
 
-func (br *TopicManager) FindBlockIndexContainingOffset(offset uint64) (uint, error) {
+func (br *TopicManager) FindLogBlockContainingOffset(offset uint64) (uint, error) {
 	if len(br.blocks) == 0 {
 		return 0, commons.BlockNotFound
 	}

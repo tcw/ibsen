@@ -5,6 +5,7 @@ import (
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/storage"
+	"log"
 	"sync"
 )
 
@@ -55,10 +56,13 @@ func (i IndexingState) IsEmpty() bool {
 }
 
 func (m *TopicIndexManager) BuildIndex() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	indexBlocks := m.blocks
 
 	logBlocks := m.logTopicManager.GetBlocks()
-	toBeIndexed, err := getBlocksToBeIndexed(indexBlocks.Blocks, logBlocks)
+	toBeIndexed, err := getBlocksToBeIndexed(indexBlocks.Blocks, logBlocks, m.IndexingState)
+	log.Println("to be indexed", toBeIndexed)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -72,6 +76,8 @@ func (m *TopicIndexManager) BuildIndex() error {
 }
 
 func (m *TopicIndexManager) DropIndex() (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	indexBlocks, err := commons.ListIndexBlocksInTopicOrderedAsc(m.topicIndexer.afs, m.topicIndexer.rootPath, m.topicIndexer.topic)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
@@ -87,16 +93,26 @@ func (m *TopicIndexManager) DropIndex() (int, error) {
 	return droppedIndices, nil
 }
 
-func (m *TopicIndexManager) FindClosestIndex(offset commons.Offset) InternalIndexOffset {
-	return InternalIndexOffset{} //Todo: implement
+func (m *TopicIndexManager) FindClosestIndex(offset commons.Offset) (commons.IndexedOffset, error) {
+	blockContainingOffset, err := m.blocks.FindBlockContaining(offset)
+	if err != nil {
+		return commons.IndexedOffset{}, errore.WrapWithContext(err)
+	}
+	indexBlockFilename := commons.CreateIndexBlockFilename(m.topicIndexer.rootPath, m.topicIndexer.topic, blockContainingOffset)
+	//Todo add LRU caching
+	moduloIndex, err := ReadByteOffsetFromFile(m.topicIndexer.afs, indexBlockFilename)
+	if err != nil {
+		return commons.IndexedOffset{}, errore.WrapWithContext(err)
+	}
+	byteOffset, err := moduloIndex.getClosestByteOffset(offset)
+	return commons.IndexedOffset{
+		Block:      blockContainingOffset,
+		ByteOffset: byteOffset,
+	}, errore.WrapWithContext(err)
 }
 
-type InternalIndexOffset struct {
-	blockIndex int32
-	byteOffset int64
-}
-
-func getBlocksToBeIndexed(indexBlocks []uint64, logBlocks []uint64) ([]uint64, error) {
+//todo
+func getBlocksToBeIndexed(indexBlocks []uint64, logBlocks []uint64, state IndexingState) ([]uint64, error) {
 	idxBlockLength := len(indexBlocks)
 	logBlockLength := len(logBlocks)
 	if logBlockLength == 0 {

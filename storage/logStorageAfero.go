@@ -105,7 +105,7 @@ func (e LogStorageAfero) ReadStreamingBatch(readBatchParam ReadBatchParam) error
 		return errore.WrapWithContext(err)
 	}
 	topicEventChannel := make(chan messaging.Event)
-	messaging.Subscribe(blockManager.topic, topicEventChannel)
+	messaging.Subscribe(topicEventChannel)
 	var blockIndex = 0
 	var internalOffset int64 = 0
 	blockIndex, internalOffset, err = topicReader.ReadFromOffset(readBatchParam)

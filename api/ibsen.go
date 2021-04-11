@@ -7,7 +7,6 @@ import (
 	"github.com/tcw/ibsen/consensus"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/index"
-	"github.com/tcw/ibsen/messaging"
 	"github.com/tcw/ibsen/storage"
 	"log"
 	"net"
@@ -77,14 +76,13 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		return errore.WrapWithContext(err)
 	}
 	stop := time.Now()
-	manager, err := index.NewTopicsIndexManager(ibs.Afs, ibs.DataPath, logStorage.TopicManager, 10)
-	manager.StartIndexing()
 	log.Printf("loaded existing topic in [%s]", stop.Sub(start).String())
+	manager, err := index.NewTopicsIndexManager(ibs.Afs, ibs.DataPath, logStorage.TopicManager, 10)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
 	}
-	messaging.StartGlobalEventDebugging()
-	err = ibs.startGRPCServer(listener, logStorage)
+	manager.StartIndexing()
+	err = ibs.startGRPCServer(listener, logStorage, manager)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -105,8 +103,8 @@ func useCpuProfiling(cpuProfile string) {
 	}
 }
 
-func (ibs *IbsenServer) startGRPCServer(lis net.Listener, storage storage.LogStorage) error {
-	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage)
+func (ibs *IbsenServer) startGRPCServer(lis net.Listener, storage storage.LogStorage, indexer index.IbsenIndex) error {
+	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage, indexer)
 	log.Printf("Ibsen grpc server started on [%s:%d]\n", ibsenGrpcServer.Host, ibsenGrpcServer.Port)
 	log.Printf("With listener: [%s]\n", lis.Addr().String())
 	fmt.Print(ibsenFiglet)

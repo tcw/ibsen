@@ -2,7 +2,9 @@ package grpcApi
 
 import (
 	"context"
+	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/index"
 	"github.com/tcw/ibsen/storage"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -18,27 +20,30 @@ import (
 )
 
 type server struct {
-	logStorage storage.LogStorage
+	logStorage   storage.LogStorage
+	ibsenIndexer index.IbsenIndex
 }
 
 type IbsenGrpcServer struct {
-	Host        string
-	Port        uint16
-	CertFile    string
-	KeyFile     string
-	UseTls      bool
-	IbsenServer *grpc.Server
-	Storage     storage.LogStorage
+	Host         string
+	Port         uint16
+	CertFile     string
+	KeyFile      string
+	UseTls       bool
+	IbsenServer  *grpc.Server
+	Storage      storage.LogStorage
+	IbsenIndexer index.IbsenIndex
 }
 
-func NewIbsenGrpcServer(storage storage.LogStorage) *IbsenGrpcServer {
+func NewIbsenGrpcServer(storage storage.LogStorage, indexer index.IbsenIndex) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
-		Host:     "0.0.0.0",
-		Port:     50001,
-		CertFile: "",
-		KeyFile:  "",
-		UseTls:   false,
-		Storage:  storage,
+		Host:         "0.0.0.0",
+		Port:         50001,
+		CertFile:     "",
+		KeyFile:      "",
+		UseTls:       false,
+		Storage:      storage,
+		IbsenIndexer: indexer,
 	}
 }
 
@@ -62,7 +67,8 @@ func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener) error {
 	igs.IbsenServer = grpcServer
 
 	RegisterIbsenServer(grpcServer, &server{
-		logStorage: igs.Storage,
+		logStorage:   igs.Storage,
+		ibsenIndexer: igs.IbsenIndexer,
 	})
 	return grpcServer.Serve(listener)
 }
@@ -72,9 +78,13 @@ var _ IbsenServer = &server{}
 func (s server) Create(ctx context.Context, topic *Topic) (*CreateStatus, error) {
 	create, err := s.logStorage.Create(topic.Name)
 	if err != nil {
-		err = errore.WrapWithContext(err)
-		log.Println(errore.SprintTrace(err))
+		log.Println(errore.SprintTrace(errore.WrapWithContext(err)))
 		return nil, status.Errorf(codes.Internal, "Failed while creating topic %s", topic.Name)
+	}
+	err = s.ibsenIndexer.CreateIndex(topic.Name)
+	if err != nil {
+		log.Println(errore.SprintTrace(errore.WrapWithContext(err)))
+		return nil, status.Errorf(codes.Internal, "Failed while creating index for topic %s", topic.Name)
 	}
 	return &CreateStatus{
 		Created: create,
@@ -87,6 +97,11 @@ func (s server) Drop(ctx context.Context, topic *Topic) (*DropStatus, error) {
 		err = errore.WrapWithContext(err)
 		log.Println(errore.SprintTrace(err))
 		return nil, status.Errorf(codes.Internal, "Failed while dropping topic %s", topic.Name)
+	}
+	err = s.ibsenIndexer.DropIndex(topic.Name)
+	if err != nil {
+		log.Println(errore.SprintTrace(errore.WrapWithContext(err)))
+		return nil, status.Errorf(codes.Internal, "Failed while dropping index for topic %s", topic.Name)
 	}
 	return &DropStatus{
 		Dropped: dropped,
@@ -159,18 +174,22 @@ func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
 	logChan := make(chan *storage.LogEntryBatch)
 	var wg sync.WaitGroup
 	go sendBatchMessage(logChan, &wg, outStream)
-
-	err := s.logStorage.ReadBatch(storage.ReadBatchParam{
-		LogChan:   logChan,
-		Wg:        &wg,
-		Topic:     readParams.Topic,
-		BatchSize: int(readParams.BatchSize),
-		Offset:    readParams.Offset,
+	offset, err := s.ibsenIndexer.GetClosestByteOffset(readParams.Topic, commons.Offset(readParams.Offset))
+	if err != nil {
+		log.Println(errore.SprintTrace(errore.WrapWithContext(err)))
+		offset = commons.IndexedOffset{}
+	}
+	err = s.logStorage.ReadBatch(storage.ReadBatchParam{
+		LogChan:      logChan,
+		Wg:           &wg,
+		Topic:        readParams.Topic,
+		BatchSize:    int(readParams.BatchSize),
+		Offset:       readParams.Offset,
+		IbsenIndexer: offset,
 	})
 
 	if err != nil {
-		err = errore.WrapWithContext(err)
-		log.Println(errore.SprintTrace(err))
+		log.Println(errore.SprintTrace(errore.WrapWithContext(err)))
 		return status.Error(codes.Unknown, "Error reading streaming")
 	}
 	wg.Wait()
