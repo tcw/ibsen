@@ -11,14 +11,14 @@ type BlockWriter struct {
 	Afs       *afero.Afero
 	Filename  string
 	LogEntry  [][]byte
-	offset    uint64
-	blockSize int64
+	Offset    uint64
+	BlockSize int64
 }
 
 func (bw BlockWriter) WriteBatch() (uint64, int64, error) {
 	writer, err := commons.OpenFileForWrite(bw.Afs, bw.Filename)
 	if err != nil {
-		return bw.offset, bw.blockSize, errore.WrapWithContext(err)
+		return bw.Offset, bw.BlockSize, errore.WrapWithContext(err)
 	}
 	offset, blockSize, err := bw.writeBatchToFile(writer)
 	if err != nil {
@@ -33,8 +33,8 @@ func (bw BlockWriter) WriteBatch() (uint64, int64, error) {
 
 func (bw BlockWriter) writeBatchToFile(file afero.File) (uint64, int64, error) {
 	var bytes []byte
-	offset := bw.offset
-	size := bw.blockSize
+	offset := bw.Offset
+	size := bw.BlockSize
 	for _, entry := range bw.LogEntry {
 		bytes = append(bytes, createByteEntry(entry, offset)...)
 		offset = offset + 1

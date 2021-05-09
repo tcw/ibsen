@@ -26,9 +26,27 @@ type TopicIndexParams struct {
 }
 
 func NewTopicIndexManager(params TopicIndexParams) (*TopicIndexManager, error) {
+	state := IndexingState{}
 	blocks, err := commons.ListIndexBlocksInTopicOrderedAsc(params.afs, params.rootPath, params.topic)
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
+	}
+	if !blocks.IsEmpty() {
+		head, err := blocks.BlockHead()
+		if err != nil {
+			return nil, errore.WrapWithContext(err)
+		}
+		indexBlockFilename := CreateIndexModBlockFilename(params.rootPath, params.topic, head, params.modulo)
+		moduloIndex, err := ReadByteOffsetFromFile(params.afs, indexBlockFilename)
+		if err != nil {
+			return nil, errore.WrapWithContext(err)
+		}
+		state = IndexingState{
+			block:         head,
+			logOffset:     moduloIndex.getOffset(),
+			logByteOffset: moduloIndex.getByteOffsetHead(),
+		}
+		log.Printf("found index state for topic %s: %v ", params.topic, state)
 	}
 	topicModuloIndex := &TopicModuloIndex{
 		afs:      params.afs,
@@ -40,7 +58,7 @@ func NewTopicIndexManager(params TopicIndexParams) (*TopicIndexManager, error) {
 		topicIndexer:    topicModuloIndex,
 		blocks:          blocks,
 		logTopicManager: params.topicManager,
-		IndexingState:   IndexingState{},
+		IndexingState:   state,
 		mu:              &sync.Mutex{},
 	}, nil
 }
@@ -52,26 +70,31 @@ type IndexingState struct {
 }
 
 func (i IndexingState) IsEmpty() bool {
-	return i.block == 0
+	return i == IndexingState{}
 }
 
 func (m *TopicIndexManager) BuildIndex() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.logTopicManager.GetOffset() == 0 {
+		return nil
+	}
+	if m.logTopicManager.GetOffset() == m.IndexingState.logOffset {
+		return nil
+	}
 	indexBlocks := m.blocks
-
 	logBlocks := m.logTopicManager.GetBlocks()
-	toBeIndexed, err := getBlocksToBeIndexed(indexBlocks.Blocks, logBlocks, m.IndexingState)
+	toBeIndexed, err := getBlocksToBeIndexed(indexBlocks.Blocks, logBlocks)
 	log.Println("to be indexed", toBeIndexed)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
 	m.IndexingState, err = m.topicIndexer.BuildIndex(toBeIndexed, m.IndexingState)
-
+	log.Println(m.IndexingState)
+	m.blocks.AddBlocks(toBeIndexed)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-
 	return nil
 }
 
@@ -98,29 +121,48 @@ func (m *TopicIndexManager) FindClosestIndex(offset commons.Offset) (commons.Ind
 	if err != nil {
 		return commons.IndexedOffset{}, errore.WrapWithContext(err)
 	}
-	indexBlockFilename := commons.CreateIndexBlockFilename(m.topicIndexer.rootPath, m.topicIndexer.topic, blockContainingOffset)
+	indexBlockFilename := CreateIndexModBlockFilename(m.topicIndexer.rootPath, m.topicIndexer.topic, blockContainingOffset, m.topicIndexer.modulo)
 	//Todo add LRU caching
 	moduloIndex, err := ReadByteOffsetFromFile(m.topicIndexer.afs, indexBlockFilename)
 	if err != nil {
 		return commons.IndexedOffset{}, errore.WrapWithContext(err)
 	}
 	byteOffset, err := moduloIndex.getClosestByteOffset(offset)
+	if err != nil {
+		return commons.IndexedOffset{}, errore.WrapWithContext(err)
+	}
 	return commons.IndexedOffset{
 		Block:      blockContainingOffset,
 		ByteOffset: byteOffset,
-	}, errore.WrapWithContext(err)
+	}, nil
 }
 
-//todo
-func getBlocksToBeIndexed(indexBlocks []uint64, logBlocks []uint64, state IndexingState) ([]uint64, error) {
+func (m *TopicIndexManager) GetAllIndices() (map[uint64]ModuloIndex, error) {
+	var indices map[uint64]ModuloIndex
+	indices = make(map[uint64]ModuloIndex)
+
+	for _, block := range m.blocks.Blocks {
+		indexBlockFilename := CreateIndexModBlockFilename(m.topicIndexer.rootPath, m.topicIndexer.topic, block, m.topicIndexer.modulo)
+		moduloIndex, err := ReadByteOffsetFromFile(m.topicIndexer.afs, indexBlockFilename)
+		if err != nil {
+			return map[uint64]ModuloIndex{}, errore.WrapWithContext(err)
+		}
+		indices[block] = moduloIndex
+	}
+	return indices, nil
+}
+
+func getBlocksToBeIndexed(indexBlocks []uint64, logBlocks []uint64) ([]uint64, error) {
 	idxBlockLength := len(indexBlocks)
 	logBlockLength := len(logBlocks)
 	if logBlockLength == 0 {
 		return []uint64{}, nil
 	}
 	if idxBlockLength == 0 {
-		return logBlocks[idxBlockLength:], nil
+		log.Println(logBlocks)
+		return logBlocks[:], nil
 	} else {
+		log.Println(logBlocks)
 		return logBlocks[idxBlockLength-1:], nil
 	}
 }

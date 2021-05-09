@@ -33,6 +33,13 @@ func (mi ModuloIndex) getClosestByteOffset(offset commons.Offset) (commons.ByteO
 	return mi.ByteOffsets[offsetIndex], nil
 }
 
+func (mi ModuloIndex) getOffset() commons.Offset {
+	if mi.ByteOffsets == nil || len(mi.ByteOffsets) == 0 {
+		return commons.Offset(0)
+	}
+	return commons.Offset(uint32(len(mi.ByteOffsets)) * mi.Modulo)
+}
+
 func (mi ModuloIndex) getByteOffsetHead() commons.ByteOffset {
 	return mi.ByteOffsets[len(mi.ByteOffsets)-1]
 }
@@ -51,12 +58,14 @@ func CreateIndexModBlockFilename(rootPath string, topic string, block uint64, mo
 
 func (tmi TopicModuloIndex) BuildIndex(blocks []uint64, state IndexingState) (IndexingState, error) {
 	var currentState IndexingState
-	var err error
 	for _, block := range blocks {
-		indexBlockFilename := commons.CreateIndexBlockFilename(tmi.rootPath, tmi.topic, block)
-		fileExist := commons.DoesFileExist(indexBlockFilename)
+		indexBlockFilename := CreateIndexModBlockFilename(tmi.rootPath, tmi.topic, block, tmi.modulo)
+		fileExist, err := tmi.afs.Exists(indexBlockFilename)
+		if err != nil {
+			return IndexingState{}, errore.WrapWithContext(err)
+		}
 		if fileExist {
-			currentState, err = tmi.BuildIndexForExistingIndexFile(block, state)
+			currentState, err = tmi.BuildIndexForExistingIndexFile(state)
 		} else {
 			currentState, err = tmi.BuildIndexForNewLogFile(block)
 		}
@@ -67,9 +76,9 @@ func (tmi TopicModuloIndex) BuildIndex(blocks []uint64, state IndexingState) (In
 	return currentState, nil
 }
 
-func (tmi TopicModuloIndex) BuildIndexForExistingIndexFile(block uint64, state IndexingState) (IndexingState, error) {
-	logBlockFilename := commons.CreateLogBlockFilename(tmi.rootPath, tmi.topic, block)
-	indexBlockFileName := CreateIndexModBlockFilename(tmi.rootPath, tmi.topic, block, tmi.modulo)
+func (tmi TopicModuloIndex) BuildIndexForExistingIndexFile(state IndexingState) (IndexingState, error) {
+	logBlockFilename := commons.CreateLogBlockFilename(tmi.rootPath, tmi.topic, state.block)
+	indexBlockFileName := CreateIndexModBlockFilename(tmi.rootPath, tmi.topic, state.block, tmi.modulo)
 	logBlockFile, err := commons.OpenFileForRead(tmi.afs, logBlockFilename)
 	if err != nil {
 		return IndexingState{}, errore.WrapWithContext(err)
@@ -92,7 +101,7 @@ func (tmi TopicModuloIndex) BuildIndexForExistingIndexFile(block uint64, state I
 	indexBlockFile, err := commons.OpenFileForWrite(tmi.afs, indexBlockFileName)
 	var offsetPositions []storage.OffsetPosition
 	for {
-		offsetPositions, err = storage.ReadOffsetAndByteOffset(logBlockFile, 1000, tmi.modulo)
+		offsetPositions, err = storage.ReadOffsetAndByteOffset(logBlockFile, lastLogByteOffset, 1000, tmi.modulo)
 		if err != nil {
 			return IndexingState{}, errore.WrapWithContext(err)
 		}
@@ -107,7 +116,7 @@ func (tmi TopicModuloIndex) BuildIndexForExistingIndexFile(block uint64, state I
 	if len(offsetPositions) > 0 {
 		offsetPosition := offsetPositions[len(offsetPositions)-1]
 		return IndexingState{
-			block:         block,
+			block:         state.block,
 			logOffset:     commons.Offset(offsetPosition.Offset),
 			logByteOffset: commons.ByteOffset(offsetPosition.ByteOffset),
 		}, nil
@@ -124,9 +133,9 @@ func (tmi TopicModuloIndex) BuildIndexForNewLogFile(block uint64) (IndexingState
 	}
 	var lastLogByteOffset commons.ByteOffset = 0
 	indexBlockFile, err := commons.OpenFileForWrite(tmi.afs, indexBlockFileName)
-	var offsetPositions []storage.OffsetPosition
+	var lastOffsetPositions []storage.OffsetPosition
 	for {
-		offsetPositions, err = storage.ReadOffsetAndByteOffset(logBlockFile, 1000, tmi.modulo)
+		offsetPositions, err := storage.ReadOffsetAndByteOffset(logBlockFile, 0, 1000, tmi.modulo)
 		if err != nil {
 			return IndexingState{}, errore.WrapWithContext(err)
 		}
@@ -137,9 +146,10 @@ func (tmi TopicModuloIndex) BuildIndexForNewLogFile(block uint64) (IndexingState
 		if err != nil {
 			return IndexingState{}, errore.WrapWithContext(err)
 		}
+		lastOffsetPositions = offsetPositions
 	}
-	if len(offsetPositions) > 0 {
-		offsetPosition := offsetPositions[len(offsetPositions)-1]
+	if len(lastOffsetPositions) > 0 {
+		offsetPosition := lastOffsetPositions[len(lastOffsetPositions)-1]
 		return IndexingState{
 			block:         block,
 			logOffset:     commons.Offset(offsetPosition.Offset),
@@ -184,6 +194,7 @@ func ReadByteOffsetFromFile(afs *afero.Afero, indexFileName string) (ModuloIndex
 	}
 	var byteValue = make([]byte, 1)
 	positions := make([]commons.ByteOffset, 0)
+	positions = append(positions, commons.ByteOffset(0))
 	reader := bufio.NewReader(file)
 
 	var number []byte

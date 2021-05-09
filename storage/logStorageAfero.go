@@ -13,7 +13,7 @@ type LogStorageAfero struct {
 }
 
 func NewLogStorage(afs *afero.Afero, rootPath string, maxBlockSize int64) (LogStorageAfero, error) {
-	topics, err := NewTopicManager(afs, rootPath, maxBlockSize)
+	topics, err := NewTopicsManager(afs, rootPath, maxBlockSize)
 	if err != nil {
 		return LogStorageAfero{}, errore.WrapWithContext(err)
 	}

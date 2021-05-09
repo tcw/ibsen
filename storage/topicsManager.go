@@ -14,7 +14,7 @@ type TopicsManager struct {
 	maxBlockSize   int64
 }
 
-func NewTopicManager(afs *afero.Afero, rootPath string, maxBlockSize int64) (TopicsManager, error) {
+func NewTopicsManager(afs *afero.Afero, rootPath string, maxBlockSize int64) (TopicsManager, error) {
 
 	var topics = map[string]*TopicManager{}
 	topicManager := TopicsManager{
@@ -30,7 +30,7 @@ func NewTopicManager(afs *afero.Afero, rootPath string, maxBlockSize int64) (Top
 	return topicManager, nil
 }
 
-func (tr *TopicsManager) GetBlockManager(topic string) *TopicManager {
+func (tr *TopicsManager) GetTopicManager(topic string) *TopicManager {
 	return tr.topics[topic]
 }
 

@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,11 +27,6 @@ type IndexedOffset struct {
 
 func (idxOffset IndexedOffset) IsEmpty() bool {
 	return idxOffset.ByteOffset == 0
-}
-
-func DoesFileExist(fileName string) bool {
-	_, err := os.Stat(fileName)
-	return !errors.Is(err, os.ErrNotExist)
 }
 
 func OpenFileForReadWrite(afs *afero.Afero, fileName string) (afero.File, error) {
@@ -140,6 +136,10 @@ func (tb *TopicBlocks) BlockFilePathsOrderedAsc(rootPath string) []string {
 	return blocks
 }
 
+func (tb *TopicBlocks) AddBlocks(blocks []uint64) {
+	tb.Blocks = append(tb.Blocks, blocks...)
+}
+
 func (tb *TopicBlocks) IsEmpty() bool {
 	return tb.Blocks == nil || len(tb.Blocks) == 0
 }
@@ -147,10 +147,10 @@ func (tb *TopicBlocks) IsEmpty() bool {
 func ListUnhiddenEntriesDirectory(afs *afero.Afero, dir string) ([]string, error) {
 	var filenames []string
 	file, err := OpenFileForRead(afs, dir)
-	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
+	defer file.Close()
 	names, err := file.Readdirnames(0)
 	for _, name := range names {
 		isHidden := strings.HasPrefix(name, ".")
@@ -206,21 +206,21 @@ func listBlocksInTopicOrderedAsc(afs *afero.Afero, rootPath string, topic string
 	}, nil
 }
 
-func FilesToBlocks(files []string) ([]uint64, error) {
+func FilesToBlocks(paths []string) ([]uint64, error) {
 	var blocks []uint64
-	for _, file := range files {
-		splitFileName := strings.Split(file, ".")
-		if len(splitFileName) != 2 {
+	for _, path := range paths {
+		_, file := filepath.Split(path)
+		ext := filepath.Ext(file)
+		if !(ext == ".index" || ext == ".log") {
 			continue
 		}
-		if splitFileName[1] == "log" {
-			splitPath := strings.Split(splitFileName[0], Separator)
-			parseUint, err := strconv.ParseUint(splitPath[len(splitPath)-1], 10, 64)
-			if err != nil {
-				return nil, errore.WrapWithContext(err)
-			}
-			blocks = append(blocks, parseUint)
+		fileNameStem := strings.TrimSuffix(file, ext)
+		blockMod := strings.Split(fileNameStem, "_")
+		mod, err := strconv.ParseUint(blockMod[0], 10, 64)
+		if err != nil {
+			return nil, errore.WrapWithContext(err)
 		}
+		blocks = append(blocks, mod)
 	}
 	return blocks, nil
 }

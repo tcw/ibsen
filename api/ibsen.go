@@ -81,7 +81,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	if err != nil {
 		log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
 	}
-	manager.StartIndexing()
+	manager.StartIndexing(5 * time.Second)
 	err = ibs.startGRPCServer(listener, logStorage, manager)
 	if err != nil {
 		return errore.WrapWithContext(err)

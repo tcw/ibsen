@@ -7,19 +7,22 @@ import (
 	"github.com/tcw/ibsen/messaging"
 	"github.com/tcw/ibsen/storage"
 	"log"
+	"sync"
 	"time"
 )
 
 type FixedIntervalIndexManager struct {
-	afs                *afero.Afero
-	rootPath           string
-	modulo             uint32
-	topicsManager      *storage.TopicsManager
-	TopicIndexManagers map[string]*TopicIndexManager
+	afs                 *afero.Afero
+	rootPath            string
+	modulo              uint32
+	topicsManager       *storage.TopicsManager
+	TopicIndexManagers  map[string]*TopicIndexManager
+	mu                  *sync.Mutex
+	indexWatcherStarted bool
 }
 
 type IbsenIndex interface {
-	StartIndexing()
+	StartIndexing(updateEvery time.Duration)
 	GetClosestByteOffset(topic string, offset commons.Offset) (commons.IndexedOffset, error)
 	RebuildIndex(topic string) error
 	CreateIndex(topic string) error
@@ -39,7 +42,7 @@ func NewTopicsIndexManager(afs *afero.Afero, rootPath string, topicsManager *sto
 			afs:          afs,
 			topic:        topic,
 			rootPath:     rootPath,
-			topicManager: topicsManager.GetBlockManager(topic),
+			topicManager: topicsManager.GetTopicManager(topic),
 			modulo:       modulo,
 		})
 		if err != nil {
@@ -48,23 +51,34 @@ func NewTopicsIndexManager(afs *afero.Afero, rootPath string, topicsManager *sto
 		topicIndexManagers[topic] = manager
 	}
 	return &FixedIntervalIndexManager{
-		afs:                afs,
-		rootPath:           rootPath,
-		modulo:             modulo,
-		topicsManager:      topicsManager,
-		TopicIndexManagers: topicIndexManagers,
+		afs:                 afs,
+		rootPath:            rootPath,
+		modulo:              modulo,
+		topicsManager:       topicsManager,
+		TopicIndexManagers:  topicIndexManagers,
+		mu:                  &sync.Mutex{},
+		indexWatcherStarted: false,
 	}, err
 }
 
-func (tim *FixedIntervalIndexManager) StartIndexing() {
+func (tim *FixedIntervalIndexManager) StartIndexing(updateEvery time.Duration) {
+	tim.mu.Lock()
+	defer tim.mu.Unlock()
+	if tim.indexWatcherStarted {
+		return
+	}
+	tim.indexWatcherStarted = true
 	topicEventChannel := make(chan messaging.Event)
 	messaging.Subscribe(topicEventChannel)
-	go startIndexWatcher(topicEventChannel, tim)
+	go startIndexWatcher(topicEventChannel, tim, updateEvery)
 }
 
 func (tim *FixedIntervalIndexManager) GetClosestByteOffset(topic string, offset commons.Offset) (commons.IndexedOffset, error) {
 	index, err := tim.TopicIndexManagers[topic].FindClosestIndex(offset)
-	return index, errore.WrapWithContext(err)
+	if err != nil {
+		return commons.IndexedOffset{}, errore.WrapWithContext(err)
+	}
+	return index, nil
 }
 
 func (tim *FixedIntervalIndexManager) CreateIndex(topic string) error {
@@ -72,7 +86,7 @@ func (tim *FixedIntervalIndexManager) CreateIndex(topic string) error {
 		afs:          tim.afs,
 		topic:        topic,
 		rootPath:     tim.rootPath,
-		topicManager: tim.topicsManager.GetBlockManager(topic),
+		topicManager: tim.topicsManager.GetTopicManager(topic),
 		modulo:       tim.modulo,
 	})
 	if err != nil {
@@ -105,7 +119,7 @@ func (tim *FixedIntervalIndexManager) RebuildIndex(topic string) error {
 	return nil
 }
 
-func startIndexWatcher(topicEventChannel chan messaging.Event, tim *FixedIntervalIndexManager) {
+func startIndexWatcher(topicEventChannel chan messaging.Event, tim *FixedIntervalIndexManager, updateEvery time.Duration) {
 	for {
 		select {
 		case event := <-topicEventChannel:
@@ -116,7 +130,7 @@ func startIndexWatcher(topicEventChannel chan messaging.Event, tim *FixedInterva
 					log.Println(errore.SprintTrace(errore.WrapWithContext(err)))
 				}
 			}
-		case <-time.After(10 * time.Second):
+		case <-time.After(updateEvery):
 			for s, manager := range tim.TopicIndexManagers {
 				err := manager.BuildIndex()
 				if err != nil {

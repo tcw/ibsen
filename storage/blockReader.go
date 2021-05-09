@@ -216,7 +216,7 @@ func fastForwardToOffset(file afero.File, offset int64) error {
 		checksum := make([]byte, 4)
 		_, err := io.ReadFull(file, bytes)
 		if err == io.EOF {
-			return errore.NewWithContext("no offset in block")
+			return errore.NewWithContext("no Offset in block")
 		}
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -243,7 +243,7 @@ type OffsetPosition struct {
 	ByteOffset uint64
 }
 
-func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int, modulo uint32) ([]OffsetPosition, error) {
+func ReadOffsetAndByteOffset(file afero.File, fromByteOffset commons.ByteOffset, maxEntriesFound int, modulo uint32) ([]OffsetPosition, error) {
 	var entriesFound int = 0
 	var offsets []OffsetPosition
 	var offset uint64
@@ -283,7 +283,7 @@ func ReadOffsetAndByteOffset(file afero.File, maxEntriesFound int, modulo uint32
 		if offset != 0 && (offset+1)%uint64(modulo) == 0 {
 			offsets = append(offsets, OffsetPosition{
 				Offset:     offset + 1,
-				ByteOffset: uint64(byteSum),
+				ByteOffset: uint64(byteSum) + uint64(fromByteOffset),
 			})
 			entriesFound = entriesFound + 1
 		}

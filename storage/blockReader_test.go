@@ -15,8 +15,8 @@ func TestReadOffsetAndByteOffset(t *testing.T) {
 		Afs:       afs,
 		Filename:  "test/00000000000000000000.log",
 		LogEntry:  createTestEntries(100, 1),
-		offset:    0,
-		blockSize: 0,
+		Offset:    0,
+		BlockSize: 0,
 	}
 	_, _, err := writer.WriteBatch()
 	if err != nil {
@@ -26,7 +26,7 @@ func TestReadOffsetAndByteOffset(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	offset, err := ReadOffsetAndByteOffset(read, 1000, 3)
+	offset, err := ReadOffsetAndByteOffset(read, 0, 1000, 3)
 	if err != nil {
 		t.Error(err)
 	}

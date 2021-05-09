@@ -51,6 +51,10 @@ func changeEventDispatch(manager *TopicManager) {
 	}
 }
 
+func (br *TopicManager) GetOffset() commons.Offset {
+	return commons.Offset(br.offset)
+}
+
 func (br *TopicManager) GetBlocks() []uint64 {
 	return br.blocks
 }
@@ -94,8 +98,8 @@ func (br *TopicManager) WriteBatch(logEntry [][]byte) error {
 		Afs:       br.asf,
 		Filename:  blockFileName,
 		LogEntry:  logEntry,
-		offset:    br.offset,
-		blockSize: br.blockSize,
+		Offset:    br.offset,
+		BlockSize: br.blockSize,
 	}
 	offset, blockSize, err := writer.WriteBatch()
 	if err != nil {

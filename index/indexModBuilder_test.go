@@ -7,9 +7,7 @@ import (
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/storage"
 	"log"
-	"math/rand"
 	"testing"
-	"time"
 )
 
 func TestTopicModuloIndex_BuildIndexForNewLogFile(t *testing.T) {
@@ -20,7 +18,7 @@ func TestTopicModuloIndex_BuildIndexForNewLogFile(t *testing.T) {
 
 	afs := newAfero()
 
-	_, err := createTestLog(afs, rootPath, topic, 0)
+	_, err := storage.CreateTestLog(afs, rootPath, topic, 0)
 	if err != nil {
 		t.Fatal(errore.WrapWithContext(err))
 	}
@@ -41,11 +39,73 @@ func TestTopicModuloIndex_BuildIndexForNewLogFile(t *testing.T) {
 	indexBlockFileName := CreateIndexModBlockFilename(rootPath, topic, 0, modulo)
 	readIndex(afs, indexBlockFileName)
 	fromFile, err := ReadByteOffsetFromFile(afs, indexBlockFileName)
-	offset, err := fromFile.getClosestByteOffset(44)
+	if err != nil {
+		t.Fatal(errore.SprintTrace(err))
+	}
+	offset, err := fromFile.getClosestByteOffset(49)
 	if err != nil {
 		t.Fatal(errore.SprintTrace(err))
 	}
 	if offset != 6000 {
+		t.Fail()
+	}
+}
+
+func TestTopicModuloIndex_BuildIndexForExistingLogFile(t *testing.T) {
+
+	const rootPath = "test"
+	const topic = "topic1"
+	const modulo = 5
+
+	afs := newAfero()
+
+	filename, err := storage.CreateTestLog(afs, rootPath, topic, 0)
+	if err != nil {
+		t.Fatal(errore.WrapWithContext(err))
+	}
+	moduloIndex := TopicModuloIndex{
+		afs:      afs,
+		rootPath: rootPath,
+		topic:    topic,
+		modulo:   modulo,
+	}
+
+	indexState, err := moduloIndex.BuildIndexForNewLogFile(0)
+	if err != nil {
+		t.Fatal(errore.WrapWithContext(err))
+	}
+	if indexState.block != 0 {
+		t.Fail()
+	}
+
+	writer := storage.BlockWriter{
+		Afs:       afs,
+		Filename:  filename,
+		LogEntry:  storage.CreateTestEntries(100, 100),
+		Offset:    100,
+		BlockSize: 100,
+	}
+	_, _, err = writer.WriteBatch()
+	if err != nil {
+		t.Error(err)
+	}
+
+	indexState, err = moduloIndex.BuildIndexForExistingIndexFile(indexState)
+	if err != nil {
+		t.Fatal(errore.WrapWithContext(err))
+	}
+
+	indexBlockFileName := CreateIndexModBlockFilename(rootPath, topic, 0, modulo)
+	readIndex(afs, indexBlockFileName)
+	fromFile, err := ReadByteOffsetFromFile(afs, indexBlockFileName)
+	if err != nil {
+		t.Fatal(errore.SprintTrace(err))
+	}
+	offset, err := fromFile.getClosestByteOffset(149)
+	if err != nil {
+		t.Fatal(errore.SprintTrace(err))
+	}
+	if offset != 18000 {
 		t.Fail()
 	}
 }
@@ -76,43 +136,6 @@ func Test_writeModToFile(t *testing.T) {
 		t.Error(err)
 	}
 	fmt.Print(offsetMap)
-}
-
-func createTestLog(afs *afero.Afero, rootPath string, topic string, blockName uint64) (string, error) {
-	filename := commons.CreateLogBlockFilename(rootPath, topic, blockName)
-	writer := storage.BlockWriter{
-		Afs:      afs,
-		Filename: filename,
-		LogEntry: createTestEntries(100, 100),
-	}
-	offset, _, err := writer.WriteBatch()
-	if err != nil {
-		return "", errore.WrapWithContext(err)
-	}
-	fmt.Printf("Created log file [%s] with offset head [%d]\n", filename, offset)
-	return filename, nil
-}
-
-func createTestEntries(entries int, entriesByteSize int) [][]byte {
-	var bytes = make([][]byte, 0)
-
-	for i := 0; i < entries; i++ {
-		entry := createTestValues(entriesByteSize)
-		bytes = append(bytes, entry)
-	}
-	return bytes
-}
-
-func createTestValues(entrySizeBytes int) []byte {
-	rand.Seed(time.Now().UnixNano())
-
-	var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
-
-	b := make([]rune, entrySizeBytes)
-	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
-	}
-	return []byte(string(b))
 }
 
 func readIndex(afs *afero.Afero, indexFile string) {

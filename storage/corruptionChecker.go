@@ -104,30 +104,30 @@ func checkForCorruption(file afero.File) (int, error) {
 		offset := int64(commons.LittleEndianToUint64(offsetBytes))
 		if currentOffset != -1 {
 			if currentOffset+1 != offset {
-				return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
+				return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at Offset %d", currentOffset))
 			}
 		}
 		currentOffset = offset
 
 		n, err = io.ReadFull(file, checksum)
 		if err != nil {
-			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
+			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at Offset %d", currentOffset))
 		}
 		checksumValue := commons.LittleEndianToUint32(checksum)
 
 		n, err = io.ReadFull(file, byteSizeBytes)
 		if err != nil {
-			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
+			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at Offset %d", currentOffset))
 		}
 		size := commons.LittleEndianToUint64(byteSizeBytes)
 
 		entryBytes := make([]byte, size)
 		n, err4 := io.ReadFull(file, entryBytes)
 		if err4 != nil {
-			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
+			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at Offset %d", currentOffset))
 		}
 		if n != int(size) {
-			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at offset %d", currentOffset))
+			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at Offset %d", currentOffset))
 		}
 
 		record := append(offsetBytes, byteSizeBytes...)
@@ -136,7 +136,7 @@ func checkForCorruption(file afero.File) (int, error) {
 		recordChecksum := crc32.Checksum(record, crc32q)
 
 		if recordChecksum != checksumValue {
-			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at offset, illegal checksum %d", currentOffset))
+			return lastSafePoint, errore.NewWithContext(fmt.Sprintf("Detected corruption at Offset, illegal checksum %d", currentOffset))
 		}
 
 		lastSafePoint = lastSafePoint + 20 + int(size)
