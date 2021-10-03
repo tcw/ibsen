@@ -5,22 +5,28 @@ import (
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"hash/crc32"
-	"sync"
 )
 
 var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
 type TopicWriter struct {
 	Afs              *afero.Afero
-	mu               *sync.Mutex
 	Topic            commons.Topic
 	CurrentOffset    commons.Offset
 	CurrentBlockSize commons.BlockSizeInBytes
 }
 
+func (tw *TopicWriter) clearCurrentBlockSize() {
+	tw.CurrentBlockSize = 0
+}
+
+func (tw *TopicWriter) update(offset commons.Offset, blockSize commons.BlockSizeInBytes) {
+	tw.CurrentOffset = offset
+	tw.CurrentBlockSize = blockSize
+}
+
 func (tw *TopicWriter) Write(fileName string, entries commons.Entries) error {
-	tw.mu.Lock()
-	defer tw.mu.Unlock()
+
 	writer, err := commons.OpenFileForWrite(tw.Afs, fileName)
 	if err != nil {
 		return errore.WrapWithContext(err)

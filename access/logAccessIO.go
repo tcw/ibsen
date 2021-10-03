@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -78,6 +79,79 @@ func FilesToBlocks(paths []string) ([]commons.Offset, error) {
 		blocks = append(blocks, commons.Offset(mod))
 	}
 	return blocks, nil
+}
+
+func ListAllTopics(afs *afero.Afero, dir commons.IbsenRootPath) ([]string, error) {
+	var filenames []string
+	file, err := OpenFileForRead(afs, string(dir))
+	if err != nil {
+		return nil, errore.WrapWithContext(err)
+	}
+	defer file.Close()
+	names, err := file.Readdirnames(0)
+	for _, name := range names {
+		isHidden := strings.HasPrefix(name, ".")
+		if !isHidden {
+			filenames = append(filenames, name)
+		}
+	}
+	return filenames, nil
+}
+
+func BlockSize(asf *afero.Afero, fileName string) (int64, error) {
+	exists, err := asf.Exists(fileName)
+	if err != nil {
+		return 0, errore.NewWithContext(fmt.Sprintf("Failes checking if file %s exist", fileName))
+	}
+	if !exists {
+		return 0, errore.NewWithContext(fmt.Sprintf("File %s does not exist", fileName))
+	}
+
+	file, err := asf.OpenFile(fileName,
+		os.O_RDONLY, 0400)
+	fi, err := file.Stat()
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	err = file.Close()
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	return fi.Size(), nil
+}
+
+func FindLastOffset(afs *afero.Afero, blockFileName string) (int64, error) {
+	var offsetFound int64 = 0
+	file, err := commons.OpenFileForRead(afs, blockFileName)
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	defer file.Close()
+	for {
+		bytes := make([]byte, 8)
+		checksum := make([]byte, 4)
+		_, err := io.ReadFull(file, bytes)
+		if err == io.EOF {
+			return offsetFound, nil
+		}
+		if err != nil {
+			return offsetFound, errore.WrapWithContext(err)
+		}
+		offsetFound = int64(commons.LittleEndianToUint64(bytes))
+		_, err = io.ReadFull(file, checksum)
+		if err != nil {
+			return offsetFound, errore.WrapWithContext(err)
+		}
+		_, err = io.ReadFull(file, bytes)
+		if err != nil {
+			return offsetFound, errore.WrapWithContext(err)
+		}
+		size := commons.LittleEndianToUint64(bytes)
+		_, err = file.Seek(int64(size), 1)
+		if err != nil {
+			return offsetFound, errore.WrapWithContext(err)
+		}
+	}
 }
 
 func Uint64ToLittleEndian(offset uint64) []byte {
