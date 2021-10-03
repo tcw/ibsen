@@ -9,7 +9,7 @@ type LogAccessAfero struct {
 	Afs                 *afero.Afero
 	IbsenRootPath       commons.IbsenRootPath
 	MaxBlockSizeInBytes uint64
-	TopicWriters        map[string]TopicWriter
+	TopicWriters        map[string]*Topic
 }
 
 func init() {

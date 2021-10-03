@@ -185,32 +185,12 @@ func ListIndexBlocksInTopicOrderedAsc(afs *afero.Afero, rootPath string, topic s
 	return listBlocksInTopicOrderedAsc(afs, rootPath, topic, "index")
 }
 
-func listBlocksInTopicOrderedAsc(afs *afero.Afero, rootPath string, topic string, filetype string) (TopicBlocks, error) {
-	var blocks []uint64
-	files, err := ListFilesInDirectory(afs, rootPath+Separator+topic, filetype)
-	if err != nil {
-		return EmptyTopicBlocks(topic, filetype), errore.WrapWithContext(err)
-	}
-	if len(files) == 0 {
-		return TopicBlocks{}, nil
-	}
-	blocks, err = FilesToBlocks(files)
-	if err != nil {
-		return EmptyTopicBlocks(topic, filetype), errore.WrapWithContext(err)
-	}
-	sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
-	return TopicBlocks{
-		Topic:  topic,
-		Blocks: blocks,
-	}, nil
-}
-
-func FilesToBlocks(paths []string) ([]uint64, error) {
+func FilesToBlocks(paths []string, fileExtension string) ([]uint64, error) {
 	var blocks []uint64
 	for _, path := range paths {
 		_, file := filepath.Split(path)
 		ext := filepath.Ext(file)
-		if !(ext == ".index" || ext == ".log") {
+		if !(ext == fileExtension) {
 			continue
 		}
 		fileNameStem := strings.TrimSuffix(file, ext)
