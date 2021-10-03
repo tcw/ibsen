@@ -135,6 +135,7 @@ func startIndexWatcher(topicEventChannel chan messaging.Event, tim *FixedInterva
 				err := manager.BuildIndex()
 				if err != nil {
 					log.Printf("Update of index %s failed", s)
+					log.Println(errore.SprintTrace(err))
 				}
 			}
 		}

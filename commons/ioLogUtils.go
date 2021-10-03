@@ -17,7 +17,6 @@ const Separator = string(os.PathSeparator)
 
 var BlockNotFound = errors.New("block not found")
 
-type Offset uint64
 type ByteOffset uint64
 
 type IndexedOffset struct {

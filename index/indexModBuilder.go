@@ -9,6 +9,7 @@ import (
 	"github.com/tcw/ibsen/storage"
 	"google.golang.org/protobuf/encoding/protowire"
 	"io"
+	"log"
 	"math"
 	"path/filepath"
 	"strconv"
@@ -65,8 +66,10 @@ func (tmi TopicModuloIndex) BuildIndex(blocks []uint64, state IndexingState) (In
 			return IndexingState{}, errore.WrapWithContext(err)
 		}
 		if fileExist {
+			log.Println("Build for existing", state)
 			currentState, err = tmi.BuildIndexForExistingIndexFile(state)
 		} else {
+			log.Println("Build for new", block)
 			currentState, err = tmi.BuildIndexForNewLogFile(block)
 		}
 		if err != nil {

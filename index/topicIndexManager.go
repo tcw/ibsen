@@ -76,6 +76,7 @@ func (i IndexingState) IsEmpty() bool {
 func (m *TopicIndexManager) BuildIndex() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	log.Println("started building index for " + m.topicIndexer.topic)
 	if m.logTopicManager.GetOffset() == 0 {
 		return nil
 	}
@@ -95,6 +96,7 @@ func (m *TopicIndexManager) BuildIndex() error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
+	log.Println("ended building index for " + m.topicIndexer.topic)
 	return nil
 }
 
