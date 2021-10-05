@@ -2,6 +2,7 @@ package index
 
 import (
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/messaging"
@@ -23,7 +24,7 @@ type FixedIntervalIndexManager struct {
 
 type IbsenIndex interface {
 	StartIndexing(updateEvery time.Duration)
-	GetClosestByteOffset(topic string, offset commons.Offset) (commons.IndexedOffset, error)
+	GetClosestByteOffset(topic string, offset access.Offset) (commons.IndexedOffset, error)
 	RebuildIndex(topic string) error
 	CreateIndex(topic string) error
 	DropIndex(topic string) error
@@ -73,7 +74,7 @@ func (tim *FixedIntervalIndexManager) StartIndexing(updateEvery time.Duration) {
 	go startIndexWatcher(topicEventChannel, tim, updateEvery)
 }
 
-func (tim *FixedIntervalIndexManager) GetClosestByteOffset(topic string, offset commons.Offset) (commons.IndexedOffset, error) {
+func (tim *FixedIntervalIndexManager) GetClosestByteOffset(topic string, offset access.Offset) (commons.IndexedOffset, error) {
 	index, err := tim.TopicIndexManagers[topic].FindClosestIndex(offset)
 	if err != nil {
 		return commons.IndexedOffset{}, errore.WrapWithContext(err)

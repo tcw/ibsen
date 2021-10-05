@@ -11,23 +11,23 @@ var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
 type TopicWriter struct {
 	Afs              *afero.Afero
-	Topic            commons.Topic
-	CurrentOffset    commons.Offset
-	CurrentBlockSize commons.BlockSizeInBytes
+	Topic            Topic
+	CurrentOffset    Offset
+	CurrentBlockSize BlockSizeInBytes
 }
 
 func (tw *TopicWriter) clearCurrentBlockSize() {
 	tw.CurrentBlockSize = 0
 }
 
-func (tw *TopicWriter) update(offset commons.Offset, blockSize commons.BlockSizeInBytes) {
+func (tw *TopicWriter) update(offset Offset, blockSize BlockSizeInBytes) {
 	tw.CurrentOffset = offset
 	tw.CurrentBlockSize = blockSize
 }
 
-func (tw *TopicWriter) Write(fileName string, entries commons.Entries) error {
+func (tw *TopicWriter) Write(fileName FileName, entries Entries) error {
 
-	writer, err := commons.OpenFileForWrite(tw.Afs, fileName)
+	writer, err := commons.OpenFileForWrite(tw.Afs, string(fileName))
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -42,7 +42,7 @@ func (tw *TopicWriter) Write(fileName string, entries commons.Entries) error {
 	return nil
 }
 
-func (tw *TopicWriter) writeBatchToFile(file afero.File, entries commons.Entries) error {
+func (tw *TopicWriter) writeBatchToFile(file afero.File, entries Entries) error {
 	var bytes []byte
 
 	for _, entry := range entries {
@@ -50,14 +50,14 @@ func (tw *TopicWriter) writeBatchToFile(file afero.File, entries commons.Entries
 		tw.CurrentOffset = tw.CurrentOffset + 1
 	}
 	n, err := file.Write(bytes)
-	tw.CurrentBlockSize = commons.BlockSizeInBytes(uint64(tw.CurrentBlockSize) + uint64(n))
+	tw.CurrentBlockSize = BlockSizeInBytes(uint64(tw.CurrentBlockSize) + uint64(n))
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
 	return nil
 }
 
-func createByteEntry(entry []byte, currentOffset commons.Offset) []byte {
+func createByteEntry(entry []byte, currentOffset Offset) []byte {
 	offset := commons.Uint64ToLittleEndian(uint64(currentOffset))
 	byteSize := commons.IntToLittleEndian(len(entry))
 	checksum := crc32.Checksum(offset, crc32q)

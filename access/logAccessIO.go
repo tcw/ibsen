@@ -65,8 +65,8 @@ func ListFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([
 	return filenames, nil
 }
 
-func FilesToBlocks(paths []string) ([]commons.Offset, error) {
-	var blocks []commons.Offset
+func FilesToBlocks(paths []string) ([]Offset, error) {
+	var blocks []Offset
 	for _, path := range paths {
 		_, file := filepath.Split(path)
 		ext := filepath.Ext(file)
@@ -76,12 +76,12 @@ func FilesToBlocks(paths []string) ([]commons.Offset, error) {
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		blocks = append(blocks, commons.Offset(mod))
+		blocks = append(blocks, Offset(mod))
 	}
 	return blocks, nil
 }
 
-func ListAllTopics(afs *afero.Afero, dir commons.IbsenRootPath) ([]string, error) {
+func ListAllTopics(afs *afero.Afero, dir IbsenRootPath) ([]string, error) {
 	var filenames []string
 	file, err := OpenFileForRead(afs, string(dir))
 	if err != nil {

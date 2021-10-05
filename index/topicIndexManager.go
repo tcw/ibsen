@@ -2,6 +2,7 @@ package index
 
 import (
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/storage"
@@ -65,7 +66,7 @@ func NewTopicIndexManager(params TopicIndexParams) (*TopicIndexManager, error) {
 
 type IndexingState struct {
 	block         uint64
-	logOffset     commons.Offset
+	logOffset     access.Offset
 	logByteOffset commons.ByteOffset
 }
 
@@ -118,7 +119,7 @@ func (m *TopicIndexManager) DropIndex() (int, error) {
 	return droppedIndices, nil
 }
 
-func (m *TopicIndexManager) FindClosestIndex(offset commons.Offset) (commons.IndexedOffset, error) {
+func (m *TopicIndexManager) FindClosestIndex(offset access.Offset) (commons.IndexedOffset, error) {
 	blockContainingOffset, err := m.blocks.FindBlockContaining(offset)
 	if err != nil {
 		return commons.IndexedOffset{}, errore.WrapWithContext(err)

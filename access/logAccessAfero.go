@@ -2,21 +2,20 @@ package access
 
 import (
 	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"sync"
 )
 
 type LogAccessAfero struct {
 	Afs                 *afero.Afero
-	IbsenRootPath       commons.IbsenRootPath
-	MaxBlockSizeInBytes commons.BlockSizeInBytes
-	Topics              map[commons.Topic]*TopicHandler
+	IbsenRootPath       IbsenRootPath
+	MaxBlockSizeInBytes BlockSizeInBytes
+	Topics              map[Topic]*TopicHandler
 }
 
 func (l *LogAccessAfero) LoadTopicFromFilesystem() error {
 
-	var loadedTopics = map[commons.Topic]*TopicHandler{}
+	var loadedTopics = map[Topic]*TopicHandler{}
 	topics, err := ListAllTopics(l.Afs, l.IbsenRootPath)
 	if err != nil {
 		return errore.WrapWithContext(err)
@@ -25,12 +24,12 @@ func (l *LogAccessAfero) LoadTopicFromFilesystem() error {
 		t := TopicHandler{
 			Afs:      l.Afs,
 			mu:       &sync.Mutex{},
-			Topic:    commons.Topic(topic),
+			Topic:    Topic(topic),
 			RootPath: l.IbsenRootPath,
-			Blocks:   make([]commons.Offset, 0),
+			Blocks:   make([]Offset, 0),
 			TopicWriter: TopicWriter{
 				Afs:   l.Afs,
-				Topic: commons.Topic(topic),
+				Topic: Topic(topic),
 			},
 		}
 		err = t.updateFromFileSystem()
@@ -46,17 +45,21 @@ func (l *LogAccessAfero) LoadTopicFromFilesystem() error {
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		t.TopicWriter.update(commons.Offset(offset), commons.BlockSizeInBytes(blockSize))
-		loadedTopics[commons.Topic(topic)] = &t
+		t.TopicWriter.update(Offset(offset), BlockSizeInBytes(blockSize))
+		loadedTopics[Topic(topic)] = &t
 	}
 	l.Topics = loadedTopics
 	return nil
 }
 
-func (l LogAccessAfero) Write(topic commons.Topic, entries commons.Entries) (commons.Offset, error) { //needs m
-	return l.Topics[topic].Write(entries)
+func (l LogAccessAfero) Write(topic Topic, entries Entries) (Offset, error) { //needs m
+	return l.Topics[topic].Write(entries, l.MaxBlockSizeInBytes)
 }
 
-func (l LogAccessAfero) Read(topic commons.Topic, offset commons.Offset, entries commons.NumberOfEntries) (commons.Entries, error) {
-	panic("implement me")
+func (l LogAccessAfero) Read(params ReadParams) error {
+	offset, err := l.Topics[params.Topic].Read(params)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+
 }

@@ -3,6 +3,7 @@ package index
 import (
 	"bufio"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/storage"
@@ -28,14 +29,14 @@ func writeToFile(file afero.File, previousPosition storage.OffsetPosition, offse
 	return nil
 }
 
-func readFromFile(afs *afero.Afero, indexFileName string) (map[commons.Offset]commons.ByteOffset, error) {
+func readFromFile(afs *afero.Afero, indexFileName string) (map[access.Offset]commons.ByteOffset, error) {
 	file, err := commons.OpenFileForRead(afs, indexFileName)
 	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
 	var byteValue = make([]byte, 1)
-	positions := make(map[commons.Offset]commons.ByteOffset)
+	positions := make(map[access.Offset]commons.ByteOffset)
 	reader := bufio.NewReader(file)
 	var counter uint64 = 0
 	var number []byte
@@ -59,7 +60,7 @@ func readFromFile(afs *afero.Afero, indexFileName string) (map[commons.Offset]co
 				offset = offset + varint
 			} else {
 				byteOffset = byteOffset + varint
-				positions[commons.Offset(offset)] = commons.ByteOffset(byteOffset)
+				positions[access.Offset(offset)] = commons.ByteOffset(byteOffset)
 			}
 			counter = counter + 1
 			number = make([]byte, 0)

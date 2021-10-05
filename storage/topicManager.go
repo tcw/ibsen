@@ -2,6 +2,7 @@ package storage
 
 import (
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/messaging"
@@ -51,8 +52,8 @@ func changeEventDispatch(manager *TopicManager) {
 	}
 }
 
-func (br *TopicManager) GetOffset() commons.Offset {
-	return commons.Offset(br.offset)
+func (br *TopicManager) GetOffset() access.Offset {
+	return access.Offset(br.offset)
 }
 
 func (br *TopicManager) GetBlocks() []uint64 {

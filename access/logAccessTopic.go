@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"sort"
 	"sync"
@@ -15,9 +14,9 @@ var BlockNotFound = errors.New("block not found")
 type TopicHandler struct {
 	Afs         *afero.Afero
 	mu          *sync.Mutex
-	Topic       commons.Topic
-	RootPath    commons.IbsenRootPath
-	Blocks      []commons.Offset
+	Topic       Topic
+	RootPath    IbsenRootPath
+	Blocks      []Offset
 	TopicWriter TopicWriter
 }
 
@@ -32,12 +31,12 @@ func (t *TopicHandler) updateFromFileSystem() error {
 	return nil
 }
 
-func (t *TopicHandler) createNewBlock(offset commons.Offset) commons.FileName {
+func (t *TopicHandler) newBlock(offset Offset) FileName {
 	t.AddBlock(offset)
 	return t.blockFileName(offset)
 }
 
-func (t *TopicHandler) currentBlock() (commons.FileName, error) {
+func (t *TopicHandler) currentBlock() (FileName, error) {
 	size := t.Size()
 	if size == 0 {
 		return "", BlockNotFound
@@ -47,24 +46,39 @@ func (t *TopicHandler) currentBlock() (commons.FileName, error) {
 	return fileName, nil
 }
 
-func (t TopicHandler) findBlockContaining(offset commons.Offset) (commons.FileName, error) {
+func (t TopicHandler) findBlockContaining(offset Offset) (FileName, BlockIndex, error) {
 	size := t.Size()
 	if size == 0 {
-		return "", BlockNotFound
+		return "", 0, BlockNotFound
 	}
 	if offset > t.TopicWriter.CurrentOffset {
-		return "", BlockNotFound
+		return "", 0, BlockNotFound
 	}
-	lastOffset := t.Blocks[len(t.Blocks)-1]
+	lastBlock := len(t.Blocks) - 1
+	lastOffset := t.Blocks[lastBlock]
 	if offset > lastOffset {
-		return t.blockFileName(lastOffset), nil
+		return t.blockFileName(lastOffset), BlockIndex(lastBlock), nil
 	}
-	for i := len(t.Blocks) - 1; i >= 0; i-- {
+	for i := lastBlock; i >= 0; i-- {
 		if offset < t.Blocks[i] {
-			return t.blockFileName(t.Blocks[i]), nil
+			return t.blockFileName(t.Blocks[i]), BlockIndex(i), nil
 		}
 	}
-	return "", BlockNotFound
+	return "", 0, BlockNotFound
+}
+
+func (t TopicHandler) allBlocksFromOffset(offset Offset) ([]FileName, error) {
+	_, index, err := t.findBlockContaining(offset)
+	if err != nil {
+		return nil, errore.WrapWithContext(err)
+	}
+	offsets := t.Blocks[index:]
+	var fileNames []FileName
+	for _, block := range offsets {
+		fileName := t.blockFileName(block)
+		fileNames = append(fileNames, fileName)
+	}
+	return fileNames, nil
 }
 
 func (t *TopicHandler) IsEmpty() bool {
@@ -79,11 +93,11 @@ func (t TopicHandler) TopicPath() string {
 	return string(t.RootPath) + Separator + string(t.Topic)
 }
 
-func (t *TopicHandler) AddBlocks(blocks []commons.Offset) {
+func (t *TopicHandler) AddBlocks(blocks []Offset) {
 	t.Blocks = append(t.Blocks, blocks...)
 }
 
-func (t *TopicHandler) AddBlock(block commons.Offset) {
+func (t *TopicHandler) AddBlock(block Offset) {
 	t.Blocks = append(t.Blocks, block)
 }
 
@@ -91,14 +105,63 @@ func (t *TopicHandler) sortBlocks() {
 	sort.Slice(t.Blocks, func(i, j int) bool { return t.Blocks[i] < t.Blocks[j] })
 }
 
-func (t *TopicHandler) blockFileName(block commons.Offset) commons.FileName {
+func (t *TopicHandler) blockFileName(block Offset) FileName {
 	fileName := fmt.Sprintf("%020d.%s", block, "log")
-	return commons.FileName(string(t.RootPath) + Separator + string(t.Topic) + Separator + fileName)
+	return FileName(string(t.RootPath) + Separator + string(t.Topic) + Separator + fileName)
 }
 
-func (t *TopicHandler) Write(entries commons.Entries) (commons.Offset, error) {
+func (t *TopicHandler) Write(entries Entries, bytes BlockSizeInBytes) (Offset, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	//Todo: write here
+	if t.TopicWriter.CurrentBlockSize > bytes {
+		fileName := t.newBlock(t.TopicWriter.CurrentOffset)
+		t.TopicWriter.clearCurrentBlockSize()
+		err := t.TopicWriter.Write(fileName, entries)
+		if err != nil {
+			return 0, errore.WrapWithContext(err)
+		}
+	} else {
+		block, err := t.currentBlock()
+		if err != nil {
+			return t.TopicWriter.CurrentOffset, errore.WrapWithContext(err)
+		}
+		err = t.TopicWriter.Write(block, entries)
+		if err != nil {
+			return t.TopicWriter.CurrentOffset, err
+		}
+	}
+	return t.TopicWriter.CurrentOffset, nil
+}
 
+func (t TopicHandler) Read(params ReadParams) (Offset, error) {
+	allBlocksFromOffset, err := t.allBlocksFromOffset(params.Offset)
+	var lastOffset = params.Offset
+	if err != nil {
+		return params.Offset, errore.WrapWithContext(err)
+	}
+	for _, block := range allBlocksFromOffset {
+		afsFile, err := OpenFileForRead(t.Afs, string(block))
+		if err != nil {
+			err := afsFile.Close()
+			if err != nil {
+				return 0, errore.WrapWithContext(err)
+			}
+			return params.Offset, errore.WrapWithContext(err)
+		}
+
+		lastOffset, err = ReadFileFromLogOffset(afsFile, params)
+		if err != nil {
+			err := afsFile.Close()
+			if err != nil {
+				return 0, errore.WrapWithContext(err)
+			}
+			return params.Offset, errore.WrapWithContext(err)
+		}
+		err = afsFile.Close()
+		if err != nil {
+			return 0, errore.WrapWithContext(err)
+		}
+
+	}
+	return lastOffset, nil
 }

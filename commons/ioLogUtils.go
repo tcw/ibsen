@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/errore"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -101,7 +101,7 @@ func (tb *TopicBlocks) BlockHead() (uint64, error) {
 	return tb.Blocks[size-1], nil
 }
 
-func (tb *TopicBlocks) FindBlockContaining(offset Offset) (uint64, error) {
+func (tb *TopicBlocks) FindBlockContaining(offset access.Offset) (uint64, error) {
 	blockHead, err := tb.BlockHead()
 	if err != nil {
 		return 0, errore.WrapWithContext(err)

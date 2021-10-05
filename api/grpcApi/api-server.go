@@ -2,6 +2,7 @@ package grpcApi
 
 import (
 	"context"
+	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/index"
@@ -174,7 +175,7 @@ func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
 	logChan := make(chan *storage.LogEntryBatch)
 	var wg sync.WaitGroup
 	go sendBatchMessage(logChan, &wg, outStream)
-	offset, err := s.ibsenIndexer.GetClosestByteOffset(readParams.Topic, commons.Offset(readParams.Offset))
+	offset, err := s.ibsenIndexer.GetClosestByteOffset(readParams.Topic, access.Offset(readParams.Offset))
 	if err != nil {
 		log.Println(errore.SprintTrace(errore.WrapWithContext(err)))
 		offset = commons.IndexedOffset{}

@@ -1,4 +1,4 @@
-package commons
+package access
 
 import "time"
 
@@ -10,3 +10,4 @@ type Entries [][]byte
 type TTL time.Duration
 type BlockSizeInBytes uint64
 type FileName string
+type BlockIndex uint32

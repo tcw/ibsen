@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/storage"
@@ -26,7 +27,7 @@ type ModuloIndex struct {
 	ByteOffsets []commons.ByteOffset
 }
 
-func (mi ModuloIndex) getClosestByteOffset(offset commons.Offset) (commons.ByteOffset, error) {
+func (mi ModuloIndex) getClosestByteOffset(offset access.Offset) (commons.ByteOffset, error) {
 	offsetIndex := uint32(math.Floor(float64(offset+1) / float64(mi.Modulo)))
 	if int(offsetIndex) > (len(mi.ByteOffsets)-1) || offsetIndex < 0 {
 		return 0, errore.NewWithContext("Unable to get closest index byte offset")
@@ -34,11 +35,11 @@ func (mi ModuloIndex) getClosestByteOffset(offset commons.Offset) (commons.ByteO
 	return mi.ByteOffsets[offsetIndex], nil
 }
 
-func (mi ModuloIndex) getOffset() commons.Offset {
+func (mi ModuloIndex) getOffset() access.Offset {
 	if mi.ByteOffsets == nil || len(mi.ByteOffsets) == 0 {
-		return commons.Offset(0)
+		return access.Offset(0)
 	}
-	return commons.Offset(uint32(len(mi.ByteOffsets)) * mi.Modulo)
+	return access.Offset(uint32(len(mi.ByteOffsets)) * mi.Modulo)
 }
 
 func (mi ModuloIndex) getByteOffsetHead() commons.ByteOffset {
@@ -120,7 +121,7 @@ func (tmi TopicModuloIndex) BuildIndexForExistingIndexFile(state IndexingState) 
 		offsetPosition := offsetPositions[len(offsetPositions)-1]
 		return IndexingState{
 			block:         state.block,
-			logOffset:     commons.Offset(offsetPosition.Offset),
+			logOffset:     access.Offset(offsetPosition.Offset),
 			logByteOffset: commons.ByteOffset(offsetPosition.ByteOffset),
 		}, nil
 	}
@@ -155,7 +156,7 @@ func (tmi TopicModuloIndex) BuildIndexForNewLogFile(block uint64) (IndexingState
 		offsetPosition := lastOffsetPositions[len(lastOffsetPositions)-1]
 		return IndexingState{
 			block:         block,
-			logOffset:     commons.Offset(offsetPosition.Offset),
+			logOffset:     access.Offset(offsetPosition.Offset),
 			logByteOffset: commons.ByteOffset(offsetPosition.ByteOffset),
 		}, nil
 	}

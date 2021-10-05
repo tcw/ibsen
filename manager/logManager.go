@@ -1,8 +1,7 @@
 package manager
 
 import (
-	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/commons"
+	"github.com/tcw/ibsen/access"
 	"sync"
 )
 
@@ -14,15 +13,15 @@ type LogEntry struct {
 }
 
 type ReadParams struct {
-	Topic           commons.Topic
-	Offset          commons.Offset
-	NumberOfEntries commons.Entries
-	TTL             commons.TTL
+	Topic           access.Topic
+	Offset          access.Offset
+	NumberOfEntries access.Entries
+	TTL             access.TTL
 	LogChan         chan *[]LogEntry
 	Wg              *sync.WaitGroup
 }
 
 type LogManager interface {
-	Write(topic commons.Topic, entries commons.Entries) (commons.Offset, error)
+	Write(topic access.Topic, entries access.Entries) (access.Offset, error)
 	Read(params ReadParams) error
 }
