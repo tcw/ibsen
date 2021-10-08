@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"sync"
+	"time"
 )
 
 type LogAccessAfero struct {
@@ -61,5 +62,12 @@ func (l LogAccessAfero) Read(params ReadParams) error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-
+	for start := time.Now(); time.Since(start) < params.TTL; {
+		if l.Topics[params.Topic].TopicWriter.CurrentOffset > offset {
+			next := params
+			next.Offset = offset
+			offset, err = l.Topics[params.Topic].Read(next)
+		}
+	}
+	return nil
 }

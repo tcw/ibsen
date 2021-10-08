@@ -7,15 +7,8 @@ import (
 	"github.com/tcw/ibsen/errore"
 	"io"
 	"sync"
+	"time"
 )
-
-type ReadParams struct {
-	LogChan   chan *LogEntryBatch
-	Wg        *sync.WaitGroup
-	Topic     Topic
-	BatchSize NumberOfEntries
-	Offset    Offset
-}
 
 type LogEntry struct {
 	Offset   uint64
@@ -24,8 +17,13 @@ type LogEntry struct {
 	Entry    []byte
 }
 
-type LogEntryBatch struct {
-	Entries []LogEntry
+type ReadParams struct {
+	Topic     Topic
+	Offset    Offset
+	BatchSize uint32
+	TTL       time.Duration
+	LogChan   chan *[]LogEntry
+	Wg        *sync.WaitGroup
 }
 
 func ReadFileFromLogOffset(file afero.File, readBatchParam ReadParams) (Offset, error) {
@@ -43,26 +41,26 @@ func ReadFileFromLogOffset(file afero.File, readBatchParam ReadParams) (Offset, 
 	return lastOffset, nil
 }
 
-func ReadFile(file afero.File, logChan chan *LogEntryBatch,
-	wg *sync.WaitGroup, batchSize NumberOfEntries) (Offset, error) {
+func ReadFile(file afero.File, logChan chan *[]LogEntry,
+	wg *sync.WaitGroup, batchSize uint32) (Offset, error) {
 
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
 	checksum := make([]byte, 4)
-	var entryBatch []LogEntry
+	var logEntries []LogEntry
 	var lastOffset Offset
 
 	for {
-		if entryBatch != nil && uint32(len(entryBatch))%uint32(batchSize) == 0 {
+		if logEntries != nil && uint32(len(logEntries))%batchSize == 0 {
 			wg.Add(1)
-			logChan <- &LogEntryBatch{Entries: entryBatch}
-			entryBatch = nil
+			logChan <- &logEntries
+			logEntries = nil
 		}
 		_, err := io.ReadFull(reader, bytes)
 		if err == io.EOF {
-			if entryBatch != nil {
+			if logEntries != nil {
 				wg.Add(1)
-				logChan <- &LogEntryBatch{Entries: entryBatch}
+				logChan <- &logEntries
 			}
 			return lastOffset, nil
 		}
@@ -88,7 +86,7 @@ func ReadFile(file afero.File, logChan chan *LogEntryBatch,
 		if err != nil {
 			return lastOffset, errore.WrapWithContext(err)
 		}
-		entryBatch = append(entryBatch, LogEntry{
+		logEntries = append(logEntries, LogEntry{
 			Offset:   uint64(offset),
 			Crc:      checksumValue,
 			ByteSize: int(size),
