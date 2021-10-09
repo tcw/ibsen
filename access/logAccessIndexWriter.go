@@ -9,15 +9,29 @@ import (
 	"io"
 )
 
-//
+func saveIndex(afs *afero.Afero, indexFileName string, index StrictOrderIndex) error {
+	file, err := OpenFileForWrite(afs, indexFileName)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	_, err = file.Write(index)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	return nil
+}
 
-func buildIndex(file afero.File, logfileByteOffset int64, oneEntryForEvery uint32) (StrictOrderIndex, error) {
+func createIndex(afs *afero.Afero, logFile string, logfileByteOffset int64, oneEntryForEvery uint32) (StrictOrderIndex, error) {
 
+	file, err := OpenFileForRead(afs, logFile)
+	defer file.Close()
+	if err != nil {
+		return nil, errore.WrapWithContext(err)
+	}
 	var index StrictOrderIndex
 	var currentByteOffset int64 = -1
 	var lastOffset int64 = 0
 	var offset uint64 = 1
-	var err error
 	if logfileByteOffset > 0 {
 		currentByteOffset, err = file.Seek(logfileByteOffset, io.SeekStart)
 		if err != nil {
@@ -61,6 +75,5 @@ func buildIndex(file afero.File, logfileByteOffset int64, oneEntryForEvery uint3
 
 func indexElement(lastByteOffset int64, currentByteOffset int64) []byte {
 	var bytes []byte
-	bytes = protowire.AppendVarint(bytes, uint64(currentByteOffset-lastByteOffset))
-
+	return protowire.AppendVarint(bytes, uint64(currentByteOffset-lastByteOffset))
 }
