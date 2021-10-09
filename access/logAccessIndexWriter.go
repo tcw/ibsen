@@ -16,6 +16,7 @@ func buildIndex(file afero.File, logfileByteOffset int64, oneEntryForEvery uint3
 	var index StrictOrderIndex
 	var currentByteOffset int64 = -1
 	var lastOffset int64 = 0
+	var offset uint64 = 1
 	var err error
 	if logfileByteOffset > 0 {
 		currentByteOffset, err = file.Seek(logfileByteOffset, io.SeekStart)
@@ -49,9 +50,12 @@ func buildIndex(file afero.File, logfileByteOffset int64, oneEntryForEvery uint3
 			return nil, errore.WrapWithContext(err)
 		}
 		currentByteOffset = currentByteOffset + int64(entrySize)
-		element := indexElement(lastOffset, currentByteOffset)
-		index = append(index, element...)
-		lastOffset = currentByteOffset
+		if offset%uint64(oneEntryForEvery) == 0 {
+			element := indexElement(lastOffset, currentByteOffset)
+			index = append(index, element...)
+			lastOffset = currentByteOffset
+		}
+		offset = offset + 1
 	}
 }
 
