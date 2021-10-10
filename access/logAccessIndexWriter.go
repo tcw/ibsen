@@ -21,7 +21,58 @@ func saveIndex(afs *afero.Afero, indexFileName string, index StrictlyMonotonicOr
 	return nil
 }
 
-func createIndex(afs *afero.Afero, logFile string, logfileByteOffset int64, oneEntryForEvery uint32) (StrictlyMonotonicOrderedVarIntIndex, error) {
+func createHeadIndex(afs *afero.Afero, logFile string, logfileByteOffset int64, oneEntryForEvery uint32) (Index, int64, error) {
+	file, err := OpenFileForRead(afs, logFile)
+	defer file.Close()
+	if err != nil {
+		return Index{}, 0, errore.WrapWithContext(err)
+	}
+	var index = Index{}
+	var currentByteOffset int64 = 0
+	var offset uint64 = 0
+	if logfileByteOffset > 0 {
+		currentByteOffset, err = file.Seek(logfileByteOffset, io.SeekStart)
+		if err != nil {
+			return Index{}, 0, errore.WrapWithContext(err)
+		}
+	}
+	reader := bufio.NewReader(file)
+	bytes := make([]byte, 8)
+	head := make([]byte, 12)
+	for {
+		headSize, err := io.ReadFull(reader, head)
+		if err == io.EOF {
+			return index, currentByteOffset, nil
+		}
+		if err != nil {
+			return Index{}, 0, errore.WrapWithContext(err)
+		}
+		currentByteOffset = currentByteOffset + int64(headSize)
+
+		byteSize, err := io.ReadFull(reader, bytes)
+		if err != nil {
+			return Index{}, 0, errore.WrapWithContext(err)
+		}
+		currentByteOffset = currentByteOffset + int64(byteSize)
+		size := commons.LittleEndianToUint64(bytes)
+
+		entry := make([]byte, size)
+		entrySize, err := io.ReadFull(reader, entry)
+		if err != nil {
+			return Index{}, 0, errore.WrapWithContext(err)
+		}
+		currentByteOffset = currentByteOffset + int64(entrySize)
+		if offset%uint64(oneEntryForEvery) == 0 {
+			index.add(OffsetPair{
+				Offset:     Offset(offset),
+				byteOffset: currentByteOffset,
+			})
+		}
+		offset = offset + 1
+	}
+}
+
+func createArchiveIndex(afs *afero.Afero, logFile string, logfileByteOffset int64, oneEntryForEvery uint32) (StrictlyMonotonicOrderedVarIntIndex, error) {
 
 	file, err := OpenFileForRead(afs, logFile)
 	defer file.Close()
@@ -29,9 +80,9 @@ func createIndex(afs *afero.Afero, logFile string, logfileByteOffset int64, oneE
 		return nil, errore.WrapWithContext(err)
 	}
 	var index StrictlyMonotonicOrderedVarIntIndex
-	var currentByteOffset int64 = -1
+	var currentByteOffset int64 = 0
 	var lastOffset int64 = 0
-	var offset uint64 = 1
+	var offset uint64 = 0
 	if logfileByteOffset > 0 {
 		currentByteOffset, err = file.Seek(logfileByteOffset, io.SeekStart)
 		if err != nil {

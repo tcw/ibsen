@@ -23,14 +23,22 @@ func (l *LogAccessAfero) LoadTopicFromFilesystem() error {
 	}
 	for _, topic := range topics {
 		t := TopicHandler{
-			Afs:      l.Afs,
-			mu:       &sync.Mutex{},
-			Topic:    Topic(topic),
-			RootPath: l.IbsenRootPath,
-			Blocks:   make([]Offset, 0),
+			Afs:       l.Afs,
+			mu:        &sync.Mutex{},
+			Topic:     Topic(topic),
+			RootPath:  l.IbsenRootPath,
+			LogBlocks: make([]Offset, 0),
 			TopicWriter: TopicWriter{
 				Afs:   l.Afs,
 				Topic: Topic(topic),
+			},
+			TopicIndexerWriter: TopicIndexerWriter{
+				Afs:                      l.Afs,
+				Topic:                    Topic(topic),
+				currentLogFileName:       "",
+				currentLogFileByteOffset: 0,
+				headIndex:                Index{},
+				indexSparsity:            1000,
 			},
 		}
 		err = t.updateFromFileSystem()

@@ -18,23 +18,34 @@ type LogEntry struct {
 }
 
 type ReadParams struct {
-	Topic     Topic
-	Offset    Offset
-	BatchSize uint32
-	TTL       time.Duration
-	LogChan   chan *[]LogEntry
-	Wg        *sync.WaitGroup
+	Topic      Topic
+	Offset     Offset
+	ByteOffset int64
+	BatchSize  uint32
+	TTL        time.Duration
+	LogChan    chan *[]LogEntry
+	Wg         *sync.WaitGroup
 }
 
-func ReadFileFromLogOffset(file afero.File, readBatchParam ReadParams) (Offset, error) {
+func (r *ReadParams) useByteOffset(byteOffset int64) {
+	r.ByteOffset = byteOffset
+}
+
+func ReadFileFromLogOffset(logFile afero.File, readBatchParam ReadParams) (Offset, error) {
 	if readBatchParam.Offset > 0 {
-		err := fastForwardToOffset(file, readBatchParam.Offset)
+		if readBatchParam.ByteOffset > 0 {
+			_, err := logFile.Seek(readBatchParam.ByteOffset, io.SeekStart)
+			if err != nil {
+				return 0, errore.WrapWithContext(err)
+			}
+		}
+		err := fastForwardToOffset(logFile, readBatchParam.Offset)
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
 		}
 	}
 
-	lastOffset, err := ReadFile(file, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
+	lastOffset, err := ReadFile(logFile, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
 	if err != nil {
 		return lastOffset, errore.WrapWithContext(err)
 	}

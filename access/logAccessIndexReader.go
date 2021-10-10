@@ -15,6 +15,10 @@ func (idx *Index) add(pair OffsetPair) {
 	idx.Offsets = append(idx.Offsets, pair)
 }
 
+func (idx *Index) addAll(pair []OffsetPair) {
+	idx.Offsets = append(idx.Offsets, pair...)
+}
+
 // this is linear search, should use range tree for large indices
 func (idx Index) findNearestByteOffset(offset Offset) int64 {
 	for i := len(idx.Offsets) - 1; i >= 0; i-- {
@@ -23,6 +27,10 @@ func (idx Index) findNearestByteOffset(offset Offset) int64 {
 		}
 	}
 	return 0
+}
+
+func (idx *Index) addIndex(index Index) {
+	idx.addAll(index.Offsets)
 }
 
 type OffsetPair struct {
