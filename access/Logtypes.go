@@ -7,4 +7,4 @@ type Entries [][]byte
 type BlockSizeInBytes uint64
 type FileName string
 type BlockIndex uint32
-type StrictOrderIndex []byte
+type StrictlyMonotonicOrderedVarIntIndex []byte
