@@ -13,11 +13,12 @@ var BlockNotFound = errors.New("block not found")
 
 type TopicHandler struct {
 	Afs                *afero.Afero
-	mu                 *sync.Mutex
+	logMutex           *sync.Mutex
+	indexMutex         *sync.Mutex
 	Topic              Topic
 	RootPath           IbsenRootPath
-	LogBlocks          []Offset
-	IndexBlocks        []Offset
+	LogBlocks          []Block
+	IndexBlocks        []Block
 	TopicWriter        TopicWriter
 	TopicIndexerWriter TopicIndexerWriter
 }
@@ -41,8 +42,8 @@ func (t *TopicHandler) updateFromFileSystem() error {
 }
 
 func (t *TopicHandler) newBlock(offset Offset) FileName {
-	t.AddLogBlock(offset)
-	return t.logBlockFileName(offset)
+	t.AddLogBlock(Block(offset))
+	return t.logBlockFileName(Block(offset))
 }
 
 func (t *TopicHandler) currentBlock() (FileName, error) {
@@ -65,11 +66,11 @@ func (t TopicHandler) findBlockContaining(offset Offset) (FileName, BlockIndex, 
 	}
 	lastBlock := len(t.LogBlocks) - 1
 	lastOffset := t.LogBlocks[lastBlock]
-	if offset > lastOffset {
+	if Block(offset) > lastOffset {
 		return t.logBlockFileName(lastOffset), BlockIndex(lastBlock), nil
 	}
 	for i := lastBlock; i >= 0; i-- {
-		if offset < t.LogBlocks[i] {
+		if Block(offset) < t.LogBlocks[i] {
 			return t.logBlockFileName(t.LogBlocks[i]), BlockIndex(i), nil
 		}
 	}
@@ -98,15 +99,22 @@ func (t TopicHandler) Size() int {
 	return len(t.LogBlocks)
 }
 
+func (t TopicHandler) LogBlockHead() Block {
+	if t.IsEmpty() {
+		return 0
+	}
+	return t.LogBlocks[len(t.LogBlocks)-1]
+}
+
 func (t TopicHandler) TopicPath() string {
 	return string(t.RootPath) + Separator + string(t.Topic)
 }
 
-func (t *TopicHandler) AddLogBlocks(blocks []Offset) {
+func (t *TopicHandler) AddLogBlocks(blocks []Block) {
 	t.LogBlocks = append(t.LogBlocks, blocks...)
 }
 
-func (t *TopicHandler) AddLogBlock(block Offset) {
+func (t *TopicHandler) AddLogBlock(block Block) {
 	t.LogBlocks = append(t.LogBlocks, block)
 }
 
@@ -114,11 +122,11 @@ func (t *TopicHandler) sortLogBlocks() {
 	sort.Slice(t.LogBlocks, func(i, j int) bool { return t.LogBlocks[i] < t.LogBlocks[j] })
 }
 
-func (t *TopicHandler) AddIndexBlocks(blocks []Offset) {
+func (t *TopicHandler) AddIndexBlocks(blocks []Block) {
 	t.LogBlocks = append(t.IndexBlocks, blocks...)
 }
 
-func (t *TopicHandler) AddIndexBlock(block Offset) {
+func (t *TopicHandler) AddIndexBlock(block Block) {
 	t.LogBlocks = append(t.IndexBlocks, block)
 }
 
@@ -126,39 +134,63 @@ func (t *TopicHandler) sortIndexBlocks() {
 	sort.Slice(t.IndexBlocks, func(i, j int) bool { return t.IndexBlocks[i] < t.IndexBlocks[j] })
 }
 
-func (t *TopicHandler) logBlockFileName(block Offset) FileName {
+func (t *TopicHandler) logBlockFileName(block Block) FileName {
 	fileName := fmt.Sprintf("%020d.%s", block, "log")
 	return FileName(string(t.RootPath) + Separator + string(t.Topic) + Separator + fileName)
 }
 
-func (t *TopicHandler) indexBlockFileName(block Offset) FileName {
+func (t *TopicHandler) indexBlockFileName(block Block) FileName {
 	fileName := fmt.Sprintf("%020d.%s", block, "idx")
 	return FileName(string(t.RootPath) + Separator + string(t.Topic) + Separator + fileName)
 }
 
-func (t TopicHandler) findNotArchivedIndexBlocks() []Offset { //Todo: Needs more index validation
+func (t TopicHandler) findNotArchivedIndexBlocks() []Block { //Todo: Needs more index validation
 	logBlocks := len(t.LogBlocks)
 	indexBlocks := len(t.IndexBlocks)
 	notIndexed := logBlocks - indexBlocks
 	notIndexedFromArrayIndex := (logBlocks - notIndexed) - 1
 	notIndexedBlocks := t.LogBlocks[notIndexedFromArrayIndex:]
-	if len(notIndexedBlocks) > 0 {
+	if len(notIndexedBlocks) > 1 {
 		notIndexedBlocks = notIndexedBlocks[:len(notIndexedBlocks)-1]
 	}
 	return notIndexedBlocks
 }
 
-func (t TopicHandler) IndexUntilEnd() error {
-	for i, offset := range t.findNotArchivedIndexBlocks() {
-		name := t.logBlockFileName(offset)
-
+func (t TopicHandler) UpdateIndex() error {
+	for _, offset := range t.findNotArchivedIndexBlocks() {
+		logBlockFileName := t.logBlockFileName(offset)
+		indexBlockFileName := t.indexBlockFileName(offset)
+		err := t.TopicIndexerWriter.createIndexArchive(logBlockFileName, indexBlockFileName)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
 	}
-
+	head := t.LogBlockHead()
+	if head == 0 {
+		return nil
+	}
+	blockFileName := t.logBlockFileName(head)
+	if t.TopicIndexerWriter.isHead(blockFileName) {
+		err := t.TopicIndexerWriter.updateHeadIndex()
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+	} else {
+		err := t.TopicIndexerWriter.createNewHeadIndex(blockFileName)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+		err = t.TopicIndexerWriter.updateHeadIndex()
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+	}
+	return nil
 }
 
 func (t *TopicHandler) Write(entries Entries, bytes BlockSizeInBytes) (Offset, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.logMutex.Lock()
+	defer t.logMutex.Unlock()
 	if t.TopicWriter.CurrentBlockSize > bytes {
 		fileName := t.newBlock(t.TopicWriter.CurrentOffset)
 		t.TopicWriter.clearCurrentBlockSize()

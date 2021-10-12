@@ -65,8 +65,8 @@ func ListFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([
 	return filenames, nil
 }
 
-func FilesToBlocks(paths []string) ([]Offset, error) {
-	var blocks []Offset
+func FilesToBlocks(paths []string) ([]Block, error) {
+	var blocks []Block
 	for _, path := range paths {
 		_, file := filepath.Split(path)
 		ext := filepath.Ext(file)
@@ -76,7 +76,7 @@ func FilesToBlocks(paths []string) ([]Offset, error) {
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		blocks = append(blocks, Offset(mod))
+		blocks = append(blocks, Block(mod))
 	}
 	return blocks, nil
 }

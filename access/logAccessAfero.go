@@ -24,7 +24,7 @@ func (l *LogAccessAfero) LoadTopicFromFilesystem() error {
 	for _, topic := range topics {
 		t := TopicHandler{
 			Afs:       l.Afs,
-			mu:        &sync.Mutex{},
+			logMutex:  &sync.Mutex{},
 			Topic:     Topic(topic),
 			RootPath:  l.IbsenRootPath,
 			LogBlocks: make([]Offset, 0),

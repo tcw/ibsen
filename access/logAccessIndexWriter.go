@@ -9,8 +9,8 @@ import (
 	"io"
 )
 
-func saveIndex(afs *afero.Afero, indexFileName string, index StrictlyMonotonicOrderedVarIntIndex) error {
-	file, err := OpenFileForWrite(afs, indexFileName)
+func saveIndex(afs *afero.Afero, indexFileName FileName, index StrictlyMonotonicOrderedVarIntIndex) error {
+	file, err := OpenFileForWrite(afs, string(indexFileName))
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -21,8 +21,8 @@ func saveIndex(afs *afero.Afero, indexFileName string, index StrictlyMonotonicOr
 	return nil
 }
 
-func createHeadIndex(afs *afero.Afero, logFile string, logfileByteOffset int64, oneEntryForEvery uint32) (Index, int64, error) {
-	file, err := OpenFileForRead(afs, logFile)
+func createHeadIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, oneEntryForEvery uint32) (Index, int64, error) {
+	file, err := OpenFileForRead(afs, string(logFile))
 	defer file.Close()
 	if err != nil {
 		return Index{}, 0, errore.WrapWithContext(err)
