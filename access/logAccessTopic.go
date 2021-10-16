@@ -5,16 +5,19 @@ import (
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
+	"log"
 	"sort"
 	"sync"
+	"sync/atomic"
 )
 
 var BlockNotFound = errors.New("block not found")
+var Locked = errors.New("locked")
 
 type TopicHandler struct {
 	Afs                *afero.Afero
 	logMutex           *sync.Mutex
-	indexMutex         *sync.Mutex
+	indexLocker        uint32
 	Topic              Topic
 	RootPath           IbsenRootPath
 	LogBlocks          []Block
@@ -156,35 +159,44 @@ func (t TopicHandler) findNotArchivedIndexBlocks() []Block { //Todo: Needs more 
 	return notIndexedBlocks
 }
 
-func (t TopicHandler) UpdateIndex() error {
+func (t TopicHandler) UpdateIndex() {
 	for _, offset := range t.findNotArchivedIndexBlocks() {
 		logBlockFileName := t.logBlockFileName(offset)
 		indexBlockFileName := t.indexBlockFileName(offset)
 		err := t.TopicIndexerWriter.createIndexArchive(logBlockFileName, indexBlockFileName)
 		if err != nil {
-			return errore.WrapWithContext(err)
+			log.Printf("Unable to index %s, got error %s", logBlockFileName, errore.SprintTrace(errore.WrapWithContext(err)))
 		}
 	}
 	head := t.LogBlockHead()
 	if head == 0 {
-		return nil
+		return
 	}
 	blockFileName := t.logBlockFileName(head)
 	if t.TopicIndexerWriter.isHead(blockFileName) {
 		err := t.TopicIndexerWriter.updateHeadIndex()
 		if err != nil {
-			return errore.WrapWithContext(err)
+			log.Printf("Unable to index head, got error %s", errore.SprintTrace(errore.WrapWithContext(err)))
 		}
 	} else {
 		err := t.TopicIndexerWriter.createNewHeadIndex(blockFileName)
 		if err != nil {
-			return errore.WrapWithContext(err)
+			log.Printf("Unable to index head, got error %s", errore.SprintTrace(errore.WrapWithContext(err)))
 		}
 		err = t.TopicIndexerWriter.updateHeadIndex()
 		if err != nil {
-			return errore.WrapWithContext(err)
+			log.Printf("Unable to index head, got error %s", errore.SprintTrace(errore.WrapWithContext(err)))
 		}
 	}
+	return
+}
+
+func (t *TopicHandler) UpdateIndexAsync() error {
+	if !atomic.CompareAndSwapUint32(&t.indexLocker, 0, 1) {
+		return Locked
+	}
+	go t.UpdateIndex()
+	defer atomic.StoreUint32(&t.indexLocker, 0)
 	return nil
 }
 
@@ -208,6 +220,7 @@ func (t *TopicHandler) Write(entries Entries, bytes BlockSizeInBytes) (Offset, e
 			return t.TopicWriter.CurrentOffset, err
 		}
 	}
+	_ = t.UpdateIndexAsync()
 	return t.TopicWriter.CurrentOffset, nil
 }
 
@@ -239,7 +252,6 @@ func (t TopicHandler) Read(params ReadParams) (Offset, error) {
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
 		}
-
 	}
 	return lastOffset, nil
 }
