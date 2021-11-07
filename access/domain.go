@@ -11,7 +11,6 @@ import (
 
 const Sep = string(os.PathSeparator)
 
-type IbsenRootPath string
 type Offset uint64
 type Block uint64
 type Topic string
@@ -33,7 +32,7 @@ type Blocks struct {
 	BlockList []Block
 }
 
-func (bs *Blocks) addBlock(block Block) {
+func (bs *Blocks) AddBlock(block Block) {
 	bs.BlockList = append(bs.BlockList, block)
 }
 

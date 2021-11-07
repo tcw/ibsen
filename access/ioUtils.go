@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"io"
 	"os"
@@ -81,8 +80,8 @@ func FilesToBlocks(paths []string) ([]Block, error) {
 	return blocks, nil
 }
 
-func ListAllTopics(afs *afero.Afero, dir IbsenRootPath) ([]string, error) {
-	var filenames []string
+func ListAllTopics(afs *afero.Afero, dir string) ([]Topic, error) {
+	var filenames []Topic
 	file, err := OpenFileForRead(afs, string(dir))
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
@@ -92,7 +91,7 @@ func ListAllTopics(afs *afero.Afero, dir IbsenRootPath) ([]string, error) {
 	for _, name := range names {
 		isHidden := strings.HasPrefix(name, ".")
 		if !isHidden {
-			filenames = append(filenames, name)
+			filenames = append(filenames, Topic(name))
 		}
 	}
 	return filenames, nil
@@ -122,7 +121,7 @@ func BlockSize(asf *afero.Afero, fileName string) (int64, error) {
 
 func FindLastOffset(afs *afero.Afero, blockFileName FileName) (int64, error) {
 	var offsetFound int64 = 0
-	file, err := commons.OpenFileForRead(afs, string(blockFileName))
+	file, err := OpenFileForRead(afs, string(blockFileName))
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
@@ -137,7 +136,7 @@ func FindLastOffset(afs *afero.Afero, blockFileName FileName) (int64, error) {
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
 		}
-		offsetFound = int64(commons.LittleEndianToUint64(bytes))
+		offsetFound = int64(LittleEndianToUint64(bytes))
 		_, err = io.ReadFull(file, checksum)
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
@@ -146,7 +145,7 @@ func FindLastOffset(afs *afero.Afero, blockFileName FileName) (int64, error) {
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
 		}
-		size := commons.LittleEndianToUint64(bytes)
+		size := LittleEndianToUint64(bytes)
 		_, err = file.Seek(int64(size), 1)
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
@@ -169,7 +168,7 @@ func FastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		offsetFound = Offset(commons.LittleEndianToUint64(bytes))
+		offsetFound = Offset(LittleEndianToUint64(bytes))
 		_, err = io.ReadFull(file, checksum)
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -178,7 +177,7 @@ func FastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		size := commons.LittleEndianToUint64(bytes)
+		size := LittleEndianToUint64(bytes)
 		_, err = (file).Seek(int64(size), 1)
 		if err != nil {
 			return errore.WrapWithContext(err)

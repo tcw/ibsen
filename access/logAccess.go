@@ -10,6 +10,7 @@ import (
 )
 
 type LogAccess interface {
+	ListTopics() ([]Topic, error)
 	CreateTopic(topic Topic) error
 	Write(fileName FileName, entries Entries, fromOffset Offset) (Offset, BlockSizeInBytes, error)
 	ReadTopicLogBlocks(topic Topic) (Blocks, error)
@@ -21,6 +22,14 @@ var _ LogAccess = ReadWriteLogAccess{}
 type ReadWriteLogAccess struct {
 	Afs      *afero.Afero
 	RootPath string
+}
+
+func (la ReadWriteLogAccess) ListTopics() ([]Topic, error) {
+	topics, err := ListAllTopics(la.Afs, la.RootPath)
+	if err != nil {
+		return nil, errore.WrapWithContext(err)
+	}
+	return topics, err
 }
 
 func (la ReadWriteLogAccess) CreateTopic(topic Topic) error {
@@ -138,7 +147,7 @@ func readFile(file afero.File, logChan chan *[]LogEntry,
 func writeBatchToFile(file afero.File, entries Entries, fromOffset Offset) (Offset, BlockSizeInBytes, error) {
 	var bytes []byte
 	currentOffset := fromOffset
-	for _, entry := range entries {
+	for _, entry := range *entries {
 		bytes = append(bytes, createByteEntry(entry, currentOffset)...)
 		currentOffset = currentOffset + 1
 	}
