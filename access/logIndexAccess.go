@@ -3,7 +3,6 @@ package access
 import (
 	"bufio"
 	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"google.golang.org/protobuf/encoding/protowire"
 	"io"
@@ -161,7 +160,7 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 			return nil, errore.WrapWithContext(err)
 		}
 		currentByteOffset = currentByteOffset + int64(byteSize)
-		size := commons.LittleEndianToUint64(bytes)
+		size := LittleEndianToUint64(bytes)
 
 		entry := make([]byte, size)
 		entrySize, err := io.ReadFull(reader, entry)

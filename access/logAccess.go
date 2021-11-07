@@ -3,12 +3,10 @@ package access
 import (
 	"bufio"
 	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/commons"
 	"github.com/tcw/ibsen/errore"
 	"hash/crc32"
 	"io"
 	"sync"
-	"time"
 )
 
 type LogAccess interface {
@@ -25,29 +23,6 @@ type ReadWriteLogAccess struct {
 	RootPath string
 }
 
-type LogEntry struct {
-	Offset   uint64
-	Crc      uint32
-	ByteSize int
-	Entry    []byte
-}
-
-type ReadParams struct {
-	Topic      Topic
-	Offset     Offset
-	ByteOffset int64
-	BatchSize  uint32
-	TTL        time.Duration
-	LogChan    chan *[]LogEntry
-	Wg         *sync.WaitGroup
-}
-
-func (r *ReadParams) UseByteOffset(byteOffset int64) {
-	r.ByteOffset = byteOffset
-}
-
-var crc32q = crc32.MakeTable(crc32.Castagnoli)
-
 func (la ReadWriteLogAccess) CreateTopic(topic Topic) error {
 	err := la.Afs.Mkdir(string(topic), 640)
 	if err != nil {
@@ -58,7 +33,7 @@ func (la ReadWriteLogAccess) CreateTopic(topic Topic) error {
 
 func (la ReadWriteLogAccess) Write(fileName FileName, entries Entries, fromOffset Offset) (Offset, BlockSizeInBytes, error) {
 
-	writer, err := commons.OpenFileForWrite(la.Afs, string(fileName))
+	writer, err := OpenFileForWrite(la.Afs, string(fileName))
 	if err != nil {
 		return 0, 0, errore.WrapWithContext(err)
 	}
@@ -131,19 +106,19 @@ func readFile(file afero.File, logChan chan *[]LogEntry,
 		if err != nil {
 			return lastOffset, errore.WrapWithContext(err)
 		}
-		offset := int64(commons.LittleEndianToUint64(bytes))
+		offset := int64(LittleEndianToUint64(bytes))
 
 		_, err = io.ReadFull(reader, checksum)
 		if err != nil {
 			return lastOffset, errore.WrapWithContext(err)
 		}
-		checksumValue := commons.LittleEndianToUint32(bytes)
+		checksumValue := LittleEndianToUint32(bytes)
 
 		_, err = io.ReadFull(reader, bytes)
 		if err != nil {
 			return lastOffset, errore.WrapWithContext(err)
 		}
-		size := commons.LittleEndianToUint64(bytes)
+		size := LittleEndianToUint64(bytes)
 
 		entry := make([]byte, size)
 		_, err = io.ReadFull(reader, entry)
@@ -175,12 +150,12 @@ func writeBatchToFile(file afero.File, entries Entries, fromOffset Offset) (Offs
 }
 
 func createByteEntry(entry []byte, currentOffset Offset) []byte {
-	offset := commons.Uint64ToLittleEndian(uint64(currentOffset))
-	byteSize := commons.IntToLittleEndian(len(entry))
+	offset := Uint64ToLittleEndian(uint64(currentOffset))
+	byteSize := IntToLittleEndian(len(entry))
 	checksum := crc32.Checksum(offset, crc32q)
 	checksum = crc32.Update(checksum, crc32q, byteSize)
 	checksum = crc32.Update(checksum, crc32q, entry)
-	check := commons.Uint32ToLittleEndian(checksum)
+	check := Uint32ToLittleEndian(checksum)
 	bytes := append(offset, check...)
 	bytes = append(bytes, byteSize...)
 	bytes = append(bytes, entry...)

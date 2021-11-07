@@ -24,236 +24,8 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.ProtoPackageIsVersion3 // please upgrade the proto package
 
-type TopicsStatus struct {
-	TopicStatus          []*TopicStatus `protobuf:"bytes,1,rep,name=topicStatus,proto3" json:"topicStatus,omitempty"`
-	XXX_NoUnkeyedLiteral struct{}       `json:"-"`
-	XXX_unrecognized     []byte         `json:"-"`
-	XXX_sizecache        int32          `json:"-"`
-}
-
-func (m *TopicsStatus) Reset()         { *m = TopicsStatus{} }
-func (m *TopicsStatus) String() string { return proto.CompactTextString(m) }
-func (*TopicsStatus) ProtoMessage()    {}
-func (*TopicsStatus) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{0}
-}
-
-func (m *TopicsStatus) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_TopicsStatus.Unmarshal(m, b)
-}
-func (m *TopicsStatus) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_TopicsStatus.Marshal(b, m, deterministic)
-}
-func (m *TopicsStatus) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TopicsStatus.Merge(m, src)
-}
-func (m *TopicsStatus) XXX_Size() int {
-	return xxx_messageInfo_TopicsStatus.Size(m)
-}
-func (m *TopicsStatus) XXX_DiscardUnknown() {
-	xxx_messageInfo_TopicsStatus.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_TopicsStatus proto.InternalMessageInfo
-
-func (m *TopicsStatus) GetTopicStatus() []*TopicStatus {
-	if m != nil {
-		return m.TopicStatus
-	}
-	return nil
-}
-
-type TopicStatus struct {
-	Topic                string   `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
-	Blocks               int64    `protobuf:"varint,2,opt,name=blocks,proto3" json:"blocks,omitempty"`
-	Offset               int64    `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
-	MaxBlockSize         int64    `protobuf:"varint,4,opt,name=maxBlockSize,proto3" json:"maxBlockSize,omitempty"`
-	Path                 string   `protobuf:"bytes,5,opt,name=path,proto3" json:"path,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *TopicStatus) Reset()         { *m = TopicStatus{} }
-func (m *TopicStatus) String() string { return proto.CompactTextString(m) }
-func (*TopicStatus) ProtoMessage()    {}
-func (*TopicStatus) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{1}
-}
-
-func (m *TopicStatus) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_TopicStatus.Unmarshal(m, b)
-}
-func (m *TopicStatus) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_TopicStatus.Marshal(b, m, deterministic)
-}
-func (m *TopicStatus) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_TopicStatus.Merge(m, src)
-}
-func (m *TopicStatus) XXX_Size() int {
-	return xxx_messageInfo_TopicStatus.Size(m)
-}
-func (m *TopicStatus) XXX_DiscardUnknown() {
-	xxx_messageInfo_TopicStatus.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_TopicStatus proto.InternalMessageInfo
-
-func (m *TopicStatus) GetTopic() string {
-	if m != nil {
-		return m.Topic
-	}
-	return ""
-}
-
-func (m *TopicStatus) GetBlocks() int64 {
-	if m != nil {
-		return m.Blocks
-	}
-	return 0
-}
-
-func (m *TopicStatus) GetOffset() int64 {
-	if m != nil {
-		return m.Offset
-	}
-	return 0
-}
-
-func (m *TopicStatus) GetMaxBlockSize() int64 {
-	if m != nil {
-		return m.MaxBlockSize
-	}
-	return 0
-}
-
-func (m *TopicStatus) GetPath() string {
-	if m != nil {
-		return m.Path
-	}
-	return ""
-}
-
-type Topic struct {
-	Name                 string   `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *Topic) Reset()         { *m = Topic{} }
-func (m *Topic) String() string { return proto.CompactTextString(m) }
-func (*Topic) ProtoMessage()    {}
-func (*Topic) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{2}
-}
-
-func (m *Topic) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_Topic.Unmarshal(m, b)
-}
-func (m *Topic) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_Topic.Marshal(b, m, deterministic)
-}
-func (m *Topic) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_Topic.Merge(m, src)
-}
-func (m *Topic) XXX_Size() int {
-	return xxx_messageInfo_Topic.Size(m)
-}
-func (m *Topic) XXX_DiscardUnknown() {
-	xxx_messageInfo_Topic.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_Topic proto.InternalMessageInfo
-
-func (m *Topic) GetName() string {
-	if m != nil {
-		return m.Name
-	}
-	return ""
-}
-
-type CreateStatus struct {
-	Created              bool     `protobuf:"varint,1,opt,name=created,proto3" json:"created,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *CreateStatus) Reset()         { *m = CreateStatus{} }
-func (m *CreateStatus) String() string { return proto.CompactTextString(m) }
-func (*CreateStatus) ProtoMessage()    {}
-func (*CreateStatus) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{3}
-}
-
-func (m *CreateStatus) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_CreateStatus.Unmarshal(m, b)
-}
-func (m *CreateStatus) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_CreateStatus.Marshal(b, m, deterministic)
-}
-func (m *CreateStatus) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_CreateStatus.Merge(m, src)
-}
-func (m *CreateStatus) XXX_Size() int {
-	return xxx_messageInfo_CreateStatus.Size(m)
-}
-func (m *CreateStatus) XXX_DiscardUnknown() {
-	xxx_messageInfo_CreateStatus.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_CreateStatus proto.InternalMessageInfo
-
-func (m *CreateStatus) GetCreated() bool {
-	if m != nil {
-		return m.Created
-	}
-	return false
-}
-
-type DropStatus struct {
-	Dropped              bool     `protobuf:"varint,1,opt,name=dropped,proto3" json:"dropped,omitempty"`
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *DropStatus) Reset()         { *m = DropStatus{} }
-func (m *DropStatus) String() string { return proto.CompactTextString(m) }
-func (*DropStatus) ProtoMessage()    {}
-func (*DropStatus) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{4}
-}
-
-func (m *DropStatus) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_DropStatus.Unmarshal(m, b)
-}
-func (m *DropStatus) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_DropStatus.Marshal(b, m, deterministic)
-}
-func (m *DropStatus) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_DropStatus.Merge(m, src)
-}
-func (m *DropStatus) XXX_Size() int {
-	return xxx_messageInfo_DropStatus.Size(m)
-}
-func (m *DropStatus) XXX_DiscardUnknown() {
-	xxx_messageInfo_DropStatus.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_DropStatus proto.InternalMessageInfo
-
-func (m *DropStatus) GetDropped() bool {
-	if m != nil {
-		return m.Dropped
-	}
-	return false
-}
-
 type WriteStatus struct {
 	Wrote                int64    `protobuf:"varint,1,opt,name=wrote,proto3" json:"wrote,omitempty"`
-	TimeNano             int64    `protobuf:"varint,2,opt,name=timeNano,proto3" json:"timeNano,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -263,7 +35,7 @@ func (m *WriteStatus) Reset()         { *m = WriteStatus{} }
 func (m *WriteStatus) String() string { return proto.CompactTextString(m) }
 func (*WriteStatus) ProtoMessage()    {}
 func (*WriteStatus) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{5}
+	return fileDescriptor_c3e5c14afe4be539, []int{0}
 }
 
 func (m *WriteStatus) XXX_Unmarshal(b []byte) error {
@@ -291,44 +63,6 @@ func (m *WriteStatus) GetWrote() int64 {
 	return 0
 }
 
-func (m *WriteStatus) GetTimeNano() int64 {
-	if m != nil {
-		return m.TimeNano
-	}
-	return 0
-}
-
-type Empty struct {
-	XXX_NoUnkeyedLiteral struct{} `json:"-"`
-	XXX_unrecognized     []byte   `json:"-"`
-	XXX_sizecache        int32    `json:"-"`
-}
-
-func (m *Empty) Reset()         { *m = Empty{} }
-func (m *Empty) String() string { return proto.CompactTextString(m) }
-func (*Empty) ProtoMessage()    {}
-func (*Empty) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{6}
-}
-
-func (m *Empty) XXX_Unmarshal(b []byte) error {
-	return xxx_messageInfo_Empty.Unmarshal(m, b)
-}
-func (m *Empty) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	return xxx_messageInfo_Empty.Marshal(b, m, deterministic)
-}
-func (m *Empty) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_Empty.Merge(m, src)
-}
-func (m *Empty) XXX_Size() int {
-	return xxx_messageInfo_Empty.Size(m)
-}
-func (m *Empty) XXX_DiscardUnknown() {
-	xxx_messageInfo_Empty.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_Empty proto.InternalMessageInfo
-
 type ReadParams struct {
 	Topic                string   `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
 	Offset               uint64   `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
@@ -342,7 +76,7 @@ func (m *ReadParams) Reset()         { *m = ReadParams{} }
 func (m *ReadParams) String() string { return proto.CompactTextString(m) }
 func (*ReadParams) ProtoMessage()    {}
 func (*ReadParams) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{7}
+	return fileDescriptor_c3e5c14afe4be539, []int{1}
 }
 
 func (m *ReadParams) XXX_Unmarshal(b []byte) error {
@@ -396,7 +130,7 @@ func (m *InputEntries) Reset()         { *m = InputEntries{} }
 func (m *InputEntries) String() string { return proto.CompactTextString(m) }
 func (*InputEntries) ProtoMessage()    {}
 func (*InputEntries) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{8}
+	return fileDescriptor_c3e5c14afe4be539, []int{2}
 }
 
 func (m *InputEntries) XXX_Unmarshal(b []byte) error {
@@ -443,7 +177,7 @@ func (m *Entry) Reset()         { *m = Entry{} }
 func (m *Entry) String() string { return proto.CompactTextString(m) }
 func (*Entry) ProtoMessage()    {}
 func (*Entry) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{9}
+	return fileDescriptor_c3e5c14afe4be539, []int{3}
 }
 
 func (m *Entry) XXX_Unmarshal(b []byte) error {
@@ -489,7 +223,7 @@ func (m *OutputEntries) Reset()         { *m = OutputEntries{} }
 func (m *OutputEntries) String() string { return proto.CompactTextString(m) }
 func (*OutputEntries) ProtoMessage()    {}
 func (*OutputEntries) Descriptor() ([]byte, []int) {
-	return fileDescriptor_c3e5c14afe4be539, []int{10}
+	return fileDescriptor_c3e5c14afe4be539, []int{4}
 }
 
 func (m *OutputEntries) XXX_Unmarshal(b []byte) error {
@@ -518,13 +252,7 @@ func (m *OutputEntries) GetEntries() []*Entry {
 }
 
 func init() {
-	proto.RegisterType((*TopicsStatus)(nil), "TopicsStatus")
-	proto.RegisterType((*TopicStatus)(nil), "TopicStatus")
-	proto.RegisterType((*Topic)(nil), "Topic")
-	proto.RegisterType((*CreateStatus)(nil), "CreateStatus")
-	proto.RegisterType((*DropStatus)(nil), "DropStatus")
 	proto.RegisterType((*WriteStatus)(nil), "WriteStatus")
-	proto.RegisterType((*Empty)(nil), "Empty")
 	proto.RegisterType((*ReadParams)(nil), "ReadParams")
 	proto.RegisterType((*InputEntries)(nil), "InputEntries")
 	proto.RegisterType((*Entry)(nil), "Entry")
@@ -534,40 +262,27 @@ func init() {
 func init() { proto.RegisterFile("ibsen.proto", fileDescriptor_c3e5c14afe4be539) }
 
 var fileDescriptor_c3e5c14afe4be539 = []byte{
-	// 520 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x84, 0x53, 0xc1, 0x8e, 0xd3, 0x30,
-	0x10, 0x6d, 0xda, 0x26, 0xdd, 0x9d, 0xa4, 0x1c, 0xac, 0x0a, 0x45, 0x05, 0xa4, 0xe2, 0xc3, 0x92,
-	0x0b, 0xde, 0x52, 0x4e, 0x70, 0x00, 0x51, 0xe8, 0xa1, 0x97, 0xa5, 0x4a, 0x57, 0x02, 0x71, 0x73,
-	0x53, 0xef, 0xd6, 0x82, 0xc4, 0x96, 0xe3, 0xaa, 0x2c, 0xbf, 0xc0, 0x3f, 0x70, 0xe0, 0x4b, 0x91,
-	0xed, 0x34, 0x49, 0x0f, 0xec, 0xde, 0xfc, 0x66, 0x5e, 0xe6, 0x4d, 0xde, 0xb3, 0x21, 0xe4, 0x9b,
-	0x92, 0x15, 0x44, 0x2a, 0xa1, 0x05, 0x7e, 0x07, 0xd1, 0xb5, 0x90, 0x3c, 0x2b, 0xd7, 0x9a, 0xea,
-	0x7d, 0x89, 0x08, 0x84, 0xda, 0x60, 0x07, 0x63, 0x6f, 0xd2, 0x4b, 0xc2, 0x59, 0x44, 0xae, 0x9b,
-	0x5a, 0xda, 0x26, 0xe0, 0xdf, 0x1e, 0x84, 0xad, 0x26, 0x1a, 0x81, 0x6f, 0xdb, 0xb1, 0x37, 0xf1,
-	0x92, 0xf3, 0xd4, 0x01, 0xf4, 0x18, 0x82, 0xcd, 0x0f, 0x91, 0x7d, 0x2f, 0xe3, 0xee, 0xc4, 0x4b,
-	0x7a, 0x69, 0x85, 0x4c, 0x5d, 0xdc, 0xdc, 0x94, 0x4c, 0xc7, 0x3d, 0x57, 0x77, 0x08, 0x61, 0x88,
-	0x72, 0xfa, 0x73, 0x6e, 0x48, 0x6b, 0xfe, 0x8b, 0xc5, 0x7d, 0xdb, 0x3d, 0xa9, 0x21, 0x04, 0x7d,
-	0x49, 0xf5, 0x2e, 0xf6, 0xad, 0x90, 0x3d, 0xe3, 0x27, 0xe0, 0xdb, 0x65, 0x4c, 0xb3, 0xa0, 0x39,
-	0xab, 0xb6, 0xb0, 0x67, 0x9c, 0x40, 0xf4, 0x51, 0x31, 0xaa, 0x59, 0xb5, 0x6a, 0x0c, 0x83, 0xcc,
-	0xe2, 0xad, 0xa5, 0x9d, 0xa5, 0x47, 0x88, 0x2f, 0x00, 0x3e, 0x29, 0x21, 0x1b, 0xde, 0x56, 0x09,
-	0x29, 0x1b, 0x5e, 0x05, 0xf1, 0x7b, 0x08, 0xbf, 0x28, 0x5e, 0x0f, 0x1c, 0x81, 0x7f, 0x50, 0x42,
-	0x3b, 0xd5, 0x5e, 0xea, 0x00, 0x1a, 0xc3, 0x99, 0xe6, 0x39, 0xbb, 0xa2, 0x85, 0xa8, 0xfe, 0xbe,
-	0xc6, 0x78, 0x00, 0xfe, 0x22, 0x97, 0xfa, 0x0e, 0x7f, 0x05, 0x48, 0x19, 0xdd, 0xae, 0xa8, 0xa2,
-	0xf9, 0x3d, 0x26, 0x56, 0x66, 0x99, 0x31, 0xfd, 0xda, 0xac, 0xa7, 0x70, 0xbe, 0xa1, 0x3a, 0xdb,
-	0x59, 0xa7, 0x8c, 0x8f, 0xc3, 0xb4, 0x29, 0x98, 0x80, 0x97, 0x85, 0xdc, 0xeb, 0x45, 0xa1, 0x15,
-	0x67, 0xff, 0x9b, 0x1d, 0xc3, 0x80, 0x39, 0x42, 0xdc, 0x9d, 0xf4, 0x92, 0x28, 0x3d, 0x42, 0xfc,
-	0x06, 0x7c, 0xf3, 0xe9, 0x5d, 0x4b, 0xde, 0x3b, 0x91, 0x37, 0x36, 0x8a, 0x42, 0xb3, 0xc2, 0xed,
-	0x15, 0xa5, 0x47, 0x88, 0x5f, 0xc1, 0xf0, 0xf3, 0x5e, 0xb7, 0xb4, 0x27, 0xa7, 0x2a, 0xe1, 0x2c,
-	0x20, 0x76, 0x76, 0xad, 0x36, 0xfb, 0xd3, 0x05, 0x7f, 0x69, 0xae, 0x27, 0x7a, 0x0e, 0x81, 0x8b,
-	0x03, 0x05, 0xee, 0xf6, 0x8d, 0x87, 0xa4, 0x1d, 0x1f, 0xee, 0xa0, 0x67, 0xd0, 0x37, 0x49, 0xd4,
-	0x84, 0x90, 0x34, 0xa9, 0xe1, 0x8e, 0x99, 0x50, 0xba, 0x60, 0x02, 0x62, 0x5d, 0x1e, 0x0f, 0x49,
-	0xfb, 0xae, 0xe3, 0x0e, 0xba, 0x30, 0x89, 0x71, 0xcd, 0xd0, 0x90, 0xb4, 0x4d, 0x1a, 0x47, 0xa4,
-	0x95, 0x2b, 0xee, 0xa0, 0x29, 0x84, 0x07, 0x57, 0x50, 0x8c, 0xe6, 0x0f, 0xb0, 0x13, 0x6f, 0xea,
-	0xa1, 0x17, 0xd0, 0x57, 0x8c, 0x6e, 0x51, 0x48, 0x9a, 0x5c, 0xc7, 0x8f, 0xc8, 0x89, 0x1f, 0xb8,
-	0x33, 0xf5, 0xd0, 0x4b, 0x00, 0x43, 0xac, 0x26, 0x3f, 0x44, 0x9f, 0xbf, 0x85, 0xd1, 0x2d, 0xd7,
-	0xbb, 0xfd, 0x86, 0x64, 0x22, 0x27, 0x3a, 0x3b, 0x10, 0xfb, 0x9a, 0xe7, 0x60, 0x5d, 0x5b, 0x99,
-	0x37, 0xbd, 0xf2, 0xbe, 0x45, 0x97, 0x54, 0xf2, 0xcb, 0x5b, 0x25, 0xb3, 0x0f, 0x92, 0xff, 0xed,
-	0xfa, 0xcb, 0xf9, 0x7a, 0x71, 0xb5, 0x09, 0xec, 0x93, 0x7f, 0xfd, 0x2f, 0x00, 0x00, 0xff, 0xff,
-	0xd6, 0x3b, 0xc0, 0xdd, 0x01, 0x04, 0x00, 0x00,
+	// 309 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x74, 0x91, 0x41, 0x4f, 0xc2, 0x30,
+	0x14, 0xc7, 0x29, 0x30, 0x08, 0x6f, 0xc3, 0x43, 0x43, 0xcc, 0x42, 0x3c, 0x2c, 0x35, 0xd1, 0x9d,
+	0x8a, 0xe2, 0x49, 0x0f, 0x26, 0x92, 0x70, 0xe0, 0xa2, 0xa4, 0x1c, 0x24, 0xde, 0xba, 0x51, 0xa0,
+	0x07, 0xd6, 0xa5, 0xbc, 0x85, 0xe8, 0xc7, 0xf1, 0x93, 0x9a, 0x75, 0x22, 0xe3, 0xe0, 0xf1, 0xd7,
+	0xbc, 0xbe, 0xdf, 0xcb, 0xff, 0x0f, 0xbe, 0x4e, 0xf6, 0x2a, 0xe3, 0xb9, 0x35, 0x68, 0xd8, 0x35,
+	0xf8, 0xef, 0x56, 0xa3, 0x5a, 0xa0, 0xc4, 0x62, 0x4f, 0x07, 0xe0, 0x1d, 0xac, 0x41, 0x15, 0x92,
+	0x88, 0xc4, 0x2d, 0x51, 0x01, 0x5b, 0x02, 0x08, 0x25, 0x57, 0x73, 0x69, 0xe5, 0xce, 0xcd, 0xa0,
+	0xc9, 0x75, 0xea, 0x66, 0x7a, 0xa2, 0x02, 0x7a, 0x09, 0x1d, 0xb3, 0x5e, 0xef, 0x15, 0x86, 0xcd,
+	0x88, 0xc4, 0x6d, 0xf1, 0x4b, 0xf4, 0x0a, 0x7a, 0x89, 0xc4, 0x74, 0xbb, 0xd0, 0x5f, 0x2a, 0x6c,
+	0x45, 0x24, 0xee, 0x8b, 0xd3, 0x03, 0x7b, 0x86, 0x60, 0x96, 0xe5, 0x05, 0x4e, 0x33, 0xb4, 0x5a,
+	0xfd, 0xb7, 0x3b, 0x84, 0xae, 0xaa, 0x06, 0xc2, 0x66, 0xd4, 0x8a, 0x03, 0x71, 0x44, 0xf6, 0x08,
+	0x5e, 0xf9, 0xf5, 0xb3, 0xa6, 0x27, 0x67, 0xfa, 0x10, 0xba, 0xa9, 0xc9, 0x50, 0x65, 0xd5, 0x5d,
+	0x81, 0x38, 0x22, 0xbb, 0x87, 0xfe, 0x5b, 0x81, 0x35, 0x77, 0x74, 0x6e, 0xf1, 0xc7, 0x1d, 0xee,
+	0x76, 0xff, 0xd9, 0xc6, 0x4b, 0xf0, 0x66, 0x65, 0x76, 0xf4, 0xa6, 0x8c, 0x49, 0xa3, 0xa2, 0x7d,
+	0x5e, 0x3f, 0x7f, 0x18, 0xf0, 0x5a, 0x98, 0xac, 0x41, 0x6f, 0xa1, 0x6d, 0x95, 0x5c, 0x51, 0x9f,
+	0x9f, 0xf2, 0x1b, 0x5e, 0xf0, 0x33, 0x2f, 0x6b, 0xdc, 0x91, 0xc9, 0x13, 0x0c, 0x36, 0x1a, 0xb7,
+	0x45, 0xc2, 0x53, 0xb3, 0xe3, 0x98, 0x1e, 0xb8, 0x2b, 0x69, 0x02, 0xce, 0x37, 0x2f, 0xab, 0x9a,
+	0x93, 0x8f, 0x60, 0x24, 0x73, 0x3d, 0xda, 0xd8, 0x3c, 0x7d, 0xc9, 0xf5, 0x77, 0xd3, 0x9b, 0x4d,
+	0x16, 0xd3, 0xd7, 0xa4, 0xe3, 0x9a, 0x7c, 0xf8, 0x09, 0x00, 0x00, 0xff, 0xff, 0x0c, 0x63, 0x54,
+	0x84, 0xd8, 0x01, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -582,13 +297,8 @@ const _ = grpc.SupportPackageIsVersion6
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
 type IbsenClient interface {
-	Create(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*CreateStatus, error)
-	Drop(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*DropStatus, error)
-	Status(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TopicsStatus, error)
 	Write(ctx context.Context, in *InputEntries, opts ...grpc.CallOption) (*WriteStatus, error)
-	WriteStream(ctx context.Context, opts ...grpc.CallOption) (Ibsen_WriteStreamClient, error)
 	Read(ctx context.Context, in *ReadParams, opts ...grpc.CallOption) (Ibsen_ReadClient, error)
-	ReadStream(ctx context.Context, in *ReadParams, opts ...grpc.CallOption) (Ibsen_ReadStreamClient, error)
 }
 
 type ibsenClient struct {
@@ -597,33 +307,6 @@ type ibsenClient struct {
 
 func NewIbsenClient(cc grpc.ClientConnInterface) IbsenClient {
 	return &ibsenClient{cc}
-}
-
-func (c *ibsenClient) Create(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*CreateStatus, error) {
-	out := new(CreateStatus)
-	err := c.cc.Invoke(ctx, "/Ibsen/create", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *ibsenClient) Drop(ctx context.Context, in *Topic, opts ...grpc.CallOption) (*DropStatus, error) {
-	out := new(DropStatus)
-	err := c.cc.Invoke(ctx, "/Ibsen/drop", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *ibsenClient) Status(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TopicsStatus, error) {
-	out := new(TopicsStatus)
-	err := c.cc.Invoke(ctx, "/Ibsen/status", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *ibsenClient) Write(ctx context.Context, in *InputEntries, opts ...grpc.CallOption) (*WriteStatus, error) {
@@ -635,39 +318,8 @@ func (c *ibsenClient) Write(ctx context.Context, in *InputEntries, opts ...grpc.
 	return out, nil
 }
 
-func (c *ibsenClient) WriteStream(ctx context.Context, opts ...grpc.CallOption) (Ibsen_WriteStreamClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[0], "/Ibsen/writeStream", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &ibsenWriteStreamClient{stream}
-	return x, nil
-}
-
-type Ibsen_WriteStreamClient interface {
-	Send(*InputEntries) error
-	Recv() (*WriteStatus, error)
-	grpc.ClientStream
-}
-
-type ibsenWriteStreamClient struct {
-	grpc.ClientStream
-}
-
-func (x *ibsenWriteStreamClient) Send(m *InputEntries) error {
-	return x.ClientStream.SendMsg(m)
-}
-
-func (x *ibsenWriteStreamClient) Recv() (*WriteStatus, error) {
-	m := new(WriteStatus)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
 func (c *ibsenClient) Read(ctx context.Context, in *ReadParams, opts ...grpc.CallOption) (Ibsen_ReadClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[1], "/Ibsen/read", opts...)
+	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[0], "/Ibsen/read", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -698,131 +350,25 @@ func (x *ibsenReadClient) Recv() (*OutputEntries, error) {
 	return m, nil
 }
 
-func (c *ibsenClient) ReadStream(ctx context.Context, in *ReadParams, opts ...grpc.CallOption) (Ibsen_ReadStreamClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_Ibsen_serviceDesc.Streams[2], "/Ibsen/readStream", opts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &ibsenReadStreamClient{stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
-	return x, nil
-}
-
-type Ibsen_ReadStreamClient interface {
-	Recv() (*OutputEntries, error)
-	grpc.ClientStream
-}
-
-type ibsenReadStreamClient struct {
-	grpc.ClientStream
-}
-
-func (x *ibsenReadStreamClient) Recv() (*OutputEntries, error) {
-	m := new(OutputEntries)
-	if err := x.ClientStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
 // IbsenServer is the server API for Ibsen service.
 type IbsenServer interface {
-	Create(context.Context, *Topic) (*CreateStatus, error)
-	Drop(context.Context, *Topic) (*DropStatus, error)
-	Status(context.Context, *Empty) (*TopicsStatus, error)
 	Write(context.Context, *InputEntries) (*WriteStatus, error)
-	WriteStream(Ibsen_WriteStreamServer) error
 	Read(*ReadParams, Ibsen_ReadServer) error
-	ReadStream(*ReadParams, Ibsen_ReadStreamServer) error
 }
 
 // UnimplementedIbsenServer can be embedded to have forward compatible implementations.
 type UnimplementedIbsenServer struct {
 }
 
-func (*UnimplementedIbsenServer) Create(ctx context.Context, req *Topic) (*CreateStatus, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Create not implemented")
-}
-func (*UnimplementedIbsenServer) Drop(ctx context.Context, req *Topic) (*DropStatus, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Drop not implemented")
-}
-func (*UnimplementedIbsenServer) Status(ctx context.Context, req *Empty) (*TopicsStatus, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Status not implemented")
-}
 func (*UnimplementedIbsenServer) Write(ctx context.Context, req *InputEntries) (*WriteStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Write not implemented")
-}
-func (*UnimplementedIbsenServer) WriteStream(srv Ibsen_WriteStreamServer) error {
-	return status.Errorf(codes.Unimplemented, "method WriteStream not implemented")
 }
 func (*UnimplementedIbsenServer) Read(req *ReadParams, srv Ibsen_ReadServer) error {
 	return status.Errorf(codes.Unimplemented, "method Read not implemented")
 }
-func (*UnimplementedIbsenServer) ReadStream(req *ReadParams, srv Ibsen_ReadStreamServer) error {
-	return status.Errorf(codes.Unimplemented, "method ReadStream not implemented")
-}
 
 func RegisterIbsenServer(s *grpc.Server, srv IbsenServer) {
 	s.RegisterService(&_Ibsen_serviceDesc, srv)
-}
-
-func _Ibsen_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Topic)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(IbsenServer).Create(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/Ibsen/Create",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IbsenServer).Create(ctx, req.(*Topic))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Ibsen_Drop_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Topic)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(IbsenServer).Drop(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/Ibsen/Drop",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IbsenServer).Drop(ctx, req.(*Topic))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Ibsen_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(IbsenServer).Status(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/Ibsen/Status",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(IbsenServer).Status(ctx, req.(*Empty))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _Ibsen_Write_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -841,32 +387,6 @@ func _Ibsen_Write_Handler(srv interface{}, ctx context.Context, dec func(interfa
 		return srv.(IbsenServer).Write(ctx, req.(*InputEntries))
 	}
 	return interceptor(ctx, in, info, handler)
-}
-
-func _Ibsen_WriteStream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(IbsenServer).WriteStream(&ibsenWriteStreamServer{stream})
-}
-
-type Ibsen_WriteStreamServer interface {
-	Send(*WriteStatus) error
-	Recv() (*InputEntries, error)
-	grpc.ServerStream
-}
-
-type ibsenWriteStreamServer struct {
-	grpc.ServerStream
-}
-
-func (x *ibsenWriteStreamServer) Send(m *WriteStatus) error {
-	return x.ServerStream.SendMsg(m)
-}
-
-func (x *ibsenWriteStreamServer) Recv() (*InputEntries, error) {
-	m := new(InputEntries)
-	if err := x.ServerStream.RecvMsg(m); err != nil {
-		return nil, err
-	}
-	return m, nil
 }
 
 func _Ibsen_Read_Handler(srv interface{}, stream grpc.ServerStream) error {
@@ -890,43 +410,10 @@ func (x *ibsenReadServer) Send(m *OutputEntries) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func _Ibsen_ReadStream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ReadParams)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(IbsenServer).ReadStream(m, &ibsenReadStreamServer{stream})
-}
-
-type Ibsen_ReadStreamServer interface {
-	Send(*OutputEntries) error
-	grpc.ServerStream
-}
-
-type ibsenReadStreamServer struct {
-	grpc.ServerStream
-}
-
-func (x *ibsenReadStreamServer) Send(m *OutputEntries) error {
-	return x.ServerStream.SendMsg(m)
-}
-
 var _Ibsen_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "Ibsen",
 	HandlerType: (*IbsenServer)(nil),
 	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "create",
-			Handler:    _Ibsen_Create_Handler,
-		},
-		{
-			MethodName: "drop",
-			Handler:    _Ibsen_Drop_Handler,
-		},
-		{
-			MethodName: "status",
-			Handler:    _Ibsen_Status_Handler,
-		},
 		{
 			MethodName: "write",
 			Handler:    _Ibsen_Write_Handler,
@@ -934,19 +421,8 @@ var _Ibsen_serviceDesc = grpc.ServiceDesc{
 	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "writeStream",
-			Handler:       _Ibsen_WriteStream_Handler,
-			ServerStreams: true,
-			ClientStreams: true,
-		},
-		{
 			StreamName:    "read",
 			Handler:       _Ibsen_Read_Handler,
-			ServerStreams: true,
-		},
-		{
-			StreamName:    "readStream",
-			Handler:       _Ibsen_ReadStream_Handler,
 			ServerStreams: true,
 		},
 	},

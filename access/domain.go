@@ -2,8 +2,11 @@ package access
 
 import (
 	"fmt"
+	"hash/crc32"
 	"os"
 	"sort"
+	"sync"
+	"time"
 )
 
 const Sep = string(os.PathSeparator)
@@ -12,7 +15,7 @@ type IbsenRootPath string
 type Offset uint64
 type Block uint64
 type Topic string
-type Entries [][]byte
+type Entries *[][]byte
 type BlockSizeInBytes uint64
 type FileName string
 type BlockIndex uint32
@@ -83,3 +86,26 @@ type indexOffset struct {
 	Offset     Offset
 	byteOffset int64
 }
+
+type LogEntry struct {
+	Offset   uint64
+	Crc      uint32
+	ByteSize int
+	Entry    []byte
+}
+
+type ReadParams struct {
+	Topic      Topic
+	Offset     Offset
+	ByteOffset int64
+	BatchSize  uint32
+	TTL        time.Duration
+	LogChan    chan *[]LogEntry
+	Wg         *sync.WaitGroup
+}
+
+func (r *ReadParams) UseByteOffset(byteOffset int64) {
+	r.ByteOffset = byteOffset
+}
+
+var crc32q = crc32.MakeTable(crc32.Castagnoli)

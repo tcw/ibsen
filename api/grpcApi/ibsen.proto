@@ -7,54 +7,14 @@ option java_outer_classname = "IbsenProto";
 option objc_class_prefix = "IBSEN";
 
 service Ibsen {
-
-    rpc create (Topic) returns (CreateStatus) {
-    }
-    rpc drop (Topic) returns (DropStatus) {
-    }
-    rpc status (Empty) returns (TopicsStatus) {
-    }
-
     rpc write (InputEntries) returns (WriteStatus) {
-    }
-    rpc writeStream (stream InputEntries) returns (stream WriteStatus) {
     }
     rpc read (ReadParams) returns (stream OutputEntries) {
     }
-    rpc readStream (ReadParams) returns (stream OutputEntries) {
-    }
-}
-
-message TopicsStatus {
-    repeated TopicStatus topicStatus = 1;
-}
-
-message TopicStatus {
-    string topic = 1;
-    int64 blocks = 2;
-    int64 offset = 3;
-    int64 maxBlockSize = 4;
-    string path = 5;
-}
-
-message Topic {
-    string name = 1;
-}
-
-message CreateStatus {
-    bool created = 1;
-}
-
-message DropStatus {
-    bool dropped = 1;
 }
 
 message WriteStatus {
     int64 wrote = 1;
-    int64 timeNano = 2;
-}
-
-message Empty {
 }
 
 message ReadParams {
