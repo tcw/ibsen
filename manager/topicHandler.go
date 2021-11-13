@@ -5,7 +5,10 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/errore"
+	"log"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 type TopicHandler struct {
@@ -19,15 +22,15 @@ type TopicHandler struct {
 	logMutex       sync.Mutex
 	indexBlocks    access.Blocks
 	indexOffset    access.Offset
-	indexMutex     sync.Mutex
+	indexMutex     int32
 	logAccess      access.LogAccess
 	logIndexAccess access.LogIndexAccess
 	loaded         bool
 }
 
-func newTopicHandler(asf *afero.Afero, rootPath string, topic access.Topic) TopicHandler {
+func newTopicHandler(afs *afero.Afero, rootPath string, topic access.Topic) TopicHandler {
 	return TopicHandler{
-		afs:         asf,
+		afs:         afs,
 		rootPath:    rootPath,
 		topic:       topic,
 		logBlocks:   access.Blocks{},
@@ -35,13 +38,13 @@ func newTopicHandler(asf *afero.Afero, rootPath string, topic access.Topic) Topi
 		logMutex:    sync.Mutex{},
 		indexBlocks: access.Blocks{},
 		indexOffset: 0,
-		indexMutex:  sync.Mutex{},
+		indexMutex:  0,
 		logAccess: access.ReadWriteLogAccess{
-			Afs:      asf,
+			Afs:      afs,
 			RootPath: rootPath,
 		},
 		logIndexAccess: access.ReadWriteLogIndexAccess{
-			Afs:          asf,
+			Afs:          afs,
 			RootPath:     rootPath,
 			IndexDensity: 0.01,
 		},
@@ -91,15 +94,14 @@ func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {
 func (t *TopicHandler) Load() error {
 	if !t.loaded {
 		t.logMutex.Lock()
-		t.indexMutex.Lock()
 		defer t.logMutex.Unlock()
-		defer t.indexMutex.Lock()
 		if !t.loaded {
 			err := t.lazyLoad()
 			if err != nil {
 				return errore.WrapWithContext(err)
 			}
 			t.loaded = true
+			go t.indexScheduler()
 		}
 	}
 	return nil
@@ -119,7 +121,42 @@ func (t *TopicHandler) lazyLoad() error {
 	return nil
 }
 
-func (t *TopicHandler) updateIndex() error {
-	blockWithoutIndex := t.logBlocks.Diff(t.indexBlocks)
+func (t TopicHandler) indexScheduler() {
+	for {
+		err := t.updateIndex()
+		if err != nil {
+			log.Printf("index builder for topic %s has failed", t.topic)
+		}
+		time.Sleep(time.Second * 10)
+	}
+}
 
+func (t *TopicHandler) updateIndex() error {
+	if !atomic.CompareAndSwapInt32(&t.indexMutex, 0, 1) {
+		return nil
+	}
+	defer atomic.CompareAndSwapInt32(&t.indexMutex, 1, 0)
+	head := t.indexBlocks.Head()
+	if head == 0 {
+		return nil
+	}
+	index, err := t.logIndexAccess.Read(head.IndexFileName(t.rootPath, t.topic))
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	indexOffset := index.Head()
+	if !indexOffset.IsEmpty() {
+		_, err = t.logIndexAccess.WriteFromOffset(head.IndexFileName(t.rootPath, t.topic), indexOffset.ByteOffset)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+	}
+	blocksWithoutIndex := t.logBlocks.Diff(t.indexBlocks)
+	for _, block := range blocksWithoutIndex.BlockList {
+		_, err := t.logIndexAccess.WriteFile(block.IndexFileName(t.rootPath, t.topic))
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+	}
+	return nil
 }

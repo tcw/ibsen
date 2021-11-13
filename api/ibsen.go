@@ -39,7 +39,8 @@ type IbsenServer struct {
 	Lock         consensus.Lock
 	InMemory     bool
 	Afs          *afero.Afero
-	DataPath     string
+	TTL          time.Duration
+	RootPath     string
 	MaxBlockSize int
 	CpuProfile   string
 	MemProfile   string
@@ -50,34 +51,34 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	log.Printf("Using listener: %s", listener.Addr().String())
 	if ibs.InMemory {
 		log.Println("Running in-memory only!")
-		err := ibs.Afs.Mkdir(ibs.DataPath, 600)
+		err := ibs.Afs.Mkdir(ibs.RootPath, 600)
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
 	} else {
-		exists, err := ibs.Afs.Exists(ibs.DataPath)
+		exists, err := ibs.Afs.Exists(ibs.RootPath)
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
 		if !exists {
-			return errore.NewWithContext("path [%s] does not exist, will not start unless existing path is specified", ibs.DataPath)
+			return errore.NewWithContext("path [%s] does not exist, will not start unless existing path is specified", ibs.RootPath)
 		}
-		log.Printf("Waiting for single writer lock on file [%s]...\n", ibs.DataPath)
+		log.Printf("Waiting for single writer lock on file [%s]...\n", ibs.RootPath)
 		if !ibs.Lock.AcquireLock() {
-			return errore.NewWithContext("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.DataPath)
+			return errore.NewWithContext("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.RootPath)
 		}
 	}
 
 	useCpuProfiling(ibs.CpuProfile)
 
 	start := time.Now()
-	logStorage, err := storage.NewLogStorage(ibs.Afs, ibs.DataPath, int64(ibs.MaxBlockSize)*1024*1024)
+	logStorage, err := storage.NewLogStorage(ibs.Afs, ibs.RootPath, int64(ibs.MaxBlockSize)*1024*1024)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
 	stop := time.Now()
 	log.Printf("loaded existing topic in [%s]", stop.Sub(start).String())
-	manager, err := index.NewTopicsIndexManager(ibs.Afs, ibs.DataPath, logStorage.TopicManager, 10)
+	manager, err := index.NewTopicsIndexManager(ibs.Afs, ibs.RootPath, logStorage.TopicManager, 10)
 	if err != nil {
 		log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
 	}
@@ -156,9 +157,9 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 	if !ibs.InMemory {
 		isReleased := ibs.Lock.ReleaseLock()
 		if isReleased {
-			log.Printf("single writer lock [%s] was released!\n", ibs.DataPath)
+			log.Printf("single writer lock [%s] was released!\n", ibs.RootPath)
 		} else {
-			log.Printf("unable to release single writer lock [%s]\n", ibs.DataPath)
+			log.Printf("unable to release single writer lock [%s]\n", ibs.RootPath)
 		}
 	}
 

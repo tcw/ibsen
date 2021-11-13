@@ -68,7 +68,7 @@ var (
 				Lock:         lock,
 				InMemory:     inMemory,
 				Afs:          afs,
-				DataPath:     absolutePath,
+				RootPath:     absolutePath,
 				MaxBlockSize: maxBlockSizeMB,
 				CpuProfile:   cpuProfile,
 				MemProfile:   memProfile,

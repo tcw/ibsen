@@ -82,34 +82,53 @@ func (bs Blocks) GetBlocks(offset Offset) []Block {
 }
 
 type Index struct {
-	IndexOffset []indexOffset
+	IndexOffsets []IndexOffset
 }
 
-func (idx *Index) add(pair indexOffset) {
-	idx.IndexOffset = append(idx.IndexOffset, pair)
+func (idx Index) Size() int {
+	return len(idx.IndexOffsets)
 }
 
-func (idx *Index) addAll(pair []indexOffset) {
-	idx.IndexOffset = append(idx.IndexOffset, pair...)
+func (idx Index) IsEmpty() bool {
+	return len(idx.IndexOffsets) == 0
+}
+
+func (idx Index) Head() IndexOffset {
+	if idx.IsEmpty() {
+		return IndexOffset{}
+	}
+	return idx.IndexOffsets[len(idx.IndexOffsets)-1]
+}
+
+func (idx *Index) add(pair IndexOffset) {
+	idx.IndexOffsets = append(idx.IndexOffsets, pair)
+}
+
+func (idx *Index) addAll(pair []IndexOffset) {
+	idx.IndexOffsets = append(idx.IndexOffsets, pair...)
 }
 
 // this is linear search, should use range tree for large indices
 func (idx Index) findNearestByteOffset(offset Offset) int64 {
-	for i := len(idx.IndexOffset) - 1; i >= 0; i-- {
-		if offset > idx.IndexOffset[i].Offset {
-			return idx.IndexOffset[i].byteOffset
+	for i := len(idx.IndexOffsets) - 1; i >= 0; i-- {
+		if offset > idx.IndexOffsets[i].Offset {
+			return idx.IndexOffsets[i].ByteOffset
 		}
 	}
 	return 0
 }
 
 func (idx *Index) addIndex(index Index) {
-	idx.addAll(index.IndexOffset)
+	idx.addAll(index.IndexOffsets)
 }
 
-type indexOffset struct {
+type IndexOffset struct {
 	Offset     Offset
-	byteOffset int64
+	ByteOffset int64
+}
+
+func (ido IndexOffset) IsEmpty() bool {
+	return ido.ByteOffset == 0
 }
 
 type LogEntry struct {

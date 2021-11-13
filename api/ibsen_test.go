@@ -154,7 +154,7 @@ func createServer() IbsenServer {
 		Lock:         consensus.NoFileLock{},
 		InMemory:     true,
 		Afs:          afs,
-		DataPath:     "/tmp/data",
+		RootPath:     "/tmp/data",
 		MaxBlockSize: 1,
 		CpuProfile:   "",
 		MemProfile:   "",
