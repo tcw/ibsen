@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 	"sync"
-	"time"
 )
 
 const Sep = string(os.PathSeparator)
@@ -55,6 +54,33 @@ func (bs *Blocks) Sort() {
 	sort.Slice(bs.BlockList, func(i, j int) bool { return bs.BlockList[i] < bs.BlockList[j] })
 }
 
+func (bs *Blocks) Diff(blocks Blocks) Blocks {
+	if blocks.IsEmpty() {
+		return Blocks{BlockList: []Block{}}
+	}
+	if blocks.Size() == 1 {
+		return Blocks{BlockList: bs.BlockList[1:]}
+	}
+	blockList := bs.BlockList[len(blocks.BlockList)-1:]
+	return Blocks{BlockList: blockList}
+
+}
+
+func (bs Blocks) GetBlocks(offset Offset) []Block {
+	if bs.Size() == 0 {
+		return []Block{}
+	}
+	if bs.Size() == 1 {
+		return bs.BlockList[0:]
+	}
+	for i := bs.Size() - 1; i >= 0; i-- {
+		if offset > Offset(bs.BlockList[i]) {
+			return bs.BlockList[i:]
+		}
+	}
+	return []Block{}
+}
+
 type Index struct {
 	IndexOffset []indexOffset
 }
@@ -94,17 +120,11 @@ type LogEntry struct {
 }
 
 type ReadParams struct {
-	Topic      Topic
-	Offset     Offset
-	ByteOffset int64
-	BatchSize  uint32
-	TTL        time.Duration
-	LogChan    chan *[]LogEntry
-	Wg         *sync.WaitGroup
-}
-
-func (r *ReadParams) UseByteOffset(byteOffset int64) {
-	r.ByteOffset = byteOffset
+	Topic     Topic
+	Offset    Offset
+	BatchSize uint32
+	LogChan   chan *[]LogEntry
+	Wg        *sync.WaitGroup
 }
 
 var crc32q = crc32.MakeTable(crc32.Castagnoli)

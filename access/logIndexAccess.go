@@ -63,7 +63,7 @@ func (r ReadWriteLogIndexAccess) ReadTopicIndexBlocks(topic Topic) (Blocks, erro
 }
 
 func loadIndex(afs *afero.Afero, indexFileName string) ([]byte, error) {
-	file, err := OpenFileForRead(afs, indexFileName)
+	file, err := openFileForRead(afs, indexFileName)
 	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
@@ -114,7 +114,7 @@ func logFileToIndexFile(logfile FileName) FileName {
 }
 
 func saveIndex(afs *afero.Afero, indexFileName FileName, index []byte) error {
-	file, err := OpenFileForWrite(afs, string(indexFileName))
+	file, err := openFileForWrite(afs, string(indexFileName))
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -127,7 +127,7 @@ func saveIndex(afs *afero.Afero, indexFileName FileName, index []byte) error {
 
 //Todo: add header that contains density
 func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, oneEntryForEvery uint32) ([]byte, error) {
-	file, err := OpenFileForRead(afs, string(logFile))
+	file, err := openFileForRead(afs, string(logFile))
 	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
@@ -160,7 +160,7 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 			return nil, errore.WrapWithContext(err)
 		}
 		currentByteOffset = currentByteOffset + int64(byteSize)
-		size := LittleEndianToUint64(bytes)
+		size := littleEndianToUint64(bytes)
 
 		entry := make([]byte, size)
 		entrySize, err := io.ReadFull(reader, entry)

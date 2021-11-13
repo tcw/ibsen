@@ -14,7 +14,7 @@ type LogAccess interface {
 	CreateTopic(topic Topic) error
 	Write(fileName FileName, entries Entries, fromOffset Offset) (Offset, BlockSizeInBytes, error)
 	ReadTopicLogBlocks(topic Topic) (Blocks, error)
-	ReadLog(logFile afero.File, readBatchParam ReadParams) (Offset, error)
+	ReadLog(fileName FileName, readBatchParam ReadParams, byteOffset int64) (Offset, error)
 }
 
 var _ LogAccess = ReadWriteLogAccess{}
@@ -25,7 +25,7 @@ type ReadWriteLogAccess struct {
 }
 
 func (la ReadWriteLogAccess) ListTopics() ([]Topic, error) {
-	topics, err := ListAllTopics(la.Afs, la.RootPath)
+	topics, err := listAllTopics(la.Afs, la.RootPath)
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
@@ -42,7 +42,8 @@ func (la ReadWriteLogAccess) CreateTopic(topic Topic) error {
 
 func (la ReadWriteLogAccess) Write(fileName FileName, entries Entries, fromOffset Offset) (Offset, BlockSizeInBytes, error) {
 
-	writer, err := OpenFileForWrite(la.Afs, string(fileName))
+	writer, err := openFileForWrite(la.Afs, string(fileName))
+	defer writer.Close()
 	if err != nil {
 		return 0, 0, errore.WrapWithContext(err)
 	}
@@ -50,33 +51,34 @@ func (la ReadWriteLogAccess) Write(fileName FileName, entries Entries, fromOffse
 	if err != nil {
 		return 0, 0, errore.WrapWithContext(err)
 	}
-	err = writer.Close()
-	if err != nil {
-		return 0, 0, errore.WrapWithContext(err)
-	}
 	return newOffset, bytesWritten, nil
 }
 
 func (la ReadWriteLogAccess) ReadTopicLogBlocks(topic Topic) (Blocks, error) {
-	directory, err := ListFilesInDirectory(la.Afs, la.RootPath, string(topic))
+	directory, err := listFilesInDirectory(la.Afs, la.RootPath, string(topic))
 	if err != nil {
 		return Blocks{}, errore.WrapWithContext(err)
 	}
-	blocks, err := FilesToBlocks(directory)
+	blocks, err := filesToBlocks(directory)
 	domainBlocks := Blocks{BlockList: blocks}
 	domainBlocks.Sort()
 	return domainBlocks, nil
 }
 
-func (la ReadWriteLogAccess) ReadLog(logFile afero.File, readBatchParam ReadParams) (Offset, error) {
+func (la ReadWriteLogAccess) ReadLog(logFileName FileName, readBatchParam ReadParams, byteOffset int64) (Offset, error) {
+	logFile, err := openFileForRead(la.Afs, string(logFileName))
+	defer logFile.Close()
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
 	if readBatchParam.Offset > 0 {
-		if readBatchParam.ByteOffset > 0 {
-			_, err := logFile.Seek(readBatchParam.ByteOffset, io.SeekStart)
+		if byteOffset > 0 {
+			_, err = logFile.Seek(byteOffset, io.SeekStart)
 			if err != nil {
 				return 0, errore.WrapWithContext(err)
 			}
 		}
-		err := FastForwardToOffset(logFile, readBatchParam.Offset)
+		err = fastForwardToOffset(logFile, readBatchParam.Offset)
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
 		}
@@ -115,19 +117,19 @@ func readFile(file afero.File, logChan chan *[]LogEntry,
 		if err != nil {
 			return lastOffset, errore.WrapWithContext(err)
 		}
-		offset := int64(LittleEndianToUint64(bytes))
+		offset := int64(littleEndianToUint64(bytes))
 
 		_, err = io.ReadFull(reader, checksum)
 		if err != nil {
 			return lastOffset, errore.WrapWithContext(err)
 		}
-		checksumValue := LittleEndianToUint32(bytes)
+		checksumValue := littleEndianToUint32(bytes)
 
 		_, err = io.ReadFull(reader, bytes)
 		if err != nil {
 			return lastOffset, errore.WrapWithContext(err)
 		}
-		size := LittleEndianToUint64(bytes)
+		size := littleEndianToUint64(bytes)
 
 		entry := make([]byte, size)
 		_, err = io.ReadFull(reader, entry)
@@ -159,12 +161,12 @@ func writeBatchToFile(file afero.File, entries Entries, fromOffset Offset) (Offs
 }
 
 func createByteEntry(entry []byte, currentOffset Offset) []byte {
-	offset := Uint64ToLittleEndian(uint64(currentOffset))
-	byteSize := IntToLittleEndian(len(entry))
+	offset := uint64ToLittleEndian(uint64(currentOffset))
+	byteSize := intToLittleEndian(len(entry))
 	checksum := crc32.Checksum(offset, crc32q)
 	checksum = crc32.Update(checksum, crc32q, byteSize)
 	checksum = crc32.Update(checksum, crc32q, entry)
-	check := Uint32ToLittleEndian(checksum)
+	check := uint32ToLittleEndian(checksum)
 	bytes := append(offset, check...)
 	bytes = append(bytes, byteSize...)
 	bytes = append(bytes, entry...)

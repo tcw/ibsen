@@ -12,7 +12,7 @@ type LogManager interface {
 var _ LogManager = LogTopicsManager{}
 
 type LogTopicsManager struct {
-	topics map[access.Topic]TopicManager
+	topics map[access.Topic]TopicHandler
 }
 
 func (l LogTopicsManager) Write(topic access.Topic, entries access.Entries) (access.Offset, error) {

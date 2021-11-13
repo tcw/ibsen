@@ -14,7 +14,7 @@ import (
 
 const Separator = string(os.PathSeparator)
 
-func OpenFileForReadWrite(afs *afero.Afero, fileName string) (afero.File, error) {
+func openFileForReadWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	f, err := afs.OpenFile(fileName,
 		os.O_CREATE|os.O_RDWR, 0700)
 	if err != nil {
@@ -23,7 +23,7 @@ func OpenFileForReadWrite(afs *afero.Afero, fileName string) (afero.File, error)
 	return f, nil
 }
 
-func OpenFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
+func openFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	f, err := afs.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
@@ -31,7 +31,7 @@ func OpenFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	return f, nil
 }
 
-func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
+func openFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	exists, err := afs.Exists(fileName)
 	if err != nil {
 		return nil, errore.NewWithContext(fmt.Sprintf("Failes checking if file %s exist", fileName))
@@ -47,9 +47,9 @@ func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	return f, nil
 }
 
-func ListFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([]string, error) {
+func listFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([]string, error) {
 	var filenames []string
-	file, err := OpenFileForRead(afs, dir)
+	file, err := openFileForRead(afs, dir)
 	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
@@ -64,7 +64,7 @@ func ListFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([
 	return filenames, nil
 }
 
-func FilesToBlocks(paths []string) ([]Block, error) {
+func filesToBlocks(paths []string) ([]Block, error) {
 	var blocks []Block
 	for _, path := range paths {
 		_, file := filepath.Split(path)
@@ -80,9 +80,9 @@ func FilesToBlocks(paths []string) ([]Block, error) {
 	return blocks, nil
 }
 
-func ListAllTopics(afs *afero.Afero, dir string) ([]Topic, error) {
+func listAllTopics(afs *afero.Afero, dir string) ([]Topic, error) {
 	var filenames []Topic
-	file, err := OpenFileForRead(afs, string(dir))
+	file, err := openFileForRead(afs, string(dir))
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
@@ -97,7 +97,7 @@ func ListAllTopics(afs *afero.Afero, dir string) ([]Topic, error) {
 	return filenames, nil
 }
 
-func BlockSize(asf *afero.Afero, fileName string) (int64, error) {
+func blockSize(asf *afero.Afero, fileName string) (int64, error) {
 	exists, err := asf.Exists(fileName)
 	if err != nil {
 		return 0, errore.NewWithContext(fmt.Sprintf("Failes checking if file %s exist", fileName))
@@ -119,9 +119,9 @@ func BlockSize(asf *afero.Afero, fileName string) (int64, error) {
 	return fi.Size(), nil
 }
 
-func FindLastOffset(afs *afero.Afero, blockFileName FileName) (int64, error) {
+func findLastOffset(afs *afero.Afero, blockFileName FileName) (int64, error) {
 	var offsetFound int64 = 0
-	file, err := OpenFileForRead(afs, string(blockFileName))
+	file, err := openFileForRead(afs, string(blockFileName))
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
@@ -136,7 +136,7 @@ func FindLastOffset(afs *afero.Afero, blockFileName FileName) (int64, error) {
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
 		}
-		offsetFound = int64(LittleEndianToUint64(bytes))
+		offsetFound = int64(littleEndianToUint64(bytes))
 		_, err = io.ReadFull(file, checksum)
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
@@ -145,7 +145,7 @@ func FindLastOffset(afs *afero.Afero, blockFileName FileName) (int64, error) {
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
 		}
-		size := LittleEndianToUint64(bytes)
+		size := littleEndianToUint64(bytes)
 		_, err = file.Seek(int64(size), 1)
 		if err != nil {
 			return offsetFound, errore.WrapWithContext(err)
@@ -153,7 +153,7 @@ func FindLastOffset(afs *afero.Afero, blockFileName FileName) (int64, error) {
 	}
 }
 
-func FastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace with index
+func fastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace with index
 	var offsetFound Offset = -1
 	for {
 		if offsetFound == offset {
@@ -168,7 +168,7 @@ func FastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		offsetFound = Offset(LittleEndianToUint64(bytes))
+		offsetFound = Offset(littleEndianToUint64(bytes))
 		_, err = io.ReadFull(file, checksum)
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -177,7 +177,7 @@ func FastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-		size := LittleEndianToUint64(bytes)
+		size := littleEndianToUint64(bytes)
 		_, err = (file).Seek(int64(size), 1)
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -185,28 +185,28 @@ func FastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace
 	}
 }
 
-func Uint64ToLittleEndian(offset uint64) []byte {
+func uint64ToLittleEndian(offset uint64) []byte {
 	bytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(bytes, offset)
 	return bytes
 }
 
-func Uint32ToLittleEndian(number uint32) []byte {
+func uint32ToLittleEndian(number uint32) []byte {
 	bytes := make([]byte, 4)
 	binary.LittleEndian.PutUint32(bytes, number)
 	return bytes
 }
 
-func IntToLittleEndian(number int) []byte {
+func intToLittleEndian(number int) []byte {
 	bytes := make([]byte, 8)
 	binary.LittleEndian.PutUint32(bytes, uint32(number))
 	return bytes
 }
 
-func LittleEndianToUint64(bytes []byte) uint64 {
+func littleEndianToUint64(bytes []byte) uint64 {
 	return binary.LittleEndian.Uint64(bytes)
 }
 
-func LittleEndianToUint32(bytes []byte) uint32 {
+func littleEndianToUint32(bytes []byte) uint32 {
 	return binary.LittleEndian.Uint32(bytes)
 }
