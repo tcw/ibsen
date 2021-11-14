@@ -28,17 +28,18 @@ type TopicHandler struct {
 	loaded         bool
 }
 
-func newTopicHandler(afs *afero.Afero, rootPath string, topic access.Topic) TopicHandler {
+func newTopicHandler(afs *afero.Afero, rootPath string, topic access.Topic, maxBlockSize uint64) TopicHandler {
 	return TopicHandler{
-		afs:         afs,
-		rootPath:    rootPath,
-		topic:       topic,
-		logBlocks:   access.Blocks{},
-		logOffset:   0,
-		logMutex:    sync.Mutex{},
-		indexBlocks: access.Blocks{},
-		indexOffset: 0,
-		indexMutex:  0,
+		afs:          afs,
+		rootPath:     rootPath,
+		maxBlockSize: access.BlockSizeInBytes(maxBlockSize),
+		topic:        topic,
+		logBlocks:    access.Blocks{},
+		logOffset:    0,
+		logMutex:     sync.Mutex{},
+		indexBlocks:  access.Blocks{},
+		indexOffset:  0,
+		indexMutex:   0,
 		logAccess: access.ReadWriteLogAccess{
 			Afs:      afs,
 			RootPath: rootPath,
@@ -52,23 +53,23 @@ func newTopicHandler(afs *afero.Afero, rootPath string, topic access.Topic) Topi
 	}
 }
 
-func (t *TopicHandler) Write(entries access.Entries) error {
+func (t *TopicHandler) Write(entries access.Entries) (uint32, error) {
 	t.logMutex.Lock()
 	defer t.logMutex.Unlock()
 	err := t.Load()
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return 0, errore.WrapWithContext(err)
 	}
 	offset, bytes, err := t.logAccess.Write(t.logBlocks.Head().LogFileName(t.rootPath, t.topic), entries, t.logOffset)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return 0, errore.WrapWithContext(err)
 	}
 	t.logOffset = offset
 	t.headBlockSize = t.headBlockSize + bytes
 	if t.headBlockSize > t.maxBlockSize {
 		t.logBlocks.AddBlock(access.Block(t.logOffset))
 	}
-	return nil
+	return uint32(bytes), nil
 }
 
 func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {

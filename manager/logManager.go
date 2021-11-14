@@ -1,6 +1,8 @@
 package manager
 
 import (
+	"errors"
+	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/errore"
@@ -8,20 +10,21 @@ import (
 )
 
 type LogManager interface {
-	Write(topic access.Topic, entries access.Entries) error
+	Write(topic access.Topic, entries access.Entries) (uint32, error)
 	Read(params access.ReadParams) error
 }
 
 var _ LogManager = LogTopicsManager{}
 
 type LogTopicsManager struct {
-	Afs      *afero.Afero
-	TTL      time.Duration
-	RootPath string
-	Topics   map[access.Topic]*TopicHandler
+	Afs          *afero.Afero
+	TTL          time.Duration
+	MaxBlockSize uint64
+	RootPath     string
+	Topics       map[access.Topic]*TopicHandler
 }
 
-func newLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, rootPath string) (LogTopicsManager, error) {
+func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, rootPath string, maxBlockSize uint64) (LogTopicsManager, error) {
 	logAccess := access.ReadWriteLogAccess{
 		Afs:      afs,
 		RootPath: rootPath,
@@ -32,22 +35,31 @@ func newLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, rootPath st
 	}
 	var handlers map[access.Topic]*TopicHandler
 	for _, topic := range topics {
-		handler := newTopicHandler(afs, rootPath, topic)
+		handler := newTopicHandler(afs, rootPath, topic, maxBlockSize)
 		handlers[topic] = &handler
 	}
 	return LogTopicsManager{
-		Afs:      afs,
-		TTL:      timeToLive,
-		RootPath: rootPath,
-		Topics:   handlers,
+		Afs:          afs,
+		TTL:          timeToLive,
+		MaxBlockSize: maxBlockSize,
+		RootPath:     rootPath,
+		Topics:       handlers,
 	}, nil
 }
 
-func (l LogTopicsManager) Write(topic access.Topic, entries access.Entries) error {
+func (l LogTopicsManager) Write(topic access.Topic, entries access.Entries) (uint32, error) {
+	_, exists := l.Topics[topic]
+	if !exists {
+		l.addTopic(topic)
+	}
 	return l.Topics[topic].Write(entries)
 }
 
 func (l LogTopicsManager) Read(params access.ReadParams) error {
+	_, exists := l.Topics[params.Topic]
+	if !exists {
+		return errors.New(fmt.Sprintf("topic %s does not exits", params.Topic))
+	}
 	offset, err := l.Topics[params.Topic].Read(params)
 	if err != nil {
 		return errore.WrapWithContext(err)
@@ -62,6 +74,7 @@ func (l LogTopicsManager) Read(params access.ReadParams) error {
 	return nil
 }
 
-func (l LogTopicsManager) addTopic() error {
-	return nil
+func (l *LogTopicsManager) addTopic(topic access.Topic) {
+	handler := newTopicHandler(l.Afs, l.RootPath, topic, l.MaxBlockSize)
+	l.Topics[topic] = &handler
 }
