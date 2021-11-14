@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -154,7 +155,7 @@ func findLastOffset(afs *afero.Afero, blockFileName FileName) (int64, error) {
 }
 
 func fastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace with index
-	var offsetFound Offset = -1
+	var offsetFound Offset = math.MaxInt64
 	for {
 		if offsetFound == offset {
 			return nil

@@ -45,7 +45,7 @@ func NewIbsenGrpcServer(manager manager.LogManager) *IbsenGrpcServer {
 func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener) error {
 	var opts []grpc.ServerOption
 	opts = []grpc.ServerOption{
-		grpc.ConnectionTimeout(time.Second * 30),
+		grpc.ConnectionTimeout(time.Hour * 1),
 		grpc.MaxRecvMsgSize(math.MaxInt32),
 		grpc.MaxSendMsgSize(math.MaxInt32)}
 	if igs.UseTls {

@@ -89,9 +89,9 @@ func toMarshalledIndex(soi []byte, oneInEvery uint32) (Index, error) {
 			}
 			offset = offset + uint64(oneInEvery)
 			byteOffsetAccumulated = byteOffsetAccumulated + int64(byteOffset)
-			index.add(indexOffset{
+			index.add(IndexOffset{
 				Offset:     Offset(offset),
-				byteOffset: byteOffsetAccumulated,
+				ByteOffset: byteOffsetAccumulated,
 			})
 
 			numberPart = make([]byte, 0)
