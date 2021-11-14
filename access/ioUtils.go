@@ -15,15 +15,6 @@ import (
 
 const Separator = string(os.PathSeparator)
 
-func openFileForReadWrite(afs *afero.Afero, fileName string) (afero.File, error) {
-	f, err := afs.OpenFile(fileName,
-		os.O_CREATE|os.O_RDWR, 0700)
-	if err != nil {
-		return nil, errore.WrapWithContext(err)
-	}
-	return f, nil
-}
-
 func openFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	f, err := afs.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
@@ -57,7 +48,7 @@ func listFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([
 	}
 	names, err := file.Readdirnames(0)
 	for _, name := range names {
-		hasSuffix := strings.HasSuffix(name, "."+fileExtension)
+		hasSuffix := strings.HasSuffix(name, fileExtension)
 		if hasSuffix {
 			filenames = append(filenames, name)
 		}
@@ -71,8 +62,7 @@ func filesToBlocks(paths []string) ([]Block, error) {
 		_, file := filepath.Split(path)
 		ext := filepath.Ext(file)
 		fileNameStem := strings.TrimSuffix(file, ext)
-		blockMod := strings.Split(fileNameStem, "_")
-		mod, err := strconv.ParseUint(blockMod[0], 10, 64)
+		mod, err := strconv.ParseUint(fileNameStem, 10, 64)
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}

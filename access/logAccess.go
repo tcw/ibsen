@@ -33,7 +33,7 @@ func (la ReadWriteLogAccess) ListTopics() ([]Topic, error) {
 }
 
 func (la ReadWriteLogAccess) CreateTopic(topic Topic) error {
-	err := la.Afs.Mkdir(string(topic), 640)
+	err := la.Afs.Mkdir(la.RootPath+Sep+string(topic), 640)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -55,7 +55,7 @@ func (la ReadWriteLogAccess) Write(fileName FileName, entries Entries, fromOffse
 }
 
 func (la ReadWriteLogAccess) ReadTopicLogBlocks(topic Topic) (Blocks, error) {
-	directory, err := listFilesInDirectory(la.Afs, la.RootPath, string(topic))
+	directory, err := listFilesInDirectory(la.Afs, la.RootPath+Sep+string(topic), ".log")
 	if err != nil {
 		return Blocks{}, errore.WrapWithContext(err)
 	}
