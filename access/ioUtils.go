@@ -13,8 +13,6 @@ import (
 	"strings"
 )
 
-const Separator = string(os.PathSeparator)
-
 func openFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	f, err := afs.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
@@ -23,7 +21,7 @@ func openFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	return f, nil
 }
 
-func openFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
+func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	exists, err := afs.Exists(fileName)
 	if err != nil {
 		return nil, errore.NewWithContext(fmt.Sprintf("Failes checking if file %s exist", fileName))
@@ -41,7 +39,7 @@ func openFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 
 func listFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([]string, error) {
 	var filenames []string
-	file, err := openFileForRead(afs, dir)
+	file, err := OpenFileForRead(afs, dir)
 	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
@@ -73,7 +71,7 @@ func filesToBlocks(paths []string) ([]Block, error) {
 
 func listAllTopics(afs *afero.Afero, dir string) ([]Topic, error) {
 	var filenames []Topic
-	file, err := openFileForRead(afs, string(dir))
+	file, err := OpenFileForRead(afs, string(dir))
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
@@ -112,7 +110,7 @@ func blockSize(asf *afero.Afero, fileName string) (int64, error) {
 
 func findLastOffset(afs *afero.Afero, blockFileName FileName) (int64, error) {
 	var offsetFound int64 = 0
-	file, err := openFileForRead(afs, string(blockFileName))
+	file, err := OpenFileForRead(afs, string(blockFileName))
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}

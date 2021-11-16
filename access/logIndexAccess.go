@@ -55,7 +55,7 @@ func (r ReadWriteLogIndexAccess) Read(logfile FileName) (Index, error) {
 	if err != nil {
 		return Index{}, errore.WrapWithContext(err)
 	}
-	return toMarshalledIndex(index, densityToOneInEvery(r.IndexDensity))
+	return toMarshalledIndex(index)
 }
 
 func (r ReadWriteLogIndexAccess) ReadTopicIndexBlocks(topic Topic) (Blocks, error) {
@@ -63,7 +63,7 @@ func (r ReadWriteLogIndexAccess) ReadTopicIndexBlocks(topic Topic) (Blocks, erro
 }
 
 func loadIndex(afs *afero.Afero, indexFileName string) ([]byte, error) {
-	file, err := openFileForRead(afs, indexFileName)
+	file, err := OpenFileForRead(afs, indexFileName)
 	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
@@ -75,24 +75,28 @@ func loadIndex(afs *afero.Afero, indexFileName string) ([]byte, error) {
 	return bytes, nil
 }
 
-func toMarshalledIndex(soi []byte, oneInEvery uint32) (Index, error) {
+func toMarshalledIndex(soi []byte) (Index, error) {
 	var numberPart []byte
 	var offset uint64
-	var byteOffsetAccumulated int64
 	var index = Index{}
+	isOffset := true
 	for _, byteValue := range soi {
 		numberPart = append(numberPart, byteValue)
 		if !isLittleEndianMSBSet(byteValue) {
-			byteOffset, n := protowire.ConsumeVarint(numberPart)
+			value, n := protowire.ConsumeVarint(numberPart)
 			if n < 0 {
 				return Index{}, errore.NewWithContext("Vararg returned negative numberPart, indicating a parsing error")
 			}
-			offset = offset + uint64(oneInEvery)
-			byteOffsetAccumulated = byteOffsetAccumulated + int64(byteOffset)
-			index.add(IndexOffset{
-				Offset:     Offset(offset),
-				ByteOffset: byteOffsetAccumulated,
-			})
+			if isOffset {
+				offset = value
+				isOffset = false
+			} else {
+				index.add(IndexOffset{
+					Offset:     Offset(offset),
+					ByteOffset: int64(value),
+				})
+				isOffset = true
+			}
 
 			numberPart = make([]byte, 0)
 		}
@@ -125,41 +129,44 @@ func saveIndex(afs *afero.Afero, indexFileName FileName, index []byte) error {
 	return nil
 }
 
-//Todo: add header that contains density
 func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, oneEntryForEvery uint32) ([]byte, error) {
-	file, err := openFileForRead(afs, string(logFile))
+	file, err := OpenFileForRead(afs, string(logFile))
 	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
 	var index []byte
-	var currentByteOffset int64 = 0
-	var lastOffset int64 = 0
-	var offset uint64 = 0
+	var byteOffset int64 = 0
 	if logfileByteOffset > 0 {
-		currentByteOffset, err = file.Seek(logfileByteOffset, io.SeekStart)
+		byteOffset, err = file.Seek(logfileByteOffset, io.SeekStart)
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
 	}
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
-	head := make([]byte, 12)
+	bytesCrc := make([]byte, 4)
+	isFirst := true
 	for {
-		headSize, err := io.ReadFull(reader, head)
+		offsetSize, err := io.ReadFull(reader, bytes)
 		if err == io.EOF {
 			return index, nil
 		}
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		currentByteOffset = currentByteOffset + int64(headSize)
-
+		offset := littleEndianToUint64(bytes)
+		crcSize, err := io.ReadFull(reader, bytesCrc)
+		if err == io.EOF {
+			return index, nil
+		}
+		if err != nil {
+			return nil, errore.WrapWithContext(err)
+		}
 		byteSize, err := io.ReadFull(reader, bytes)
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		currentByteOffset = currentByteOffset + int64(byteSize)
 		size := littleEndianToUint64(bytes)
 
 		entry := make([]byte, size)
@@ -167,17 +174,18 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		currentByteOffset = currentByteOffset + int64(entrySize)
-		if offset%uint64(oneEntryForEvery) == 0 {
-			element := indexElement(lastOffset, currentByteOffset)
-			index = append(index, element...)
-			lastOffset = currentByteOffset
+		byteOffset = byteOffset + int64(offsetSize+crcSize+byteSize+entrySize)
+		if !isFirst && offset%uint64(oneEntryForEvery) == 0 {
+			offsetVarInt := toVarInt(int64(offset))
+			byteOffsetVarInt := toVarInt(byteOffset)
+			index = append(index, offsetVarInt...)
+			index = append(index, byteOffsetVarInt...)
 		}
-		offset = offset + 1
+		isFirst = false
 	}
 }
 
-func indexElement(lastByteOffset int64, currentByteOffset int64) []byte {
+func toVarInt(byteOffset int64) []byte {
 	var bytes []byte
-	return protowire.AppendVarint(bytes, uint64(currentByteOffset-lastByteOffset))
+	return protowire.AppendVarint(bytes, uint64(byteOffset))
 }

@@ -1,29 +1,14 @@
-package access
+package test
 
 import (
-	"github.com/spf13/afero"
-	"log"
+	"github.com/tcw/ibsen/access"
 	"sync"
 	"testing"
 )
 
-const rootPath = "/tmp/data"
-
-var afs *afero.Afero
-var logAccess LogAccess
-
-func setUp() {
-	var fs = afero.NewMemMapFs()
-	afs = &afero.Afero{Fs: fs}
-	logAccess = ReadWriteLogAccess{
-		Afs:      afs,
-		RootPath: rootPath,
-	}
-}
-
 func TestCreateAndListTopic(t *testing.T) {
 	setUp()
-	testTopic := Topic("cars")
+	testTopic := access.Topic("cars")
 	err := logAccess.CreateTopic(testTopic)
 	if err != nil {
 		t.Error(err)
@@ -39,12 +24,12 @@ func TestCreateAndListTopic(t *testing.T) {
 
 func TestWriteToTopic(t *testing.T) {
 	setUp()
-	var blockList []Block
+	var blockList []access.Block
 	blockList = append(blockList, 0)
-	blocks := Blocks{BlockList: blockList}
-	testTopic := Topic("cars")
+	blocks := access.Blocks{BlockList: blockList}
+	testTopic := access.Topic("cars")
 
-	entry := createEntry()
+	entry := createEntry(2)
 	fileName := blocks.Head().LogFileName(rootPath, testTopic)
 	offset, bytes, err := logAccess.Write(fileName, entry, 0)
 	if err != nil {
@@ -70,10 +55,10 @@ func TestWriteToTopic(t *testing.T) {
 		t.Fail()
 		t.Logf("expected  %d actual %d", 0, logBlocks.Head())
 	}
-	logChan := make(chan *[]LogEntry)
+	logChan := make(chan *[]access.LogEntry)
 	var wg sync.WaitGroup
 	go readVerification(t, logChan, &wg)
-	readOffset, err := logAccess.ReadLog(logBlocks.Head().LogFileName(rootPath, testTopic), ReadParams{
+	readOffset, err := logAccess.ReadLog(logBlocks.Head().LogFileName(rootPath, testTopic), access.ReadParams{
 		Topic:     testTopic,
 		Offset:    0,
 		BatchSize: 10,
@@ -86,26 +71,8 @@ func TestWriteToTopic(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if readOffset != Offset(1) {
+	if readOffset != access.Offset(1) {
 		t.Fail()
-		t.Logf("expected %d actual %d", Offset(1), readOffset)
+		t.Logf("expected %d actual %d", access.Offset(1), readOffset)
 	}
-}
-
-func readVerification(t *testing.T, logChan chan *[]LogEntry, wg *sync.WaitGroup) {
-	entryBatch := <-logChan
-	entries := *entryBatch
-	if entries[0].Offset != 0 {
-		t.Fail()
-	}
-	wg.Done()
-	log.Println("2")
-}
-
-func createEntry() Entries {
-	bytes := [][]byte{
-		[]byte("hello3"),
-		[]byte("hello4"),
-	}
-	return &bytes
 }

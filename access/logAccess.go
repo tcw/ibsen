@@ -66,7 +66,7 @@ func (la ReadWriteLogAccess) ReadTopicLogBlocks(topic Topic) (Blocks, error) {
 }
 
 func (la ReadWriteLogAccess) ReadLog(logFileName FileName, readBatchParam ReadParams, byteOffset int64) (Offset, error) {
-	logFile, err := openFileForRead(la.Afs, string(logFileName))
+	logFile, err := OpenFileForRead(la.Afs, string(logFileName))
 	defer logFile.Close()
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
