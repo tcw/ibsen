@@ -14,7 +14,6 @@ const rootPath = "/tmp/data"
 
 var afs *afero.Afero
 var logAccess access.LogAccess
-var logIndexAccess access.LogIndexAccess
 
 func setUp() {
 	var fs = afero.NewMemMapFs()
@@ -22,11 +21,6 @@ func setUp() {
 	logAccess = access.ReadWriteLogAccess{
 		Afs:      afs,
 		RootPath: rootPath,
-	}
-	logIndexAccess = access.ReadWriteLogIndexAccess{
-		Afs:          afs,
-		RootPath:     rootPath,
-		IndexDensity: 0.1,
 	}
 }
 

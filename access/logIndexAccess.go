@@ -174,13 +174,13 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		byteOffset = byteOffset + int64(offsetSize+crcSize+byteSize+entrySize)
 		if !isFirst && offset%uint64(oneEntryForEvery) == 0 {
 			offsetVarInt := toVarInt(int64(offset))
 			byteOffsetVarInt := toVarInt(byteOffset)
 			index = append(index, offsetVarInt...)
 			index = append(index, byteOffsetVarInt...)
 		}
+		byteOffset = byteOffset + int64(offsetSize+crcSize+byteSize+entrySize)
 		isFirst = false
 	}
 }

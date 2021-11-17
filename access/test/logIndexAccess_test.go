@@ -8,6 +8,11 @@ import (
 
 func Test(t *testing.T) {
 	setUp()
+	logIndexAccess := access.ReadWriteLogIndexAccess{
+		Afs:          afs,
+		RootPath:     rootPath,
+		IndexDensity: 0.01,
+	}
 	var blockList []access.Block
 	blockList = append(blockList, 0)
 	blocks := access.Blocks{BlockList: blockList}
@@ -34,9 +39,9 @@ func Test(t *testing.T) {
 		}
 		offsetFromLog := access.Offset(binary.LittleEndian.Uint64(offsetBytes))
 		offsetFromIndex := indexOffset.Offset
-		if offsetFromLog-1 != offsetFromIndex {
+		if offsetFromLog != offsetFromIndex {
 			t.Fail()
-			t.Logf("expected %d actual %d", offsetFromIndex, offsetFromLog-1)
+			t.Logf("expected %d actual %d", offsetFromIndex, offsetFromLog)
 		}
 	}
 }
