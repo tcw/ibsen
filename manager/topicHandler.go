@@ -58,6 +58,9 @@ func (t *TopicHandler) Write(entries access.Entries) (uint32, error) {
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
+	if t.logBlocks.IsEmpty() {
+		t.logBlocks.AddBlock(0)
+	}
 	offset, bytes, err := t.logAccess.Write(t.logBlocks.Head().LogFileName(t.rootPath, t.topic), entries, t.logOffset)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
@@ -82,6 +85,13 @@ func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {
 	var lastReadOffset access.Offset = 0
 	for _, block := range blocks {
 		logFileName := block.LogFileName(t.rootPath, t.topic)
+		exists, err := t.afs.Exists(string(logFileName))
+		if err != nil {
+			return 0, errore.WrapWithContext(err)
+		}
+		if !exists {
+			return lastReadOffset, nil
+		}
 		lastReadOffset, err = t.logAccess.ReadLog(logFileName, params, 0)
 		if err != nil {
 			return 0, errore.WrapWithContext(err)

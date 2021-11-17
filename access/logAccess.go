@@ -103,14 +103,16 @@ func readFile(file afero.File, logChan chan *[]LogEntry,
 	for {
 		if logEntries != nil && uint32(len(logEntries))%batchSize == 0 {
 			wg.Add(1)
-			logChan <- &logEntries
+			sendingEntries := logEntries
+			logChan <- &sendingEntries
 			logEntries = nil
 		}
 		_, err := io.ReadFull(reader, bytes)
 		if err == io.EOF {
-			if logEntries != nil {
+			if logEntries != nil && len(logEntries) > 0 {
 				wg.Add(1)
-				logChan <- &logEntries
+				sendingEntries := logEntries
+				logChan <- &sendingEntries
 			}
 			return lastOffset, nil
 		}

@@ -38,7 +38,7 @@ func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 }
 
 func listFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([]string, error) {
-	var filenames []string
+	filenames := make([]string, 0)
 	file, err := OpenFileForRead(afs, dir)
 	defer file.Close()
 	if err != nil {
@@ -55,7 +55,7 @@ func listFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([
 }
 
 func filesToBlocks(paths []string) ([]Block, error) {
-	var blocks []Block
+	blocks := make([]Block, 0)
 	for _, path := range paths {
 		_, file := filepath.Split(path)
 		ext := filepath.Ext(file)
