@@ -59,7 +59,14 @@ func (r ReadWriteLogIndexAccess) Read(logfile FileName) (Index, error) {
 }
 
 func (r ReadWriteLogIndexAccess) ReadTopicIndexBlocks(topic Topic) (Blocks, error) {
-	panic("implement me")
+	directory, err := listFilesInDirectory(r.Afs, r.RootPath+Sep+string(topic), ".idx")
+	if err != nil {
+		return Blocks{}, errore.WrapWithContext(err)
+	}
+	blocks, err := filesToBlocks(directory)
+	domainBlocks := Blocks{BlockList: blocks}
+	domainBlocks.Sort()
+	return domainBlocks, nil
 }
 
 func loadIndex(afs *afero.Afero, indexFileName string) ([]byte, error) {
@@ -146,7 +153,6 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
 	bytesCrc := make([]byte, 4)
-	isFirst := true
 	for {
 		offsetSize, err := io.ReadFull(reader, bytes)
 		if err == io.EOF {
@@ -174,14 +180,13 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		if !isFirst && offset%uint64(oneEntryForEvery) == 0 {
+		if offset%uint64(oneEntryForEvery) == 0 {
 			offsetVarInt := toVarInt(int64(offset))
 			byteOffsetVarInt := toVarInt(byteOffset)
 			index = append(index, offsetVarInt...)
 			index = append(index, byteOffsetVarInt...)
 		}
 		byteOffset = byteOffset + int64(offsetSize+crcSize+byteSize+entrySize)
-		isFirst = false
 	}
 }
 

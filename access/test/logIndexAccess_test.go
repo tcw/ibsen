@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func Test(t *testing.T) {
+func TestWriteIndexFile(t *testing.T) {
 	setUp()
 	logIndexAccess := access.ReadWriteLogIndexAccess{
 		Afs:          afs,
@@ -32,6 +32,57 @@ func Test(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
+	checkIndexCorrectness(t, index, logFileName)
+	indexBlocks, err := logIndexAccess.ReadTopicIndexBlocks(testTopic)
+	if err != nil {
+		t.Error(err)
+	}
+	if indexBlocks.BlockList[0] != 0 {
+		t.Fail()
+		t.Logf("expected %d actural %d", 0, indexBlocks.BlockList[0])
+	}
+}
+
+func TestWriteIndexFileFromOffset(t *testing.T) {
+	setUp()
+	logIndexAccess := access.ReadWriteLogIndexAccess{
+		Afs:          afs,
+		RootPath:     rootPath,
+		IndexDensity: 0.1,
+	}
+	var blockList []access.Block
+	blockList = append(blockList, 0)
+	blocks := access.Blocks{BlockList: blockList}
+	testTopic := access.Topic("cars")
+
+	entry := createEntry(1000)
+	logFileName := blocks.Head().LogFileName(rootPath, testTopic)
+	offset, byteOffset, err := logAccess.Write(logFileName, entry, 0)
+	if err != nil {
+		t.Error(err)
+	}
+	_, err = logIndexAccess.WriteFile(logFileName)
+	if err != nil {
+		t.Error(err)
+	}
+	_, _, err = logAccess.Write(logFileName, entry, offset)
+	if err != nil {
+		t.Error(err)
+	}
+	_, err = logIndexAccess.WriteFromOffset(logFileName, int64(byteOffset))
+	if err != nil {
+		t.Error(err)
+	}
+
+	index, err := logIndexAccess.Read(logFileName)
+	if err != nil {
+		t.Error(err)
+	}
+	checkIndexCorrectness(t, index, logFileName)
+
+}
+
+func checkIndexCorrectness(t *testing.T, index access.Index, logFileName access.FileName) {
 	for _, indexOffset := range index.IndexOffsets {
 		offsetBytes, err := readBytesFromByteOffset(afs, string(logFileName), indexOffset.ByteOffset, 8)
 		if err != nil {
