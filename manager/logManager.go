@@ -33,9 +33,9 @@ func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, rootPath st
 	if err != nil {
 		return LogTopicsManager{}, errore.WrapWithContext(err)
 	}
-	var handlers map[access.Topic]*TopicHandler
+	handlers := make(map[access.Topic]*TopicHandler)
 	for _, topic := range topics {
-		handler := newTopicHandler(afs, rootPath, topic, maxBlockSize)
+		handler := NewTopicHandler(afs, rootPath, topic, maxBlockSize)
 		handlers[topic] = &handler
 	}
 	return LogTopicsManager{
@@ -75,6 +75,6 @@ func (l LogTopicsManager) Read(params access.ReadParams) error {
 }
 
 func (l *LogTopicsManager) addTopic(topic access.Topic) {
-	handler := newTopicHandler(l.Afs, l.RootPath, topic, l.MaxBlockSize)
+	handler := NewTopicHandler(l.Afs, l.RootPath, topic, l.MaxBlockSize)
 	l.Topics[topic] = &handler
 }

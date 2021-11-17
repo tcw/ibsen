@@ -28,16 +28,14 @@ type TopicHandler struct {
 	loaded         bool
 }
 
-func newTopicHandler(afs *afero.Afero, rootPath string, topic access.Topic, maxBlockSize uint64) TopicHandler {
+func NewTopicHandler(afs *afero.Afero, rootPath string, topic access.Topic, maxBlockSize uint64) TopicHandler {
 	return TopicHandler{
 		afs:          afs,
 		rootPath:     rootPath,
 		maxBlockSize: access.BlockSizeInBytes(maxBlockSize),
 		topic:        topic,
-		logBlocks:    access.Blocks{},
 		logOffset:    0,
 		logMutex:     sync.Mutex{},
-		indexBlocks:  access.Blocks{},
 		indexOffset:  0,
 		indexMutex:   0,
 		logAccess: access.ReadWriteLogAccess{
@@ -109,6 +107,17 @@ func (t *TopicHandler) Load() error {
 }
 
 func (t *TopicHandler) lazyLoad() error {
+	topicPath := t.rootPath + access.Sep + string(t.topic)
+	exists, err := t.afs.Exists(topicPath)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	if !exists {
+		err = t.afs.Mkdir(topicPath, 640)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+	}
 	blocks, err := t.logAccess.ReadTopicLogBlocks(t.topic)
 	if err != nil {
 		return errore.WrapWithContext(err)
@@ -122,7 +131,7 @@ func (t *TopicHandler) lazyLoad() error {
 	return nil
 }
 
-func (t TopicHandler) indexScheduler() {
+func (t *TopicHandler) indexScheduler() {
 	for {
 		err := t.updateIndex()
 		if err != nil {
