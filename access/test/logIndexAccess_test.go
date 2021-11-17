@@ -13,7 +13,7 @@ func Test(t *testing.T) {
 	blocks := access.Blocks{BlockList: blockList}
 	testTopic := access.Topic("cars")
 
-	entry := createEntry(100)
+	entry := createEntry(1000)
 	logFileName := blocks.Head().LogFileName(rootPath, testTopic)
 	_, _, err := logAccess.Write(logFileName, entry, 0)
 	if err != nil {
@@ -27,14 +27,16 @@ func Test(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	offsetBytes, err := readBytesFromByteOffset(afs, string(logFileName), index.Head().ByteOffset, 8)
-	if err != nil {
-		t.Error(err)
-	}
-	offsetFromLog := access.Offset(binary.LittleEndian.Uint64(offsetBytes))
-	offsetFromIndex := index.Head().Offset
-	if offsetFromLog-1 != offsetFromIndex {
-		t.Fail()
-		t.Logf("expected %d actual %d", offsetFromIndex, offsetFromLog-1)
+	for _, indexOffset := range index.IndexOffsets {
+		offsetBytes, err := readBytesFromByteOffset(afs, string(logFileName), indexOffset.ByteOffset, 8)
+		if err != nil {
+			t.Error(err)
+		}
+		offsetFromLog := access.Offset(binary.LittleEndian.Uint64(offsetBytes))
+		offsetFromIndex := indexOffset.Offset
+		if offsetFromLog-1 != offsetFromIndex {
+			t.Fail()
+			t.Logf("expected %d actual %d", offsetFromIndex, offsetFromLog-1)
+		}
 	}
 }
