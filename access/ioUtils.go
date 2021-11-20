@@ -1,6 +1,7 @@
 package access
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"github.com/spf13/afero"
@@ -171,6 +172,48 @@ func fastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
+	}
+}
+
+func FindByteOffsetFromOffset(afs *afero.Afero, fileName FileName, startAtByteOffset int64, offset Offset) (int64, error) { //Todo: replace with index
+	file, err := OpenFileForRead(afs, string(fileName))
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	reader := bufio.NewReader(file)
+	bytes := make([]byte, 8)
+	checksum := make([]byte, 4)
+
+	var offsetInFile int64 = math.MaxInt64
+	var byteOffset = startAtByteOffset
+	for {
+		offsetBytes, err := io.ReadFull(reader, bytes)
+		if err == io.EOF {
+			return 0, err
+		}
+		if err != nil {
+			return 0, errore.WrapWithContext(err)
+		}
+		if Offset(offsetInFile) == offset {
+			return byteOffset, nil
+		}
+		if err != nil {
+			return 0, errore.WrapWithContext(err)
+		}
+		offsetInFile = int64(littleEndianToUint64(bytes))
+
+		checksumBytes, err := io.ReadFull(reader, checksum)
+		if err != nil {
+			return 0, errore.WrapWithContext(err)
+		}
+		sizeBytes, err := io.ReadFull(reader, bytes)
+		if err != nil {
+			return 0, errore.WrapWithContext(err)
+		}
+		entrySize := littleEndianToUint64(bytes)
+		_, err = (file).Seek(int64(entrySize), 1)
+		byteOffset = byteOffset + int64(offsetBytes) + int64(checksumBytes) + int64(sizeBytes) + int64(entrySize)
 	}
 }
 

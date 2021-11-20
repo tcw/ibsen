@@ -17,7 +17,6 @@ func TestTopicHandlerLoading(t *testing.T) {
 	}
 }
 
-//Todo: causes holes in block sequence
 func TestTopicHandlerWriteRead(t *testing.T) {
 	setUp()
 	const tenMB = 1024 * 1024
@@ -27,7 +26,7 @@ func TestTopicHandlerWriteRead(t *testing.T) {
 		t.Error(err)
 	}
 	for i := 0; i < 100; i++ {
-		_, err = handler.Write(createEntry(10000))
+		_, err = handler.Write(createEntry(1000))
 		if err != nil {
 			t.Error(err)
 		}
@@ -38,7 +37,7 @@ func TestTopicHandlerWriteRead(t *testing.T) {
 	_, err = handler.Read(access.ReadParams{
 		Topic:     "cars",
 		Offset:    0,
-		BatchSize: 1000,
+		BatchSize: 10,
 		LogChan:   logChan,
 		Wg:        &wg,
 	})

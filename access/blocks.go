@@ -1,12 +1,16 @@
 package access
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 )
 
 type Block uint64
 type BlockIndex uint32
+
+var BlockNotFound = errors.New("block not found")
+var IndexEntryNotFound = errors.New("index entry not found")
 
 func (b Block) LogFileName(rootPath string, topic Topic) FileName {
 	return FileName(rootPath + Sep + string(topic) + Sep + fmt.Sprintf("%020d.log", b))
@@ -43,7 +47,7 @@ func (bs *Blocks) Sort() {
 	sort.Slice(bs.BlockList, func(i, j int) bool { return bs.BlockList[i] < bs.BlockList[j] })
 }
 
-func (bs *Blocks) Diff(blocks Blocks) Blocks {
+func (bs Blocks) Diff(blocks Blocks) Blocks {
 	if blocks.IsEmpty() {
 		return Blocks{BlockList: []Block{}}
 	}
@@ -55,17 +59,32 @@ func (bs *Blocks) Diff(blocks Blocks) Blocks {
 
 }
 
-func (bs Blocks) GetBlocks(offset Offset) []Block {
+func (bs Blocks) Contains(offset Offset) (Block, error) {
 	if bs.Size() == 0 {
-		return []Block{}
+		return 0, BlockNotFound
 	}
 	if bs.Size() == 1 {
-		return bs.BlockList[0:]
+		return bs.BlockList[0], nil
 	}
 	for i := bs.Size() - 1; i >= 0; i-- {
-		if offset > Offset(bs.BlockList[i]) {
-			return bs.BlockList[i:]
+		if offset >= Offset(bs.BlockList[i]) {
+			return bs.BlockList[i], nil
 		}
 	}
-	return []Block{}
+	return 0, BlockNotFound
+}
+
+func (bs Blocks) GetBlocksIncludingAndAfter(offset Offset) ([]Block, error) {
+	if bs.Size() == 0 {
+		return []Block{}, BlockNotFound
+	}
+	if bs.Size() == 1 {
+		return bs.BlockList[0:], nil
+	}
+	for i := bs.Size() - 1; i >= 0; i-- {
+		if offset >= Offset(bs.BlockList[i]) {
+			return bs.BlockList[i:], nil
+		}
+	}
+	return []Block{}, BlockNotFound
 }

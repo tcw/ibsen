@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
+	"github.com/tcw/ibsen/manager"
 	"io"
 	"log"
+	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 const rootPath = "/tmp/data"
@@ -24,13 +27,24 @@ func setUp() {
 }
 
 func readVerification(t *testing.T, logChan chan *[]access.LogEntry, wg *sync.WaitGroup) {
+	counter := 0
 	for true {
 		entryBatch := <-logChan
+		counter = counter + 1
 		entries := *entryBatch
-		log.Println(len(entries))
+		log.Println(strconv.Itoa(counter) + " " + strconv.FormatUint(entries[0].Offset, 10))
 		wg.Done()
 	}
+}
 
+func writeEvery100ms(handler *manager.TopicHandler) {
+	for true {
+		_, err := handler.Write(createEntry(1000))
+		if err != nil {
+			log.Fatal(err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func createEntry(entries int) access.Entries {
