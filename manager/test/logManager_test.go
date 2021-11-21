@@ -10,17 +10,17 @@ import (
 
 func TestLogT(t *testing.T) {
 	setUp()
-	const tenMB = 1024 * 1024 * 10
-	topicsManager, err := manager.NewLogTopicsManager(afs, 10*time.Second, rootPath, tenMB)
+	const tenMB = 1024 * 1024
+	topicsManager, err := manager.NewLogTopicsManager(afs, 20*time.Second, 100*time.Millisecond, rootPath, tenMB)
 	if err != nil {
 		t.Error(err)
 	}
 	const testTopic = "cars"
-	_, err = topicsManager.Write(testTopic, createEntry(1000))
+	_, err = topicsManager.Write(testTopic, createEntry(10000))
 	if err != nil {
 		t.Error(err)
 	}
-	go writeEvery100ms(topicsManager.Topics[testTopic])
+	go writeEvery100ms(topicsManager.Topics[testTopic], 10*time.Second, 100*time.Millisecond)
 
 	logChan := make(chan *[]access.LogEntry)
 	var wg sync.WaitGroup
@@ -28,7 +28,7 @@ func TestLogT(t *testing.T) {
 	err = topicsManager.Read(access.ReadParams{
 		Topic:     testTopic,
 		Offset:    0,
-		BatchSize: 10,
+		BatchSize: 1000,
 		LogChan:   logChan,
 		Wg:        &wg,
 	})
@@ -36,5 +36,4 @@ func TestLogT(t *testing.T) {
 		t.Error(err)
 	}
 	wg.Wait()
-
 }

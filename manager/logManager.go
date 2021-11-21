@@ -17,14 +17,15 @@ type LogManager interface {
 var _ LogManager = LogTopicsManager{}
 
 type LogTopicsManager struct {
-	Afs          *afero.Afero
-	TTL          time.Duration
-	MaxBlockSize uint64
-	RootPath     string
-	Topics       map[access.Topic]*TopicHandler
+	Afs              *afero.Afero
+	TTL              time.Duration
+	CheckForNewEvery time.Duration
+	MaxBlockSize     uint64
+	RootPath         string
+	Topics           map[access.Topic]*TopicHandler
 }
 
-func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, rootPath string, maxBlockSize uint64) (LogTopicsManager, error) {
+func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, checkForNewEvery time.Duration, rootPath string, maxBlockSize uint64) (LogTopicsManager, error) {
 	logAccess := access.ReadWriteLogAccess{
 		Afs:      afs,
 		RootPath: rootPath,
@@ -39,11 +40,12 @@ func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, rootPath st
 		handlers[topic] = &handler
 	}
 	return LogTopicsManager{
-		Afs:          afs,
-		TTL:          timeToLive,
-		MaxBlockSize: maxBlockSize,
-		RootPath:     rootPath,
-		Topics:       handlers,
+		Afs:              afs,
+		TTL:              timeToLive,
+		CheckForNewEvery: checkForNewEvery,
+		MaxBlockSize:     maxBlockSize,
+		RootPath:         rootPath,
+		Topics:           handlers,
 	}, nil
 }
 
@@ -66,7 +68,7 @@ func (l LogTopicsManager) Read(params access.ReadParams) error {
 	for time.Until(readTTL) > 0 {
 		lastWrittenOffset := (l.Topics[params.Topic].logOffset) - 1
 		if lastWrittenOffset == offset {
-			time.Sleep(1 * time.Second)
+			time.Sleep(l.CheckForNewEvery)
 			continue
 		}
 		newParams := params

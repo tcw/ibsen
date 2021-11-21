@@ -55,6 +55,15 @@ func listFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([
 	return filenames, nil
 }
 
+func ListAllFilesInTopic(afs *afero.Afero, rootPath string, topic Topic) ([]os.FileInfo, error) {
+	dir, err := OpenFileForRead(afs, rootPath+Sep+string(topic))
+	if err != nil {
+		return nil, errore.WrapWithContext(err)
+	}
+	defer dir.Close()
+	return dir.Readdir(0)
+}
+
 func filesToBlocks(paths []string) ([]Block, error) {
 	blocks := make([]Block, 0)
 	for _, path := range paths {

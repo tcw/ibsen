@@ -2,6 +2,7 @@ package manager
 
 import (
 	"errors"
+	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/errore"
@@ -72,6 +73,7 @@ func (t *TopicHandler) Write(entries access.Entries) (uint32, error) {
 	t.headBlockSize = t.headBlockSize + bytes
 	if t.headBlockSize > t.maxBlockSize {
 		t.logBlocks.AddBlock(access.Block(t.logOffset))
+		t.headBlockSize = 0
 	}
 	go t.updateIndex()
 	return uint32(bytes), nil
@@ -79,6 +81,9 @@ func (t *TopicHandler) Write(entries access.Entries) (uint32, error) {
 
 func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {
 	err := t.Load()
+	if params.Offset == t.logOffset-1 {
+		return params.Offset, nil
+	}
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
@@ -131,6 +136,39 @@ func (t *TopicHandler) Load() error {
 	return nil
 }
 
+func (t *TopicHandler) Status() (string, error) {
+	logBlocks := t.logBlocks
+	indexBlocks := t.indexBlocks
+	logOffset := t.logOffset
+	indexOffset := t.indexOffset
+	topic := t.topic
+	inTopic, err := access.ListAllFilesInTopic(t.afs, t.rootPath, t.topic)
+	if err != nil {
+		return "", errore.WrapWithContext(err)
+	}
+	report := "\n"
+	report = report + fmt.Sprintf("----------------------------------------------------\n")
+	report = report + fmt.Sprintf("Topic: %s\n", topic)
+	report = report + fmt.Sprintf("----------------------------------------------------\n")
+	report = report + fmt.Sprintf("Log Offset: %d\n", logOffset)
+	report = report + fmt.Sprintf("----------------------------------------------------\n")
+	report = report + fmt.Sprintf("Index Log Offset: %d\n", indexOffset)
+	report = report + fmt.Sprintf("----------------------------------------------------\n")
+	report = report + fmt.Sprintf("Log Blocks:\n")
+	report = report + logBlocks.ToString()
+	report = report + fmt.Sprintf("----------------------------------------------------\n")
+	report = report + fmt.Sprintf("Index Log Blocks:\n")
+	report = report + indexBlocks.ToString()
+	report = report + fmt.Sprintf("----------------------------------------------------\n")
+	report = report + fmt.Sprintf("On Disk: \n")
+	for _, info := range inTopic {
+		report = report + fmt.Sprintf("File name: %s Size:%d\n", info.Name(), info.Size())
+	}
+	report = report + fmt.Sprintf("----------------------------------------------------\n")
+
+	return report, nil
+}
+
 func (t *TopicHandler) lazyLoad() error {
 	topicPath := t.rootPath + access.Sep + string(t.topic)
 	exists, err := t.afs.Exists(topicPath)
@@ -166,7 +204,6 @@ func (t *TopicHandler) indexScheduler() {
 	}
 }
 
-//Todo: doesn't work
 func (t *TopicHandler) updateIndex() error {
 	if !atomic.CompareAndSwapInt32(&t.indexMutex, 0, 1) {
 		return nil
@@ -175,25 +212,35 @@ func (t *TopicHandler) updateIndex() error {
 	if t.logBlocks.Size() == 0 {
 		return nil
 	}
-	head := t.indexBlocks.Head()
-	index, err := t.logIndexAccess.Read(head.IndexFileName(t.rootPath, t.topic))
-	if err != nil {
-		return errore.WrapWithContext(err)
-	}
-	indexOffset := index.Head()
-	if !indexOffset.IsEmpty() {
-		_, err = t.logIndexAccess.WriteFromOffset(head.IndexFileName(t.rootPath, t.topic), indexOffset.ByteOffset)
-		if err != nil {
-			return errore.WrapWithContext(err)
+	indexBlocks := *t.indexBlocks
+	//	indexHead := indexBlocks.Head()
+	//	index, err := t.logIndexAccess.Read(indexHead.IndexFileName(t.rootPath, t.topic))
+	//	if err != nil {
+	//		return errore.WrapWithContext(err)
+	//	}
+	//	indexOffset := index.Head()
+	blocksWithoutIndex := t.logBlocks.Diff(indexBlocks)
+	logTail, err := blocksWithoutIndex.Tail()
+	//	logHead := blocksWithoutIndex.Head()
+	if err != access.BlockNotFound {
+		for _, block := range logTail {
+			log.Printf("Writing to block %d", block)
+			_, err = t.logIndexAccess.WriteFile(block.LogFileName(t.rootPath, t.topic))
+			if err != nil {
+				return errore.WrapWithContext(err)
+			}
+			t.indexBlocks.AddBlock(block)
 		}
 	}
-	blocksWithoutIndex := t.logBlocks.Diff(*t.indexBlocks)
-	for _, block := range blocksWithoutIndex.BlockList {
-		_, err := t.logIndexAccess.WriteFile(block.IndexFileName(t.rootPath, t.topic))
+	/*
+		_, err = t.logIndexAccess.WriteFromOffset(logHead.LogFileName(t.rootPath, t.topic), indexOffset.ByteOffset)
+		if err == access.NoFile {
+			return nil
+		}
 		if err != nil {
 			return errore.WrapWithContext(err)
-		}
-	}
+		}*/
+
 	return nil
 }
 
@@ -206,7 +253,8 @@ func (t *TopicHandler) lookUpIndexedOffset(offset access.Offset) (int64, error) 
 		return 0, errore.WrapWithContext(err)
 	}
 	logFileName := block.LogFileName(t.rootPath, t.topic)
-	index, err := t.logIndexAccess.Read(logFileName)
+	indexFileName := block.IndexFileName(t.rootPath, t.topic)
+	index, err := t.logIndexAccess.Read(indexFileName)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}

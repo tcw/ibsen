@@ -2,6 +2,7 @@ package access
 
 import (
 	"bufio"
+	"errors"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -14,9 +15,11 @@ import (
 type LogIndexAccess interface {
 	WriteFromOffset(logfile FileName, logfileByteOffset int64) (Offset, error)
 	WriteFile(logfile FileName) (Offset, error)
-	Read(logfile FileName) (Index, error)
+	Read(indexLogFile FileName) (Index, error)
 	ReadTopicIndexBlocks(topic Topic) (Blocks, error)
 }
+
+var NoFile error = errors.New("no such file")
 
 var _ LogIndexAccess = ReadWriteLogIndexAccess{}
 
@@ -28,6 +31,9 @@ type ReadWriteLogIndexAccess struct {
 
 func (r ReadWriteLogIndexAccess) WriteFromOffset(logfile FileName, logfileByteOffset int64) (Offset, error) {
 	index, err := createIndex(r.Afs, logfile, logfileByteOffset, densityToOneInEvery(r.IndexDensity))
+	if err == NoFile {
+		return 0, err
+	}
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
@@ -40,6 +46,12 @@ func (r ReadWriteLogIndexAccess) WriteFromOffset(logfile FileName, logfileByteOf
 
 func (r ReadWriteLogIndexAccess) WriteFile(logfile FileName) (Offset, error) {
 	index, err := createIndex(r.Afs, logfile, 0, densityToOneInEvery(r.IndexDensity))
+	if err == NoFile {
+		return 0, err
+	}
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
@@ -50,8 +62,15 @@ func (r ReadWriteLogIndexAccess) WriteFile(logfile FileName) (Offset, error) {
 	return 0, nil
 }
 
-func (r ReadWriteLogIndexAccess) Read(logfile FileName) (Index, error) {
-	index, err := loadIndex(r.Afs, string(logFileToIndexFile(logfile)))
+func (r ReadWriteLogIndexAccess) Read(indexLogfile FileName) (Index, error) {
+	exists, err := r.Afs.Exists(string(indexLogfile))
+	if err != nil {
+		return Index{}, err
+	}
+	if !exists {
+		return Index{}, nil
+	}
+	index, err := loadIndex(r.Afs, string(indexLogfile))
 	if err != nil {
 		return Index{}, errore.WrapWithContext(err)
 	}
@@ -137,11 +156,18 @@ func saveIndex(afs *afero.Afero, indexFileName FileName, index []byte) error {
 }
 
 func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, oneEntryForEvery uint32) ([]byte, error) {
-	file, err := OpenFileForRead(afs, string(logFile))
-	defer file.Close()
+	exists, err := afs.Exists(string(logFile))
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
+	if !exists {
+		return nil, NoFile
+	}
+	file, err := OpenFileForRead(afs, string(logFile))
+	if err != nil {
+		return nil, errore.WrapWithContext(err)
+	}
+	defer file.Close()
 	var index []byte
 	var byteOffset int64 = 0
 	if logfileByteOffset > 0 {

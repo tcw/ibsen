@@ -43,20 +43,35 @@ func (bs Blocks) Size() int {
 	return len(bs.BlockList)
 }
 
+func (bs Blocks) ToString() string {
+	list := bs.BlockList
+	blocklist := ""
+	for i, val := range list {
+		blocklist = blocklist + fmt.Sprintf("%d -> %d\n", i, val)
+	}
+	return blocklist
+}
+
 func (bs *Blocks) Sort() {
 	sort.Slice(bs.BlockList, func(i, j int) bool { return bs.BlockList[i] < bs.BlockList[j] })
 }
 
 func (bs Blocks) Diff(blocks Blocks) Blocks {
 	if blocks.IsEmpty() {
-		return Blocks{BlockList: []Block{}}
+		return bs
 	}
 	if blocks.Size() == 1 {
 		return Blocks{BlockList: bs.BlockList[1:]}
 	}
 	blockList := bs.BlockList[len(blocks.BlockList)-1:]
 	return Blocks{BlockList: blockList}
+}
 
+func (bs Blocks) Tail() ([]Block, error) {
+	if bs.IsEmpty() || bs.Size() < 2 {
+		return []Block{}, BlockNotFound
+	}
+	return bs.BlockList[:bs.Size()-2], nil
 }
 
 func (bs Blocks) Contains(offset Offset) (Block, error) {

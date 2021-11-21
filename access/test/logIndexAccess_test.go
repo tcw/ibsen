@@ -28,7 +28,8 @@ func TestWriteIndexFile(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	index, err := logIndexAccess.Read(logFileName)
+	indexFileName := blocks.Head().IndexFileName(rootPath, testTopic)
+	index, err := logIndexAccess.Read(indexFileName)
 	if err != nil {
 		t.Error(err)
 	}
@@ -73,8 +74,8 @@ func TestWriteIndexFileFromOffset(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-
-	index, err := logIndexAccess.Read(logFileName)
+	indexFileName := blocks.Head().IndexFileName(rootPath, testTopic)
+	index, err := logIndexAccess.Read(indexFileName)
 	if err != nil {
 		t.Error(err)
 	}

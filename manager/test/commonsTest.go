@@ -37,13 +37,14 @@ func readVerification(t *testing.T, logChan chan *[]access.LogEntry, wg *sync.Wa
 	}
 }
 
-func writeEvery100ms(handler *manager.TopicHandler) {
-	for true {
+func writeEvery100ms(handler *manager.TopicHandler, total time.Duration, writeEvery time.Duration) {
+	readTTL := time.Now().Add(total)
+	for time.Until(readTTL) > 0 {
 		_, err := handler.Write(createEntry(1000))
 		if err != nil {
 			log.Fatal(err)
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(writeEvery)
 	}
 }
 
