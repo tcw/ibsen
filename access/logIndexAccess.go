@@ -13,8 +13,7 @@ import (
 )
 
 type LogIndexAccess interface {
-	WriteFromOffset(logfile FileName, logfileByteOffset int64) (Offset, error)
-	WriteFile(logfile FileName) (Offset, error)
+	Write(logfile FileName, logfileByteOffset int64) (Offset, error)
 	Read(indexLogFile FileName) (Index, error)
 	ReadTopicIndexBlocks(topic Topic) (Blocks, error)
 }
@@ -29,28 +28,10 @@ type ReadWriteLogIndexAccess struct {
 	IndexDensity float64
 }
 
-func (r ReadWriteLogIndexAccess) WriteFromOffset(logfile FileName, logfileByteOffset int64) (Offset, error) {
+func (r ReadWriteLogIndexAccess) Write(logfile FileName, logfileByteOffset int64) (Offset, error) {
 	index, err := createIndex(r.Afs, logfile, logfileByteOffset, densityToOneInEvery(r.IndexDensity))
 	if err == NoFile {
 		return 0, err
-	}
-	if err != nil {
-		return 0, errore.WrapWithContext(err)
-	}
-	err = saveIndex(r.Afs, logFileToIndexFile(logfile), index)
-	if err != nil {
-		return 0, errore.WrapWithContext(err)
-	}
-	return 0, nil
-}
-
-func (r ReadWriteLogIndexAccess) WriteFile(logfile FileName) (Offset, error) {
-	index, err := createIndex(r.Afs, logfile, 0, densityToOneInEvery(r.IndexDensity))
-	if err == NoFile {
-		return 0, err
-	}
-	if err != nil {
-		return 0, errore.WrapWithContext(err)
 	}
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
@@ -176,6 +157,7 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 			return nil, errore.WrapWithContext(err)
 		}
 	}
+	isFirst := true
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
 	bytesCrc := make([]byte, 4)
@@ -189,9 +171,6 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 		}
 		offset := littleEndianToUint64(bytes)
 		crcSize, err := io.ReadFull(reader, bytesCrc)
-		if err == io.EOF {
-			return index, nil
-		}
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
@@ -206,12 +185,13 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		if offset%uint64(oneEntryForEvery) == 0 {
+		if !isFirst && offset%uint64(oneEntryForEvery) == 0 {
 			offsetVarInt := toVarInt(int64(offset))
 			byteOffsetVarInt := toVarInt(byteOffset)
 			index = append(index, offsetVarInt...)
 			index = append(index, byteOffsetVarInt...)
 		}
+		isFirst = false
 		byteOffset = byteOffset + int64(offsetSize+crcSize+byteSize+entrySize)
 	}
 }

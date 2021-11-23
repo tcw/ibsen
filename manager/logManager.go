@@ -60,13 +60,13 @@ func (l LogTopicsManager) Write(topic access.Topic, entries access.Entries) (uin
 func (l LogTopicsManager) Read(params access.ReadParams) error {
 	_, exists := l.Topics[params.Topic]
 	if !exists {
-		return errors.New(fmt.Sprintf("topic %s does not exits", params.Topic))
+		return errors.New(fmt.Sprintf("Topic %s does not exits", params.Topic))
 	}
 	offset := params.Offset
 	var err error
 	readTTL := time.Now().Add(l.TTL)
 	for time.Until(readTTL) > 0 {
-		lastWrittenOffset := (l.Topics[params.Topic].logOffset) - 1
+		lastWrittenOffset := (l.Topics[params.Topic].LogOffset) - 1
 		if lastWrittenOffset == offset {
 			time.Sleep(l.CheckForNewEvery)
 			continue

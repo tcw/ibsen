@@ -1,5 +1,7 @@
 package access
 
+import "fmt"
+
 type Index struct {
 	IndexOffsets []IndexOffset
 }
@@ -17,6 +19,14 @@ func (idx Index) Head() IndexOffset {
 		return IndexOffset{}
 	}
 	return idx.IndexOffsets[len(idx.IndexOffsets)-1]
+}
+
+func (idx Index) ToString() string {
+	indexToString := ""
+	for _, offset := range idx.IndexOffsets {
+		indexToString = indexToString + fmt.Sprintf("%d -> %d\n", offset.Offset, offset.ByteOffset)
+	}
+	return indexToString
 }
 
 func (idx *Index) add(pair IndexOffset) {

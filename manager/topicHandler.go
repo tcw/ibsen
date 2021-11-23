@@ -14,38 +14,38 @@ import (
 )
 
 type TopicHandler struct {
-	afs            *afero.Afero
-	rootPath       string
-	topic          access.Topic
-	maxBlockSize   access.BlockSizeInBytes
-	headBlockSize  access.BlockSizeInBytes
-	logBlocks      *access.Blocks
-	logOffset      access.Offset
+	Afs            *afero.Afero
+	RootPath       string
+	Topic          access.Topic
+	MaxBlockSize   access.BlockSizeInBytes
+	HeadBlockSize  access.BlockSizeInBytes
+	LogBlocks      *access.Blocks
+	LogOffset      access.Offset
 	writeLock      sync.Mutex
 	loadLock       sync.Mutex
-	indexBlocks    *access.Blocks
-	indexOffset    access.Offset
+	IndexBlocks    *access.Blocks
+	IndexOffset    access.Offset
 	indexMutex     int32
-	logAccess      access.LogAccess
-	logIndexAccess access.LogIndexAccess
+	LogAccess      access.LogAccess
+	LogIndexAccess access.LogIndexAccess
 	loaded         bool
 }
 
 func NewTopicHandler(afs *afero.Afero, rootPath string, topic access.Topic, maxBlockSize uint64) TopicHandler {
 	return TopicHandler{
-		afs:          afs,
-		rootPath:     rootPath,
-		maxBlockSize: access.BlockSizeInBytes(maxBlockSize),
-		topic:        topic,
-		logOffset:    0,
+		Afs:          afs,
+		RootPath:     rootPath,
+		MaxBlockSize: access.BlockSizeInBytes(maxBlockSize),
+		Topic:        topic,
+		LogOffset:    0,
 		writeLock:    sync.Mutex{},
-		indexOffset:  0,
+		IndexOffset:  0,
 		indexMutex:   0,
-		logAccess: access.ReadWriteLogAccess{
+		LogAccess: access.ReadWriteLogAccess{
 			Afs:      afs,
 			RootPath: rootPath,
 		},
-		logIndexAccess: access.ReadWriteLogIndexAccess{
+		LogIndexAccess: access.ReadWriteLogIndexAccess{
 			Afs:          afs,
 			RootPath:     rootPath,
 			IndexDensity: 0.01,
@@ -61,19 +61,19 @@ func (t *TopicHandler) Write(entries access.Entries) (uint32, error) {
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
-	if t.logBlocks.IsEmpty() {
-		t.logBlocks.AddBlock(0)
+	if t.LogBlocks.IsEmpty() {
+		t.LogBlocks.AddBlock(0)
 	}
-	head := t.logBlocks.Head()
-	offset, bytes, err := t.logAccess.Write(head.LogFileName(t.rootPath, t.topic), entries, t.logOffset)
+	head := t.LogBlocks.Head()
+	offset, bytes, err := t.LogAccess.Write(head.LogFileName(t.RootPath, t.Topic), entries, t.LogOffset)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
-	t.logOffset = offset
-	t.headBlockSize = t.headBlockSize + bytes
-	if t.headBlockSize > t.maxBlockSize {
-		t.logBlocks.AddBlock(access.Block(t.logOffset))
-		t.headBlockSize = 0
+	t.LogOffset = offset
+	t.HeadBlockSize = t.HeadBlockSize + bytes
+	if t.HeadBlockSize > t.MaxBlockSize {
+		t.LogBlocks.AddBlock(access.Block(t.LogOffset))
+		t.HeadBlockSize = 0
 	}
 	go t.updateIndex()
 	return uint32(bytes), nil
@@ -81,13 +81,13 @@ func (t *TopicHandler) Write(entries access.Entries) (uint32, error) {
 
 func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {
 	err := t.Load()
-	if params.Offset == t.logOffset-1 {
+	if params.Offset == t.LogOffset-1 {
 		return params.Offset, nil
 	}
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
-	blocks, err := t.logBlocks.GetBlocksIncludingAndAfter(params.Offset)
+	blocks, err := t.LogBlocks.GetBlocksIncludingAndAfter(params.Offset)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
@@ -103,15 +103,15 @@ func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {
 	}
 	var lastReadOffset = params.Offset
 	for _, block := range blocks {
-		logFileName := block.LogFileName(t.rootPath, t.topic)
-		exists, err := t.afs.Exists(string(logFileName))
+		logFileName := block.LogFileName(t.RootPath, t.Topic)
+		exists, err := t.Afs.Exists(string(logFileName))
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
 		}
 		if !exists {
 			return lastReadOffset, nil
 		}
-		lastReadOffset, err = t.logAccess.ReadLog(logFileName, params, byteOffset)
+		lastReadOffset, err = t.LogAccess.ReadLog(logFileName, params, byteOffset)
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
 		}
@@ -137,12 +137,12 @@ func (t *TopicHandler) Load() error {
 }
 
 func (t *TopicHandler) Status() (string, error) {
-	logBlocks := t.logBlocks
-	indexBlocks := t.indexBlocks
-	logOffset := t.logOffset
-	indexOffset := t.indexOffset
-	topic := t.topic
-	inTopic, err := access.ListAllFilesInTopic(t.afs, t.rootPath, t.topic)
+	logBlocks := t.LogBlocks
+	indexBlocks := t.IndexBlocks
+	logOffset := t.LogOffset
+	indexOffset := t.IndexOffset
+	topic := t.Topic
+	inTopic, err := access.ListAllFilesInTopic(t.Afs, t.RootPath, t.Topic)
 	if err != nil {
 		return "", errore.WrapWithContext(err)
 	}
@@ -170,27 +170,27 @@ func (t *TopicHandler) Status() (string, error) {
 }
 
 func (t *TopicHandler) lazyLoad() error {
-	topicPath := t.rootPath + access.Sep + string(t.topic)
-	exists, err := t.afs.Exists(topicPath)
+	topicPath := t.RootPath + access.Sep + string(t.Topic)
+	exists, err := t.Afs.Exists(topicPath)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
 	if !exists {
-		err = t.afs.Mkdir(topicPath, 640)
+		err = t.Afs.Mkdir(topicPath, 640)
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
 	}
-	blocks, err := t.logAccess.ReadTopicLogBlocks(t.topic)
+	blocks, err := t.LogAccess.ReadTopicLogBlocks(t.Topic)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	t.logBlocks = &blocks
-	indexBlocks, err := t.logIndexAccess.ReadTopicIndexBlocks(t.topic)
+	t.LogBlocks = &blocks
+	indexBlocks, err := t.LogIndexAccess.ReadTopicIndexBlocks(t.Topic)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	t.indexBlocks = &indexBlocks
+	t.IndexBlocks = &indexBlocks
 	return nil
 }
 
@@ -198,7 +198,7 @@ func (t *TopicHandler) indexScheduler() {
 	for {
 		err := t.updateIndex()
 		if err != nil {
-			log.Printf("index builder for topic %s has failed", t.topic)
+			log.Printf("index builder for Topic %s has failed", t.Topic)
 		}
 		time.Sleep(time.Second * 10)
 	}
@@ -209,57 +209,56 @@ func (t *TopicHandler) updateIndex() error {
 		return nil
 	}
 	defer atomic.CompareAndSwapInt32(&t.indexMutex, 1, 0)
-	if t.logBlocks.Size() == 0 {
+
+	if t.LogBlocks.IsEmpty() {
 		return nil
 	}
-	indexBlocks := *t.indexBlocks
-	//	indexHead := indexBlocks.Head()
-	//	index, err := t.logIndexAccess.Read(indexHead.IndexFileName(t.rootPath, t.topic))
-	//	if err != nil {
-	//		return errore.WrapWithContext(err)
-	//	}
-	//	indexOffset := index.Head()
-	blocksWithoutIndex := t.logBlocks.Diff(indexBlocks)
-	logTail, err := blocksWithoutIndex.Tail()
-	//	logHead := blocksWithoutIndex.Head()
-	if err != access.BlockNotFound {
-		for _, block := range logTail {
-			log.Printf("Writing to block %d", block)
-			_, err = t.logIndexAccess.WriteFile(block.LogFileName(t.rootPath, t.topic))
-			if err != nil {
-				return errore.WrapWithContext(err)
-			}
-			t.indexBlocks.AddBlock(block)
-		}
-	}
-	/*
-		_, err = t.logIndexAccess.WriteFromOffset(logHead.LogFileName(t.rootPath, t.topic), indexOffset.ByteOffset)
-		if err == access.NoFile {
-			return nil
-		}
+
+	var byteOffset int64 = 0
+	if t.IndexBlocks.IsEmpty() {
+		t.IndexBlocks.AddBlock(0)
+	} else {
+		head := t.IndexBlocks.Head()
+		index, err := t.LogIndexAccess.Read(head.IndexFileName(t.RootPath, t.Topic))
 		if err != nil {
 			return errore.WrapWithContext(err)
-		}*/
+		}
+		byteOffset = index.Head().ByteOffset
+	}
+	logBlocks := *t.LogBlocks
+
+	lastIndexBlock := t.IndexBlocks.Size() - 1
+	lastLogBlock := logBlocks.Size() - 1
+	for i := lastIndexBlock; i < logBlocks.Size(); i++ {
+		logBlock := logBlocks.Get(i)
+		_, err := t.LogIndexAccess.Write(logBlock.LogFileName(t.RootPath, t.Topic), byteOffset)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+		if i != lastLogBlock {
+			t.IndexBlocks.AddBlock(logBlocks.Get(i + 1))
+		}
+	}
 
 	return nil
 }
 
 func (t *TopicHandler) lookUpIndexedOffset(offset access.Offset) (int64, error) {
-	block, err := t.indexBlocks.Contains(offset)
+	block, err := t.IndexBlocks.Contains(offset)
 	if err == access.BlockNotFound {
 		return 0, access.IndexEntryNotFound
 	}
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
-	logFileName := block.LogFileName(t.rootPath, t.topic)
-	indexFileName := block.IndexFileName(t.rootPath, t.topic)
-	index, err := t.logIndexAccess.Read(indexFileName)
+	logFileName := block.LogFileName(t.RootPath, t.Topic)
+	indexFileName := block.IndexFileName(t.RootPath, t.Topic)
+	index, err := t.LogIndexAccess.Read(indexFileName)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
 	byteOffset := index.FindNearestByteOffset(offset)
-	fromOffset, err := access.FindByteOffsetFromOffset(t.afs, logFileName, byteOffset, offset)
+	fromOffset, err := access.FindByteOffsetFromOffset(t.Afs, logFileName, byteOffset, offset)
 	if err == io.EOF {
 		return 0, access.IndexEntryNotFound
 	}

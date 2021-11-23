@@ -39,6 +39,10 @@ func (bs Blocks) IsEmpty() bool {
 	return bs.BlockList == nil || len(bs.BlockList) == 0
 }
 
+func (bs Blocks) Get(index int) Block {
+	return bs.BlockList[index]
+}
+
 func (bs Blocks) Size() int {
 	return len(bs.BlockList)
 }

@@ -50,5 +50,11 @@ func TestTopicHandlerWriteRead(t *testing.T) {
 		t.Error(err)
 	}
 	log.Println(status)
+	indexFileName := handler.IndexBlocks.Get(0).IndexFileName(handler.RootPath, handler.Topic)
+	index, err := handler.LogIndexAccess.Read(indexFileName)
+	if err != nil {
+		t.Error(err)
+	}
+	print(index.ToString())
 	wg.Wait()
 }
