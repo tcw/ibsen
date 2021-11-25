@@ -111,7 +111,7 @@ func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {
 		if !exists {
 			return lastReadOffset, nil
 		}
-		lastReadOffset, err = t.LogAccess.ReadLog(logFileName, params, byteOffset)
+		lastReadOffset, err = t.LogAccess.ReadLog(logFileName, params, byteOffset, t.LogOffset-1)
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
 		}
@@ -263,7 +263,7 @@ func (t *TopicHandler) lookUpIndexedOffset(offset access.Offset) (int64, error) 
 		return 0, access.IndexEntryNotFound
 	}
 	if err != nil {
-		return 0, err
+		return 0, errore.WrapWithContext(err)
 	}
 	return fromOffset, nil
 }

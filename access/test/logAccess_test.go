@@ -64,7 +64,7 @@ func TestWriteToTopic(t *testing.T) {
 		BatchSize: 10,
 		LogChan:   logChan,
 		Wg:        &wg,
-	}, 0)
+	}, 0, 2)
 
 	wg.Wait()
 

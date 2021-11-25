@@ -70,7 +70,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 
 	useCpuProfiling(ibs.CpuProfile)
 
-	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, time.Minute*10, ibs.RootPath, uint64(ibs.MaxBlockSize))
+	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, time.Minute*10, time.Second*5, ibs.RootPath, uint64(ibs.MaxBlockSize))
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}

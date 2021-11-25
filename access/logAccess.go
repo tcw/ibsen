@@ -14,7 +14,7 @@ type LogAccess interface {
 	CreateTopic(topic Topic) error
 	Write(fileName FileName, entries Entries, fromOffset Offset) (Offset, BlockSizeInBytes, error)
 	ReadTopicLogBlocks(topic Topic) (Blocks, error)
-	ReadLog(fileName FileName, readBatchParam ReadParams, byteOffset int64) (Offset, error)
+	ReadLog(fileName FileName, readBatchParam ReadParams, byteOffset int64, lastWrittenOffset Offset) (Offset, error)
 }
 
 var _ LogAccess = ReadWriteLogAccess{}
@@ -65,8 +65,8 @@ func (la ReadWriteLogAccess) ReadTopicLogBlocks(topic Topic) (Blocks, error) {
 	return domainBlocks, nil
 }
 
-func (la ReadWriteLogAccess) ReadLog(logFileName FileName, readBatchParam ReadParams, byteOffset int64) (Offset, error) {
-	logFile, err := OpenFileForRead(la.Afs, string(logFileName))
+func (la ReadWriteLogAccess) ReadLog(fileName FileName, readBatchParam ReadParams, byteOffset int64, lastWrittenOffset Offset) (Offset, error) {
+	logFile, err := OpenFileForRead(la.Afs, string(fileName))
 	defer logFile.Close()
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
@@ -78,21 +78,32 @@ func (la ReadWriteLogAccess) ReadLog(logFileName FileName, readBatchParam ReadPa
 				return 0, errore.WrapWithContext(err)
 			}
 		}
-		err = fastForwardToOffset(logFile, readBatchParam.Offset)
+		offset, err := ReadOffset(la.Afs, fileName, byteOffset)
+		if err == io.EOF {
+			return readBatchParam.Offset, nil
+		}
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
 		}
+		if offset < readBatchParam.Offset {
+			err = fastForwardToOffset(logFile, readBatchParam.Offset, lastWrittenOffset)
+			if err == io.EOF {
+				return readBatchParam.Offset, nil
+			}
+			if err != nil {
+				return 0, errore.WrapWithContext(err)
+			}
+		}
 	}
 
-	lastOffset, err := readFile(logFile, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize)
+	lastOffset, err := readFile(logFile, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize, lastWrittenOffset)
 	if err != nil {
 		return lastOffset, errore.WrapWithContext(err)
 	}
 	return lastOffset, nil
 }
 
-func readFile(file afero.File, logChan chan *[]LogEntry,
-	wg *sync.WaitGroup, batchSize uint32) (Offset, error) {
+func readFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, batchSize uint32, lastWrittenOffset Offset) (Offset, error) {
 
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
@@ -106,6 +117,14 @@ func readFile(file afero.File, logChan chan *[]LogEntry,
 			sendingEntries := logEntries
 			logChan <- &sendingEntries
 			logEntries = nil
+		}
+		if lastOffset >= lastWrittenOffset {
+			if logEntries != nil && len(logEntries) > 0 {
+				wg.Add(1)
+				sendingEntries := logEntries
+				logChan <- &sendingEntries
+			}
+			return lastOffset, nil
 		}
 		_, err := io.ReadFull(reader, bytes)
 		if err == io.EOF {

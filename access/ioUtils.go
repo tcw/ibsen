@@ -96,65 +96,12 @@ func listAllTopics(afs *afero.Afero, dir string) ([]Topic, error) {
 	return filenames, nil
 }
 
-func blockSize(asf *afero.Afero, fileName string) (int64, error) {
-	exists, err := asf.Exists(fileName)
-	if err != nil {
-		return 0, errore.NewWithContext(fmt.Sprintf("Failes checking if file %s exist", fileName))
-	}
-	if !exists {
-		return 0, errore.NewWithContext(fmt.Sprintf("File %s does not exist", fileName))
-	}
-
-	file, err := asf.OpenFile(fileName,
-		os.O_RDONLY, 0400)
-	fi, err := file.Stat()
-	if err != nil {
-		return 0, errore.WrapWithContext(err)
-	}
-	err = file.Close()
-	if err != nil {
-		return 0, errore.WrapWithContext(err)
-	}
-	return fi.Size(), nil
-}
-
-func findLastOffset(afs *afero.Afero, blockFileName FileName) (int64, error) {
-	var offsetFound int64 = 0
-	file, err := OpenFileForRead(afs, string(blockFileName))
-	if err != nil {
-		return 0, errore.WrapWithContext(err)
-	}
-	defer file.Close()
-	for {
-		bytes := make([]byte, 8)
-		checksum := make([]byte, 4)
-		_, err := io.ReadFull(file, bytes)
-		if err == io.EOF {
-			return offsetFound, nil
-		}
-		if err != nil {
-			return offsetFound, errore.WrapWithContext(err)
-		}
-		offsetFound = int64(littleEndianToUint64(bytes))
-		_, err = io.ReadFull(file, checksum)
-		if err != nil {
-			return offsetFound, errore.WrapWithContext(err)
-		}
-		_, err = io.ReadFull(file, bytes)
-		if err != nil {
-			return offsetFound, errore.WrapWithContext(err)
-		}
-		size := littleEndianToUint64(bytes)
-		_, err = file.Seek(int64(size), 1)
-		if err != nil {
-			return offsetFound, errore.WrapWithContext(err)
-		}
-	}
-}
-
-func fastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace with index
+func fastForwardToOffset(file afero.File, offset Offset, lastWrittenOffset Offset) error { //Todo: replace with index
 	var offsetFound Offset = math.MaxInt64
 	for {
+		if offsetFound == lastWrittenOffset {
+			return io.EOF
+		}
 		if offsetFound == offset {
 			return nil
 		}
@@ -162,7 +109,7 @@ func fastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace
 		checksum := make([]byte, 4)
 		_, err := io.ReadFull(file, bytes)
 		if err == io.EOF {
-			return errore.NewWithContext("no Offset in block")
+			return err
 		}
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -184,12 +131,44 @@ func fastForwardToOffset(file afero.File, offset Offset) error { //Todo: replace
 	}
 }
 
-func FindByteOffsetFromOffset(afs *afero.Afero, fileName FileName, startAtByteOffset int64, offset Offset) (int64, error) { //Todo: replace with index
+func ReadOffset(afs *afero.Afero, name FileName, startAtByteOffset int64) (Offset, error) {
+	file, err := OpenFileForRead(afs, string(name))
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	if startAtByteOffset > 0 {
+		_, err = file.Seek(startAtByteOffset, io.SeekStart)
+		if err != nil {
+			return 0, errore.WrapWithContext(err)
+		}
+	}
+	bytes := make([]byte, 8)
+
+	_, err = io.ReadFull(file, bytes)
+	if err == io.EOF {
+		return 0, io.EOF
+	}
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	return Offset(littleEndianToUint64(bytes)), nil
+}
+
+func FindByteOffsetFromOffset(afs *afero.Afero, fileName FileName, startAtByteOffset int64, offset Offset) (int64, error) {
 	file, err := OpenFileForRead(afs, string(fileName))
 	if err != nil {
 		return 0, err
 	}
 	defer file.Close()
+
+	if startAtByteOffset > 0 {
+		_, err = file.Seek(startAtByteOffset, io.SeekStart)
+		if err != nil {
+			return 0, errore.WrapWithContext(err)
+		}
+	}
+
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
 	checksum := make([]byte, 4)
@@ -221,7 +200,11 @@ func FindByteOffsetFromOffset(afs *afero.Afero, fileName FileName, startAtByteOf
 			return 0, errore.WrapWithContext(err)
 		}
 		entrySize := littleEndianToUint64(bytes)
-		_, err = (file).Seek(int64(entrySize), 1)
+		entryBytes := make([]byte, entrySize)
+		_, err = io.ReadFull(reader, entryBytes)
+		if err != nil {
+			return 0, errore.WrapWithContext(err)
+		}
 		byteOffset = byteOffset + int64(offsetBytes) + int64(checksumBytes) + int64(sizeBytes) + int64(entrySize)
 	}
 }

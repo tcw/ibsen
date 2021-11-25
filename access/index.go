@@ -1,6 +1,9 @@
 package access
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+)
 
 type Index struct {
 	IndexOffsets []IndexOffset
@@ -41,7 +44,9 @@ func (idx *Index) addAll(pair []IndexOffset) {
 func (idx Index) FindNearestByteOffset(offset Offset) int64 {
 	for i := len(idx.IndexOffsets) - 1; i >= 0; i-- {
 		if offset > idx.IndexOffsets[i].Offset {
-			return idx.IndexOffsets[i].ByteOffset
+			byteOffset := idx.IndexOffsets[i].ByteOffset
+			log.Printf("byteOffset: %d", byteOffset)
+			return byteOffset
 		}
 	}
 	return 0
