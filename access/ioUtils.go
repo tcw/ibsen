@@ -30,8 +30,7 @@ func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	if !exists {
 		return nil, errore.NewWithContext(fmt.Sprintf("File %s does not exist", fileName))
 	}
-	f, err := afs.OpenFile(fileName,
-		os.O_RDONLY, 0400)
+	f, err := afs.OpenFile(fileName, os.O_RDONLY, 0400)
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
@@ -206,6 +205,44 @@ func FindByteOffsetFromOffset(afs *afero.Afero, fileName FileName, startAtByteOf
 			return 0, errore.WrapWithContext(err)
 		}
 		byteOffset = byteOffset + int64(offsetBytes) + int64(checksumBytes) + int64(sizeBytes) + int64(entrySize)
+	}
+}
+
+func FindLastOffset(afs *afero.Afero, blockFileName FileName, from int64) (int64, error) {
+	var offsetFound int64 = 0
+	file, err := OpenFileForRead(afs, string(blockFileName))
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	defer file.Close()
+	_, err = file.Seek(from, io.SeekStart)
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	for {
+		bytes := make([]byte, 8)
+		checksum := make([]byte, 4)
+		_, err := io.ReadFull(file, bytes)
+		if err == io.EOF {
+			return offsetFound, nil
+		}
+		if err != nil {
+			return offsetFound, errore.WrapWithContext(err)
+		}
+		offsetFound = int64(littleEndianToUint64(bytes))
+		_, err = io.ReadFull(file, checksum)
+		if err != nil {
+			return offsetFound, errore.WrapWithContext(err)
+		}
+		_, err = io.ReadFull(file, bytes)
+		if err != nil {
+			return offsetFound, errore.WrapWithContext(err)
+		}
+		size := littleEndianToUint64(bytes)
+		_, err = file.Seek(int64(size), 1)
+		if err != nil {
+			return offsetFound, errore.WrapWithContext(err)
+		}
 	}
 }
 

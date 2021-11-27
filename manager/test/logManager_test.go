@@ -11,16 +11,16 @@ import (
 func TestLogT(t *testing.T) {
 	setUp()
 	const tenMB = 1024 * 1024
-	topicsManager, err := manager.NewLogTopicsManager(afs, 20*time.Second, 100*time.Millisecond, rootPath, tenMB)
+	topicsManager, err := manager.NewLogTopicsManager(afs, 2*time.Second, 100*time.Millisecond, rootPath, tenMB)
 	if err != nil {
 		t.Error(err)
 	}
 	const testTopic = "cars"
-	_, err = topicsManager.Write(testTopic, createEntry(10000))
+	_, err = topicsManager.Write(testTopic, createEntry(1000))
 	if err != nil {
 		t.Error(err)
 	}
-	go writeEvery100ms(topicsManager.Topics[testTopic], 10*time.Second, 100*time.Millisecond)
+	go writeEvery100ms(topicsManager.Topics[testTopic], 1*time.Second, 10*time.Millisecond)
 
 	logChan := make(chan *[]access.LogEntry)
 	var wg sync.WaitGroup

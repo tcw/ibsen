@@ -66,17 +66,13 @@ func (l LogTopicsManager) Read(params access.ReadParams) error {
 	var err error
 	readTTL := time.Now().Add(l.TTL)
 	for time.Until(readTTL) > 0 {
-		lastWrittenOffset := (l.Topics[params.Topic].LogOffset) - 1
-		if lastWrittenOffset == offset {
-			time.Sleep(l.CheckForNewEvery)
-			continue
-		}
 		newParams := params
 		newParams.Offset = offset
 		offset, err = l.Topics[params.Topic].Read(newParams)
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
+		time.Sleep(l.CheckForNewEvery)
 	}
 	return nil
 }

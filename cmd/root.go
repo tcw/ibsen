@@ -49,7 +49,7 @@ var (
 			} else {
 				var err error
 				if len(args) != 1 {
-					fmt.Println("No file path to ibsen storage was given, use -i to run in-memory or specify path")
+					fmt.Println("No file path to ibsen data directory was given, use -i to run in-memory or specify path")
 					return
 				}
 				absolutePath, err = filepath.Abs(args[0])
@@ -82,11 +82,58 @@ var (
 		},
 	}
 
-	cmdFile = &cobra.Command{
-		Use:              "file",
+	cmdClient = &cobra.Command{
+		Use:              "client",
 		Short:            "access files directly from file",
 		Long:             `file`,
 		TraverseChildren: true,
+	}
+
+	cmdClientWrite = &cobra.Command{
+		Use:              "write",
+		Short:            "access files directly from file",
+		Long:             `file`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) < 1 {
+				fmt.Println("First parameter must be topic name")
+				return
+			}
+			topic := args[0]
+			client := newIbsenClient(host + ":" + strconv.Itoa(serverPort))
+			if len(args) > 1 {
+				writeResult, err := client.WriteTopic(topic, args[1])
+				if err != nil {
+					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				}
+				fmt.Printf("Wrote %d entries to topic %s\n", writeResult, topic)
+			} else {
+				writeResult, err := client.WriteTopic(topic)
+				if err != nil {
+					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				}
+				fmt.Printf("Wrote %d entries to topic %s\n", writeResult, topic)
+			}
+		},
+	}
+	cmdClientRead = &cobra.Command{
+		Use:              "read",
+		Short:            "access files directly from file",
+		Long:             `file`,
+		TraverseChildren: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) < 1 {
+				fmt.Println("First parameter must be topic name")
+				return
+			}
+			topic := args[0]
+			client := newIbsenClient(host + ":" + strconv.Itoa(serverPort))
+			err := client.ReadTopic(topic, 0, 1000)
+			if err != nil {
+				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+			}
+		},
 	}
 )
 
@@ -100,13 +147,14 @@ func Execute() {
 func init() {
 	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(50001)))
 	host = getenv("IBSEN_HOST", "0.0.0.0")
-	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "100"))
-	entries, _ = strconv.Atoi(getenv("IBSEN_ENTRIES", "1000"))
+	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "1000"))
 	rootCmd.Flags().IntVarP(&serverPort, "port", "p", serverPort, "config file (default is current directory)")
 	rootCmd.Flags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
-	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "config file")
-	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "config file")
+	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
+	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")
+	rootCmd.AddCommand(cmdServer, cmdClient)
+	cmdClient.AddCommand(cmdClientWrite, cmdClientRead)
 }
 
 func getenv(key, fallback string) string {

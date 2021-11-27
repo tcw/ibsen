@@ -20,7 +20,7 @@ type TopicHandler struct {
 	MaxBlockSize   access.BlockSizeInBytes
 	HeadBlockSize  access.BlockSizeInBytes
 	LogBlocks      *access.Blocks
-	LogOffset      access.Offset
+	NextLogOffset  access.Offset
 	writeLock      sync.Mutex
 	loadLock       sync.Mutex
 	IndexBlocks    *access.Blocks
@@ -33,14 +33,14 @@ type TopicHandler struct {
 
 func NewTopicHandler(afs *afero.Afero, rootPath string, topic access.Topic, maxBlockSize uint64) TopicHandler {
 	return TopicHandler{
-		Afs:          afs,
-		RootPath:     rootPath,
-		MaxBlockSize: access.BlockSizeInBytes(maxBlockSize),
-		Topic:        topic,
-		LogOffset:    0,
-		writeLock:    sync.Mutex{},
-		IndexOffset:  0,
-		indexMutex:   0,
+		Afs:           afs,
+		RootPath:      rootPath,
+		MaxBlockSize:  access.BlockSizeInBytes(maxBlockSize),
+		Topic:         topic,
+		NextLogOffset: 0,
+		writeLock:     sync.Mutex{},
+		IndexOffset:   0,
+		indexMutex:    0,
 		LogAccess: access.ReadWriteLogAccess{
 			Afs:      afs,
 			RootPath: rootPath,
@@ -65,14 +65,14 @@ func (t *TopicHandler) Write(entries access.Entries) (uint32, error) {
 		t.LogBlocks.AddBlock(0)
 	}
 	head := t.LogBlocks.Head()
-	offset, bytes, err := t.LogAccess.Write(head.LogFileName(t.RootPath, t.Topic), entries, t.LogOffset)
+	offset, bytes, err := t.LogAccess.Write(head.LogFileName(t.RootPath, t.Topic), entries, t.NextLogOffset)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
-	t.LogOffset = offset
+	t.NextLogOffset = offset
 	t.HeadBlockSize = t.HeadBlockSize + bytes
 	if t.HeadBlockSize > t.MaxBlockSize {
-		t.LogBlocks.AddBlock(access.Block(t.LogOffset))
+		t.LogBlocks.AddBlock(access.Block(t.NextLogOffset))
 		t.HeadBlockSize = 0
 	}
 	go t.updateIndex()
@@ -81,7 +81,7 @@ func (t *TopicHandler) Write(entries access.Entries) (uint32, error) {
 
 func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {
 	err := t.Load()
-	if params.Offset == t.LogOffset-1 {
+	if params.Offset == t.NextLogOffset-1 {
 		return params.Offset, nil
 	}
 	if err != nil {
@@ -111,7 +111,10 @@ func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {
 		if !exists {
 			return lastReadOffset, nil
 		}
-		lastReadOffset, err = t.LogAccess.ReadLog(logFileName, params, byteOffset, t.LogOffset-1)
+		lastReadOffset, err = t.LogAccess.ReadLog(logFileName, params, byteOffset, t.NextLogOffset-1)
+		if err == io.EOF {
+			return lastReadOffset, nil
+		}
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
 		}
@@ -139,7 +142,7 @@ func (t *TopicHandler) Load() error {
 func (t *TopicHandler) Status() (string, error) {
 	logBlocks := t.LogBlocks
 	indexBlocks := t.IndexBlocks
-	logOffset := t.LogOffset
+	logOffset := t.NextLogOffset
 	indexOffset := t.IndexOffset
 	topic := t.Topic
 	inTopic, err := access.ListAllFilesInTopic(t.Afs, t.RootPath, t.Topic)
@@ -191,6 +194,11 @@ func (t *TopicHandler) lazyLoad() error {
 		return errore.WrapWithContext(err)
 	}
 	t.IndexBlocks = &indexBlocks
+	offset, err := t.findLastOffset()
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	t.NextLogOffset = offset + 1
 	return nil
 }
 
@@ -266,4 +274,20 @@ func (t *TopicHandler) lookUpIndexedOffset(offset access.Offset) (int64, error) 
 		return 0, errore.WrapWithContext(err)
 	}
 	return fromOffset, nil
+}
+
+func (t *TopicHandler) findLastOffset() (access.Offset, error) {
+	logHead := t.LogBlocks.Head()
+	indexFileName := logHead.IndexFileName(t.RootPath, t.Topic)
+	index, err := t.LogIndexAccess.Read(indexFileName)
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	indexHead := index.Head()
+	byteOffset := indexHead.ByteOffset
+	offset, err := access.FindLastOffset(t.Afs, logHead.LogFileName(t.RootPath, t.Topic), byteOffset)
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	return access.Offset(offset), nil
 }

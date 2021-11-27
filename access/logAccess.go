@@ -80,7 +80,7 @@ func (la ReadWriteLogAccess) ReadLog(fileName FileName, readBatchParam ReadParam
 		}
 		offset, err := ReadOffset(la.Afs, fileName, byteOffset)
 		if err == io.EOF {
-			return readBatchParam.Offset, nil
+			return 0, io.EOF
 		}
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
