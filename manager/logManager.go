@@ -25,7 +25,7 @@ type LogTopicsManager struct {
 	Topics           map[access.Topic]*TopicHandler
 }
 
-func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, checkForNewEvery time.Duration, rootPath string, maxBlockSize uint64) (LogTopicsManager, error) {
+func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, checkForNewEvery time.Duration, rootPath string, maxBlockSizeMB uint64) (LogTopicsManager, error) {
 	logAccess := access.ReadWriteLogAccess{
 		Afs:      afs,
 		RootPath: rootPath,
@@ -35,6 +35,7 @@ func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, checkForNew
 		return LogTopicsManager{}, errore.WrapWithContext(err)
 	}
 	handlers := make(map[access.Topic]*TopicHandler)
+	maxBlockSize := maxBlockSizeMB * 1024 * 1024
 	for _, topic := range topics {
 		handler := NewTopicHandler(afs, rootPath, topic, maxBlockSize)
 		handlers[topic] = &handler

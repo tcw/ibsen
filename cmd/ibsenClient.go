@@ -29,7 +29,7 @@ func newIbsenClient(target string) IbsenClient {
 	}
 
 	client := grpcApi.NewIbsenClient(conn)
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(30)*time.Second) //Todo: Handle cancel
+	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute) //Todo: Handle cancel
 
 	return IbsenClient{
 		Client: client,

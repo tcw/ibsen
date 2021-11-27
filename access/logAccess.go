@@ -33,7 +33,7 @@ func (la ReadWriteLogAccess) ListTopics() ([]Topic, error) {
 }
 
 func (la ReadWriteLogAccess) CreateTopic(topic Topic) error {
-	err := la.Afs.Mkdir(la.RootPath+Sep+string(topic), 640)
+	err := la.Afs.Mkdir(la.RootPath+Sep+string(topic), 0640)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}

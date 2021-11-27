@@ -9,7 +9,6 @@ import (
 	"github.com/tcw/ibsen/manager"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -19,7 +18,6 @@ import (
 )
 
 var ibsenGrpcServer *grpcApi.IbsenGrpcServer
-var httpServer *http.Server
 var ibsenFiglet = `
                            _____ _                    
                           |_   _| |                   
@@ -50,7 +48,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	log.Printf("Using listener: %s", listener.Addr().String())
 	if ibs.InMemory {
 		log.Println("Running in-memory only!")
-		err := ibs.Afs.Mkdir(ibs.RootPath, 600)
+		err := ibs.Afs.Mkdir(ibs.RootPath, 0600)
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}

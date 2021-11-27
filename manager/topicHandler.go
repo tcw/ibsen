@@ -179,7 +179,7 @@ func (t *TopicHandler) lazyLoad() error {
 		return errore.WrapWithContext(err)
 	}
 	if !exists {
-		err = t.Afs.Mkdir(topicPath, 640)
+		err = t.Afs.Mkdir(topicPath, 0770) //Todo: do more restrictive
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
@@ -206,7 +206,8 @@ func (t *TopicHandler) indexScheduler() {
 	for {
 		err := t.updateIndex()
 		if err != nil {
-			log.Printf("index builder for Topic %s has failed", t.Topic)
+			log.Printf("index builder for topic %s has failed: %s", t.Topic,
+				errore.SprintTrace(errore.WrapWithContext(err)))
 		}
 		time.Sleep(time.Second * 10)
 	}
@@ -240,6 +241,9 @@ func (t *TopicHandler) updateIndex() error {
 	for i := lastIndexBlock; i < logBlocks.Size(); i++ {
 		logBlock := logBlocks.Get(i)
 		_, err := t.LogIndexAccess.Write(logBlock.LogFileName(t.RootPath, t.Topic), byteOffset)
+		if err == access.NoFile {
+			return nil
+		}
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
@@ -279,6 +283,13 @@ func (t *TopicHandler) lookUpIndexedOffset(offset access.Offset) (int64, error) 
 func (t *TopicHandler) findLastOffset() (access.Offset, error) {
 	logHead := t.LogBlocks.Head()
 	indexFileName := logHead.IndexFileName(t.RootPath, t.Topic)
+	exists, err := t.Afs.Exists(string(indexFileName))
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	if !exists {
+		return 0, nil
+	}
 	index, err := t.LogIndexAccess.Read(indexFileName)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
