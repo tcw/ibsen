@@ -5,7 +5,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
 	"io"
-	"log"
 	"sync"
 	"testing"
 )
@@ -31,7 +30,6 @@ func readVerification(t *testing.T, logChan chan *[]access.LogEntry, wg *sync.Wa
 		t.Fail()
 	}
 	wg.Done()
-	log.Println("2")
 }
 
 func createEntry(entries int) access.Entries {

@@ -119,7 +119,7 @@ var (
 		},
 	}
 	cmdClientRead = &cobra.Command{
-		Use:              "read",
+		Use:              "read [file] [offset (default=0)] [batch size (default=1000)]",
 		Short:            "access files directly from file",
 		Long:             `file`,
 		TraverseChildren: true,
@@ -129,8 +129,23 @@ var (
 				return
 			}
 			topic := args[0]
+			var offset uint64 = 0
+			var batchSize64 uint64 = 1000
+			var err error
+			if len(args) == 2 {
+				offset, err = strconv.ParseUint(args[1], 10, 64)
+				if err != nil {
+					fmt.Printf("offset %s not a uint64", args[1])
+				}
+			}
+			if len(args) == 3 {
+				batchSize64, err = strconv.ParseUint(args[2], 10, 32)
+				if err != nil {
+					fmt.Printf("offset %s not a uint64", args[1])
+				}
+			}
 			client := newIbsenClient(host + ":" + strconv.Itoa(serverPort))
-			err := client.ReadTopic(topic, 0, 1000)
+			err = client.ReadTopic(topic, offset, uint32(batchSize64))
 			if err != nil {
 				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
 			}
