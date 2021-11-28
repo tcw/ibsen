@@ -23,11 +23,12 @@ type LogEntry struct {
 }
 
 type ReadParams struct {
-	Topic     Topic
-	Offset    Offset
-	BatchSize uint32
-	LogChan   chan *[]LogEntry
-	Wg        *sync.WaitGroup
+	Topic            Topic
+	Offset           Offset
+	StopOnCompletion bool
+	BatchSize        uint32
+	LogChan          chan *[]LogEntry
+	Wg               *sync.WaitGroup
 }
 
 var crc32q = crc32.MakeTable(crc32.Castagnoli)

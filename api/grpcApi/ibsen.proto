@@ -21,6 +21,7 @@ message ReadParams {
     string topic = 1;
     uint64 offset = 2;
     uint32 batchSize = 3;
+    bool stopOnCompletion = 4;
 }
 
 message InputEntries {

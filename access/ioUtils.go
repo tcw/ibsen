@@ -208,6 +208,28 @@ func FindByteOffsetFromOffset(afs *afero.Afero, fileName FileName, startAtByteOf
 	}
 }
 
+func FileSize(asf *afero.Afero, fileName string) (int64, error) {
+	exists, err := asf.Exists(fileName)
+	if err != nil {
+		return 0, errore.NewWithContext(fmt.Sprintf("Failes checking if file %s exist", fileName))
+	}
+	if !exists {
+		return 0, errore.NewWithContext(fmt.Sprintf("File %s does not exist", fileName))
+	}
+
+	file, err := asf.OpenFile(fileName,
+		os.O_RDONLY, 0400)
+	fi, err := file.Stat()
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	err = file.Close()
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	return fi.Size(), nil
+}
+
 func FindLastOffset(afs *afero.Afero, blockFileName FileName, from int64) (int64, error) {
 	var offsetFound int64 = 0
 	file, err := OpenFileForRead(afs, string(blockFileName))

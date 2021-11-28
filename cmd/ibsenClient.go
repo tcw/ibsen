@@ -39,9 +39,10 @@ func newIbsenClient(target string) IbsenClient {
 
 func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) error {
 	entryStream, err := ic.Client.Read(ic.Ctx, &grpcApi.ReadParams{
-		Topic:     topic,
-		Offset:    offset,
-		BatchSize: batchSize,
+		StopOnCompletion: true,
+		Topic:            topic,
+		Offset:           offset,
+		BatchSize:        batchSize,
 	})
 	if err != nil {
 		return errore.WrapWithContext(err)
@@ -52,7 +53,7 @@ func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) 
 	for {
 		in, err := entryStream.Recv()
 		if err == io.EOF {
-			return errore.WrapWithContext(err)
+			return nil
 		}
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -68,7 +69,7 @@ func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) 
 	}
 }
 
-func (ic *IbsenClient) WriteTopic(topic string, fileName ...string) (string, error) {
+func (ic *IbsenClient) Write(topic string, fileName ...string) (string, error) {
 	start := time.Now()
 	var reader io.Reader
 
@@ -102,7 +103,7 @@ func (ic *IbsenClient) WriteTopic(topic string, fileName ...string) (string, err
 		if text == "" {
 			continue
 		}
-		entries = entries + 1
+		entriesRead = entriesRead + 1
 		tmpBytes = append(tmpBytes, []byte(text))
 		batchSize = batchSize + 1
 		if batchSize == 1000 {
@@ -114,7 +115,7 @@ func (ic *IbsenClient) WriteTopic(topic string, fileName ...string) (string, err
 			if err != nil {
 				return "", errore.WrapWithContext(err)
 			}
-			entriesWritten = entriesWritten + 1000
+			entriesWritten = entriesWritten + len(mes.Entries)
 			batchSize = 0
 			tmpBytes = make([][]byte, 0)
 		}
@@ -131,5 +132,5 @@ func (ic *IbsenClient) WriteTopic(topic string, fileName ...string) (string, err
 		entriesWritten = entriesWritten + len(tmpBytes)
 	}
 	used := time.Now().Sub(start)
-	return fmt.Sprintf("Read %d entries wrote %d in %s\n", entriesRead, entriesWritten, used), nil
+	return fmt.Sprintf("Wrote %d to %s topic in %s\n", entriesWritten, topic, used), nil
 }

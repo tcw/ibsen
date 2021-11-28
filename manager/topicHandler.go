@@ -195,6 +195,20 @@ func (t *TopicHandler) lazyLoad() error {
 	}
 	t.IndexBlocks = &indexBlocks
 	offset, err := t.findLastOffset()
+	head := t.LogBlocks.Head()
+	logFileName := head.LogFileName(t.RootPath, t.Topic)
+	fileExists, err := t.Afs.Exists(string(logFileName))
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	if fileExists {
+		size, err := access.FileSize(t.Afs, string(logFileName))
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+		t.HeadBlockSize = access.BlockSizeInBytes(size)
+	}
+
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}

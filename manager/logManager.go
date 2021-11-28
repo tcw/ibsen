@@ -70,6 +70,9 @@ func (l LogTopicsManager) Read(params access.ReadParams) error {
 		newParams := params
 		newParams.Offset = offset
 		offset, err = l.Topics[params.Topic].Read(newParams)
+		if params.StopOnCompletion {
+			return nil
+		}
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}

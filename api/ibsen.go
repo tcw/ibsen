@@ -30,17 +30,17 @@ var ibsenFiglet = `
 	 Henrik Ibsen (1828–1906)
 
 `
-var fProfile *os.File
 
 type IbsenServer struct {
-	Lock         consensus.Lock
-	InMemory     bool
-	Afs          *afero.Afero
-	TTL          time.Duration
-	RootPath     string
-	MaxBlockSize int
-	CpuProfile   string
-	MemProfile   string
+	Lock           consensus.Lock
+	InMemory       bool
+	Afs            *afero.Afero
+	TTL            time.Duration
+	RootPath       string
+	MaxBlockSize   int
+	CpuProfile     string
+	MemProfile     string
+	cpuProfileFile *os.File
 }
 
 func (ibs *IbsenServer) Start(listener net.Listener) error {
@@ -66,7 +66,17 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		}
 	}
 
-	useCpuProfiling(ibs.CpuProfile)
+	if ibs.CpuProfile != "" {
+		var err error
+		ibs.cpuProfileFile, err = os.Create(ibs.CpuProfile)
+		if err != nil {
+			log.Fatal("could not create CPU profile: ", err)
+		}
+		if err := pprof.StartCPUProfile(ibs.cpuProfileFile); err != nil {
+			log.Fatal("could not start CPU profile: ", err)
+		}
+		log.Printf("Started profiling, creating file %s", ibs.CpuProfile)
+	}
 
 	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, time.Minute*10, time.Second*5, ibs.RootPath, uint64(ibs.MaxBlockSize))
 	if err != nil {
@@ -77,20 +87,6 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		return errore.WrapWithContext(err)
 	}
 	return nil
-}
-
-func useCpuProfiling(cpuProfile string) {
-	if cpuProfile != "" {
-		var err error
-		fProfile, err = os.Create(cpuProfile)
-		if err != nil {
-			log.Fatal("could not create CPU profile: ", err)
-		}
-		if err := pprof.StartCPUProfile(fProfile); err != nil {
-			log.Fatal("could not start CPU profile: ", err)
-		}
-		log.Printf("Started profiling, creating file %s", cpuProfile)
-	}
 }
 
 func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager manager.LogManager) error {
@@ -126,6 +122,15 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 		log.Printf("Ended memory profiling, writing to file %s", ibs.MemProfile)
 	}
 
+	if ibs.CpuProfile != "" {
+		log.Printf("Ended cpu profiling, writing to file %s", ibs.CpuProfile)
+		pprof.StopCPUProfile()
+		err := ibs.cpuProfileFile.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	log.Println("gracefully stopping grpc server...")
 
 	stopped := make(chan struct{})
@@ -149,15 +154,6 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 			log.Printf("single writer lock [%s] was released!\n", ibs.RootPath)
 		} else {
 			log.Printf("unable to release single writer lock [%s]\n", ibs.RootPath)
-		}
-	}
-
-	if ibs.CpuProfile != "" {
-		log.Printf("Ended cpu profiling, writing to file %s", ibs.CpuProfile)
-		pprof.StopCPUProfile()
-		err := fProfile.Close()
-		if err != nil {
-			log.Fatal(err)
 		}
 	}
 }

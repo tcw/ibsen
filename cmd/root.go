@@ -102,19 +102,20 @@ var (
 			}
 			topic := args[0]
 			client := newIbsenClient(host + ":" + strconv.Itoa(serverPort))
+			result := ""
+			var err error
 			if len(args) > 1 {
-				writeResult, err := client.WriteTopic(topic, args[1])
+				result, err = client.Write(topic, args[1])
 				if err != nil {
 					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
 				}
-				fmt.Printf("Wrote %d entries to topic %s\n", writeResult, topic)
 			} else {
-				writeResult, err := client.WriteTopic(topic)
+				result, err = client.Write(topic)
 				if err != nil {
 					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
 				}
-				fmt.Printf("Wrote %d entries to topic %s\n", writeResult, topic)
 			}
+			fmt.Println(result)
 		},
 	}
 	cmdClientRead = &cobra.Command{
