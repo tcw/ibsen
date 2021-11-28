@@ -49,10 +49,10 @@ protoc --proto_path=api/grpc/JavaApi --java_out=api/grpc/JavaApi ibsen.proto
 
 ```shell script
 ibsen server <path> -z cpu.pprof -y mem.pprof
-go tool pprof cpu.proff
+go tool pprof cpu.pprof
 > weblist ibsen
 > pdf
-go tool pprof mem.proff
+go tool pprof mem.pprof
 > pdf
 ```
 

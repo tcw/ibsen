@@ -108,29 +108,31 @@ func readFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
 	checksum := make([]byte, 4)
-	var logEntries []LogEntry
+	entry := make([]byte, 1024*1024)
+	logEntries := make([]LogEntry, batchSize)
+	slicePointer := 0
 	var lastOffset Offset
 
 	for {
-		if logEntries != nil && uint32(len(logEntries))%batchSize == 0 {
+		if slicePointer != 0 && uint32(slicePointer)%batchSize == 0 {
 			wg.Add(1)
-			sendingEntries := logEntries
+			sendingEntries := logEntries[:slicePointer]
 			logChan <- &sendingEntries
-			logEntries = nil
+			slicePointer = 0
 		}
 		if lastOffset >= lastWrittenOffset {
-			if logEntries != nil && len(logEntries) > 0 {
+			if slicePointer != 0 && slicePointer > 0 {
 				wg.Add(1)
-				sendingEntries := logEntries
+				sendingEntries := logEntries[:slicePointer]
 				logChan <- &sendingEntries
 			}
 			return lastOffset, nil
 		}
 		_, err := io.ReadFull(reader, bytes)
 		if err == io.EOF {
-			if logEntries != nil && len(logEntries) > 0 {
+			if logEntries != nil && slicePointer > 0 {
 				wg.Add(1)
-				sendingEntries := logEntries
+				sendingEntries := logEntries[:slicePointer]
 				logChan <- &sendingEntries
 			}
 			return lastOffset, nil
@@ -152,17 +154,20 @@ func readFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 		}
 		size := littleEndianToUint64(bytes)
 
-		entry := make([]byte, size)
-		_, err = io.ReadFull(reader, entry)
+		if int(size) > len(entry) {
+			entry = make([]byte, size)
+		}
+		_, err = io.ReadFull(reader, entry[:size])
 		if err != nil {
 			return lastOffset, errore.WrapWithContext(err)
 		}
-		logEntries = append(logEntries, LogEntry{
+		logEntries[slicePointer] = LogEntry{
 			Offset:   uint64(offset),
 			Crc:      checksumValue,
 			ByteSize: int(size),
-			Entry:    entry,
-		})
+			Entry:    entry[:size],
+		}
+		slicePointer = slicePointer + 1
 		lastOffset = Offset(offset)
 	}
 }
