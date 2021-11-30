@@ -106,7 +106,8 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 func sendBatchMessage(logChan chan *[]access.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadServer) {
 	for {
 		entryBatch := <-logChan
-		if len(*entryBatch) == 0 {
+		batch := *entryBatch
+		if len(batch) == 0 {
 			break
 		}
 		err := outStream.Send(&OutputEntries{

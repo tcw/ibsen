@@ -117,10 +117,11 @@ func readFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 			wg.Add(1)
 			sendingEntries := logEntries[:slicePointer]
 			logChan <- &sendingEntries
+			logEntries = make([]LogEntry, batchSize)
 			slicePointer = 0
 		}
 		if lastOffset >= lastWrittenOffset {
-			if slicePointer != 0 && slicePointer > 0 {
+			if slicePointer > 0 {
 				wg.Add(1)
 				sendingEntries := logEntries[:slicePointer]
 				logChan <- &sendingEntries
