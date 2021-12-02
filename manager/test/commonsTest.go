@@ -7,7 +7,6 @@ import (
 	"github.com/tcw/ibsen/manager"
 	"io"
 	"log"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -27,12 +26,12 @@ func setUp() {
 }
 
 func readVerification(t *testing.T, logChan chan *[]access.LogEntry, wg *sync.WaitGroup) {
-	counter := 0
 	for true {
 		entryBatch := <-logChan
-		counter = counter + 1
 		entries := *entryBatch
-		log.Println(strconv.Itoa(counter) + " " + strconv.FormatUint(entries[0].Offset, 10))
+		for _, entry := range entries {
+			log.Println(entry)
+		}
 		wg.Done()
 	}
 }
@@ -40,7 +39,7 @@ func readVerification(t *testing.T, logChan chan *[]access.LogEntry, wg *sync.Wa
 func writeEvery100ms(handler *manager.TopicHandler, total time.Duration, writeEvery time.Duration) {
 	readTTL := time.Now().Add(total)
 	for time.Until(readTTL) > 0 {
-		_, err := handler.Write(createEntry(1000))
+		_, err := handler.Write(createEntry(10))
 		if err != nil {
 			log.Fatal(err)
 		}

@@ -6,6 +6,7 @@ import (
 	"github.com/tcw/ibsen/errore"
 	"hash/crc32"
 	"io"
+	"math"
 	"sync"
 )
 
@@ -14,7 +15,7 @@ type LogAccess interface {
 	CreateTopic(topic Topic) error
 	Write(fileName FileName, entries Entries, fromOffset Offset) (Offset, BlockSizeInBytes, error)
 	ReadTopicLogBlocks(topic Topic) (Blocks, error)
-	ReadLog(fileName FileName, readBatchParam ReadParams, byteOffset int64, lastWrittenOffset Offset) (Offset, error)
+	ReadLog(fileName FileName, readBatchParam ReadParams, byteOffset int64, nextOffset Offset) (Offset, error)
 }
 
 var _ LogAccess = ReadWriteLogAccess{}
@@ -65,7 +66,7 @@ func (la ReadWriteLogAccess) ReadTopicLogBlocks(topic Topic) (Blocks, error) {
 	return domainBlocks, nil
 }
 
-func (la ReadWriteLogAccess) ReadLog(fileName FileName, readBatchParam ReadParams, byteOffset int64, lastWrittenOffset Offset) (Offset, error) {
+func (la ReadWriteLogAccess) ReadLog(fileName FileName, readBatchParam ReadParams, byteOffset int64, currentOffset Offset) (Offset, error) {
 	logFile, err := OpenFileForRead(la.Afs, string(fileName))
 	defer logFile.Close()
 	if err != nil {
@@ -86,7 +87,7 @@ func (la ReadWriteLogAccess) ReadLog(fileName FileName, readBatchParam ReadParam
 			return 0, errore.WrapWithContext(err)
 		}
 		if offset < readBatchParam.Offset {
-			err = fastForwardToOffset(logFile, readBatchParam.Offset, lastWrittenOffset)
+			err = fastForwardToOffset(logFile, readBatchParam.Offset, currentOffset)
 			if err == io.EOF {
 				return readBatchParam.Offset, nil
 			}
@@ -96,21 +97,22 @@ func (la ReadWriteLogAccess) ReadLog(fileName FileName, readBatchParam ReadParam
 		}
 	}
 
-	lastOffset, err := readFile(logFile, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize, lastWrittenOffset)
+	lastOffset, err := readFile(logFile, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize, currentOffset)
 	if err != nil {
 		return lastOffset, errore.WrapWithContext(err)
 	}
 	return lastOffset, nil
 }
 
-func readFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, batchSize uint32, lastWrittenOffset Offset) (Offset, error) {
+func readFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, batchSize uint32, currentOffset Offset) (Offset, error) {
 
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
 	checksum := make([]byte, 4)
 	logEntries := make([]LogEntry, batchSize)
 	slicePointer := 0
-	var lastOffset Offset
+	var lastOffset Offset = math.MaxUint64
+	readAtLeastOneEntry := false
 
 	for {
 		if slicePointer != 0 && uint32(slicePointer)%batchSize == 0 {
@@ -120,11 +122,14 @@ func readFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 			logEntries = make([]LogEntry, batchSize)
 			slicePointer = 0
 		}
-		if lastOffset >= lastWrittenOffset {
+		if lastOffset != math.MaxUint64 && lastOffset == currentOffset {
 			if slicePointer > 0 {
 				wg.Add(1)
 				sendingEntries := logEntries[:slicePointer]
 				logChan <- &sendingEntries
+			}
+			if readAtLeastOneEntry {
+				return lastOffset + 1, nil
 			}
 			return lastOffset, nil
 		}
@@ -134,6 +139,9 @@ func readFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 				wg.Add(1)
 				sendingEntries := logEntries[:slicePointer]
 				logChan <- &sendingEntries
+			}
+			if readAtLeastOneEntry {
+				return lastOffset + 1, nil
 			}
 			return lastOffset, nil
 		}
@@ -169,6 +177,7 @@ func readFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 		}
 		slicePointer = slicePointer + 1
 		lastOffset = Offset(offset)
+		readAtLeastOneEntry = true
 	}
 }
 

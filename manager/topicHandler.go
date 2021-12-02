@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+var NoOffset error = errors.New("no offset exits for this topic")
+
 type TopicHandler struct {
 	Afs            *afero.Afero
 	RootPath       string
@@ -81,7 +83,7 @@ func (t *TopicHandler) Write(entries access.Entries) (uint32, error) {
 
 func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {
 	err := t.Load()
-	if params.Offset == t.NextLogOffset-1 {
+	if params.Offset == t.NextLogOffset {
 		return params.Offset, nil
 	}
 	if err != nil {
@@ -111,7 +113,11 @@ func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {
 		if !exists {
 			return lastReadOffset, nil
 		}
-		lastReadOffset, err = t.LogAccess.ReadLog(logFileName, params, byteOffset, t.NextLogOffset-1)
+		currentOffset, err := t.currentOffset()
+		if err == NoOffset {
+			return 0, err
+		}
+		lastReadOffset, err = t.LogAccess.ReadLog(logFileName, params, byteOffset, currentOffset)
 		if err == io.EOF {
 			return lastReadOffset, nil
 		}
@@ -153,7 +159,7 @@ func (t *TopicHandler) Status() (string, error) {
 	report = report + fmt.Sprintf("----------------------------------------------------\n")
 	report = report + fmt.Sprintf("Topic: %s\n", topic)
 	report = report + fmt.Sprintf("----------------------------------------------------\n")
-	report = report + fmt.Sprintf("Log Offset: %d\n", logOffset)
+	report = report + fmt.Sprintf("Next Log Offset: %d\n", logOffset)
 	report = report + fmt.Sprintf("----------------------------------------------------\n")
 	report = report + fmt.Sprintf("Index Log Offset: %d\n", indexOffset)
 	report = report + fmt.Sprintf("----------------------------------------------------\n")
@@ -195,6 +201,7 @@ func (t *TopicHandler) lazyLoad() error {
 	}
 	t.IndexBlocks = &indexBlocks
 	offset, err := t.findLastOffset()
+	log.Printf("Loading topic %s, last offset %d", t.Topic, offset)
 	head := t.LogBlocks.Head()
 	logFileName := head.LogFileName(t.RootPath, t.Topic)
 	fileExists, err := t.Afs.Exists(string(logFileName))
@@ -209,10 +216,7 @@ func (t *TopicHandler) lazyLoad() error {
 		t.HeadBlockSize = access.BlockSizeInBytes(size)
 	}
 
-	if err != nil {
-		return errore.WrapWithContext(err)
-	}
-	t.NextLogOffset = offset + 1
+	t.NextLogOffset = offset
 	return nil
 }
 
@@ -315,4 +319,11 @@ func (t *TopicHandler) findLastOffset() (access.Offset, error) {
 		return 0, errore.WrapWithContext(err)
 	}
 	return access.Offset(offset), nil
+}
+
+func (t *TopicHandler) currentOffset() (access.Offset, error) {
+	if t.NextLogOffset == 0 {
+		return 0, NoOffset
+	}
+	return t.NextLogOffset - access.Offset(1), nil
 }

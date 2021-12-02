@@ -95,13 +95,13 @@ func listAllTopics(afs *afero.Afero, dir string) ([]Topic, error) {
 	return filenames, nil
 }
 
-func fastForwardToOffset(file afero.File, offset Offset, lastWrittenOffset Offset) error { //Todo: replace with index
+func fastForwardToOffset(file afero.File, offset Offset, currentOffset Offset) error {
 	var offsetFound Offset = math.MaxInt64
 	for {
-		if offsetFound == lastWrittenOffset {
+		if offsetFound == currentOffset {
 			return io.EOF
 		}
-		if offsetFound == offset {
+		if offsetFound+1 == offset {
 			return nil
 		}
 		bytes := make([]byte, 8)
@@ -182,7 +182,7 @@ func FindByteOffsetFromOffset(afs *afero.Afero, fileName FileName, startAtByteOf
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
 		}
-		if Offset(offsetInFile) == offset {
+		if Offset(offsetInFile+1) == offset {
 			return byteOffset, nil
 		}
 		if err != nil {

@@ -3,6 +3,7 @@ package test
 import (
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/manager"
+	"log"
 	"sync"
 	"testing"
 	"time"
@@ -10,24 +11,23 @@ import (
 
 func TestLogT(t *testing.T) {
 	setUp()
-	const tenMB = 1024 * 1024
-	topicsManager, err := manager.NewLogTopicsManager(afs, 2*time.Second, 100*time.Millisecond, rootPath, tenMB)
+	topicsManager, err := manager.NewLogTopicsManager(afs, 1*time.Second, 200*time.Millisecond, rootPath, 100)
 	if err != nil {
 		t.Error(err)
 	}
 	const testTopic = "cars"
-	_, err = topicsManager.Write(testTopic, createEntry(1000))
+	_, err = topicsManager.Write(testTopic, createEntry(10))
 	if err != nil {
 		t.Error(err)
 	}
-	go writeEvery100ms(topicsManager.Topics[testTopic], 1*time.Second, 10*time.Millisecond)
-
+	handler := topicsManager.Topics[testTopic]
+	//go writeEvery100ms(handler, 1*time.Second, 100*time.Millisecond)
 	logChan := make(chan *[]access.LogEntry)
 	var wg sync.WaitGroup
 	go readVerification(t, logChan, &wg)
 	err = topicsManager.Read(access.ReadParams{
 		Topic:     testTopic,
-		Offset:    0,
+		Offset:    2,
 		BatchSize: 1000,
 		LogChan:   logChan,
 		Wg:        &wg,
@@ -36,4 +36,9 @@ func TestLogT(t *testing.T) {
 		t.Error(err)
 	}
 	wg.Wait()
+	log.Print(handler.Status())
+	head := handler.IndexBlocks.Head()
+	indexAccess := handler.LogIndexAccess
+	read, err := indexAccess.Read(head.IndexFileName(topicsManager.RootPath, testTopic))
+	log.Printf(read.ToString(), err)
 }
