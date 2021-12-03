@@ -97,14 +97,14 @@ func (la ReadWriteLogAccess) ReadLog(fileName FileName, readBatchParam ReadParam
 		}
 	}
 
-	lastOffset, err := readFile(logFile, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize, currentOffset)
+	lastOffset, err := ReadFile(logFile, readBatchParam.LogChan, readBatchParam.Wg, readBatchParam.BatchSize, currentOffset)
 	if err != nil {
 		return lastOffset, errore.WrapWithContext(err)
 	}
 	return lastOffset, nil
 }
 
-func readFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, batchSize uint32, currentOffset Offset) (Offset, error) {
+func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, batchSize uint32, currentOffset Offset) (Offset, error) {
 
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)

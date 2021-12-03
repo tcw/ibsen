@@ -91,6 +91,60 @@ var (
 		TraverseChildren: true,
 	}
 
+	cmdTools = &cobra.Command{
+		Use:              "tools",
+		Short:            "access files directly from file",
+		Long:             `file`,
+		TraverseChildren: true,
+	}
+
+	cmdToolsReadLogFile = &cobra.Command{
+		Use:              "read [file] [optional batch size (default 1000)]",
+		Short:            "bench ibsen",
+		Long:             `file`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			batchSize := 1000
+			var err error
+			if len(args) < 1 {
+				fmt.Println("First parameter must be file name")
+				return
+			}
+			if len(args) == 2 {
+				batchSizeString := args[1]
+				batchSize, err = strconv.Atoi(batchSizeString)
+				if err != nil {
+					log.Fatalf("%s is not a number", batchSizeString)
+				}
+			}
+			file := args[0]
+			err = ReadLogFile(file, uint32(batchSize))
+			if err != nil {
+				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+			}
+		},
+	}
+
+	cmdToolsReadIndexLogFile = &cobra.Command{
+		Use:              "read [file] [optional batch size (default 1000)]",
+		Short:            "bench ibsen",
+		Long:             `file`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) < 1 {
+				fmt.Println("First parameter must be file name")
+				return
+			}
+			file := args[0]
+			err := ReadLogIndexFile(file)
+			if err != nil {
+				log.Fatalln(errore.SprintTrace(errore.WrapWithContext(err)))
+			}
+		},
+	}
+
 	cmdClientBench = &cobra.Command{
 		Use:              "bench [options] [topic]",
 		Short:            "bench ibsen",

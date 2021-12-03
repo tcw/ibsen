@@ -51,11 +51,11 @@ func (r ReadWriteLogIndexAccess) Read(indexLogfile FileName) (Index, error) {
 	if !exists {
 		return Index{}, nil
 	}
-	index, err := loadIndex(r.Afs, string(indexLogfile))
+	index, err := LoadIndex(r.Afs, string(indexLogfile))
 	if err != nil {
 		return Index{}, errore.WrapWithContext(err)
 	}
-	return toMarshalledIndex(index)
+	return MarshallIndex(index)
 }
 
 func (r ReadWriteLogIndexAccess) ReadTopicIndexBlocks(topic Topic) (Blocks, error) {
@@ -69,7 +69,7 @@ func (r ReadWriteLogIndexAccess) ReadTopicIndexBlocks(topic Topic) (Blocks, erro
 	return domainBlocks, nil
 }
 
-func loadIndex(afs *afero.Afero, indexFileName string) ([]byte, error) {
+func LoadIndex(afs *afero.Afero, indexFileName string) ([]byte, error) {
 	file, err := OpenFileForRead(afs, indexFileName)
 	defer file.Close()
 	if err != nil {
@@ -82,7 +82,7 @@ func loadIndex(afs *afero.Afero, indexFileName string) ([]byte, error) {
 	return bytes, nil
 }
 
-func toMarshalledIndex(soi []byte) (Index, error) {
+func MarshallIndex(soi []byte) (Index, error) {
 	var numberPart []byte
 	var offset uint64
 	var index = Index{}
