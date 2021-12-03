@@ -201,7 +201,7 @@ func (t *TopicHandler) lazyLoad() error {
 	}
 	t.IndexBlocks = &indexBlocks
 	offset, err := t.findLastOffset()
-	log.Printf("Loading topic %s, last offset %d", t.Topic, offset)
+	log.Printf("Loading topic %s, current offset %d", t.Topic, offset)
 	head := t.LogBlocks.Head()
 	logFileName := head.LogFileName(t.RootPath, t.Topic)
 	fileExists, err := t.Afs.Exists(string(logFileName))

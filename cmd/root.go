@@ -16,14 +16,16 @@ import (
 )
 
 var (
-	host           string
-	serverPort     int
-	maxBlockSizeMB int
-
-	entries int
-
-	cpuProfile string
-	memProfile string
+	host                   string
+	serverPort             int
+	maxBlockSizeMB         int
+	entries                int
+	benchEntiesByteSize    int
+	benchEntiesInEachBatch int
+	benchWriteBaches       int
+	benchReadBatches       int
+	cpuProfile             string
+	memProfile             string
 
 	rootCmd = &cobra.Command{
 		Use:              "ibsen",
@@ -87,6 +89,27 @@ var (
 		Short:            "access files directly from file",
 		Long:             `file`,
 		TraverseChildren: true,
+	}
+
+	cmdClientBench = &cobra.Command{
+		Use:              "bench [options] [topic]",
+		Short:            "bench ibsen",
+		Long:             `file`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) < 1 {
+				fmt.Println("First parameter must be topic name")
+				return
+			}
+			topic := args[0]
+			client := newIbsenBench(host + ":" + strconv.Itoa(serverPort))
+			benchmark, err := client.Benchmark(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches)
+			if err != nil {
+				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+			}
+			fmt.Println(benchmark)
+		},
 	}
 
 	cmdClientWrite = &cobra.Command{
@@ -167,10 +190,17 @@ func init() {
 	rootCmd.Flags().IntVarP(&serverPort, "port", "p", serverPort, "config file (default is current directory)")
 	rootCmd.Flags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
+
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")
+
+	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "bwe", "e", 100, "Entry byte size in bench")
+	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatch, "ben", "b", 1000, "Entries in each batch in bench")
+	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "r", 1000, "Read in batches of")
+	cmdClientBench.Flags().IntVarP(&benchWriteBaches, "bwb", "w", 1000, "Write in batches of")
+
 	rootCmd.AddCommand(cmdServer, cmdClient)
-	cmdClient.AddCommand(cmdClientWrite, cmdClientRead)
+	cmdClient.AddCommand(cmdClientWrite, cmdClientRead, cmdClientBench)
 }
 
 func getenv(key, fallback string) string {

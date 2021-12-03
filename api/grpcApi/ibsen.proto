@@ -7,33 +7,33 @@ option java_outer_classname = "IbsenProto";
 option objc_class_prefix = "IBSEN";
 
 service Ibsen {
-    rpc write (InputEntries) returns (WriteStatus) {
-    }
-    rpc read (ReadParams) returns (stream OutputEntries) {
-    }
+  rpc write (InputEntries) returns (WriteStatus) {
+  }
+  rpc read (ReadParams) returns (stream OutputEntries) {
+  }
 }
 
 message WriteStatus {
-    int64 wrote = 1;
+  int64 wrote = 1;
 }
 
 message ReadParams {
-    string topic = 1;
-    uint64 offset = 2;
-    uint32 batchSize = 3;
-    bool stopOnCompletion = 4;
+  string topic = 1;
+  uint64 offset = 2;
+  uint32 batchSize = 3;
+  bool stopOnCompletion = 4;
 }
 
 message InputEntries {
-    string topic = 1;
-    repeated bytes entries = 2;
+  string topic = 1;
+  repeated bytes entries = 2;
 }
 
 message Entry{
-    uint64 offset = 1;
-    bytes content = 2;
+  uint64 offset = 1;
+  bytes content = 2;
 }
 
 message OutputEntries {
-    repeated Entry entries = 2;
+  repeated Entry entries = 2;
 }

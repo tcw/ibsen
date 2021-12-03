@@ -73,8 +73,9 @@ func TestWriteToTopic(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	if readOffset != access.Offset(1) {
+	nextOffset := access.Offset(2)
+	if readOffset != nextOffset {
 		t.Fail()
-		t.Logf("expected %d actual %d", access.Offset(1), readOffset)
+		t.Logf("expected %d actual %d", nextOffset, readOffset)
 	}
 }
