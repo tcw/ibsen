@@ -253,7 +253,8 @@ func init() {
 	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "r", 1000, "Read in batches of")
 	cmdClientBench.Flags().IntVarP(&benchWriteBaches, "bwb", "w", 1000, "Write in batches of")
 
-	rootCmd.AddCommand(cmdServer, cmdClient)
+	rootCmd.AddCommand(cmdServer, cmdClient, cmdTools)
+	cmdTools.AddCommand(cmdToolsReadIndexLogFile, cmdToolsReadLogFile)
 	cmdClient.AddCommand(cmdClientWrite, cmdClientRead, cmdClientBench)
 }
 
