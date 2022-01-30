@@ -18,6 +18,9 @@ type LogIndexAccess interface {
 	ReadTopicIndexBlocks(topic Topic) (Blocks, error)
 }
 
+type IndexType uint16
+type CompressionType uint16
+
 var NoFile error = errors.New("no such file")
 
 var _ LogIndexAccess = ReadWriteLogIndexAccess{}
@@ -85,9 +88,17 @@ func LoadIndex(afs *afero.Afero, indexFileName string) ([]byte, error) {
 func MarshallIndex(soi []byte) (Index, error) {
 	var numberPart []byte
 	var offset uint64
-	var index = Index{}
 	isOffset := true
-	for _, byteValue := range soi {
+	indexHeaderType := littleEndianToUint16(soi[:2])
+	indexHeaderDensity := littleEndianToUint32(soi[2:6])
+	indexHeaderCompression := littleEndianToUint16(soi[6:8])
+	var index = Index{
+		indexType:        IndexType(indexHeaderType),
+		density:          indexHeaderDensity,
+		indexCompression: CompressionType(indexHeaderCompression),
+		IndexOffsets:     nil,
+	}
+	for _, byteValue := range soi[4:] {
 		numberPart = append(numberPart, byteValue)
 		if !isLittleEndianMSBSet(byteValue) {
 			value, n := protowire.ConsumeVarint(numberPart)
@@ -156,6 +167,8 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
+	} else {
+		index = append(createIndexHeader(FixedInterval, oneEntryForEvery, NoCompression))
 	}
 	isFirst := true
 	reader := bufio.NewReader(file)
@@ -196,7 +209,30 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 	}
 }
 
+// |-- (index type) 2 byte --|--(index density) 4 byte --|-- (compression type) 2 byte --|
+func createIndexHeader(indexHeaderType IndexType, indexDensity uint32, compression CompressionType) []byte {
+	var indexHeader []byte
+	typeBytes := uint16ToLittleEndian(uint16(indexHeaderType))
+	densityBytes := uint32ToLittleEndian(indexDensity)
+	compressionBytes := uint16ToLittleEndian(uint16(compression))
+	indexHeader = append(indexHeader, typeBytes...)
+	indexHeader = append(indexHeader, densityBytes...)
+	indexHeader = append(indexHeader, compressionBytes...)
+	return indexHeader
+}
+
 func toVarInt(byteOffset int64) []byte {
 	var bytes []byte
 	return protowire.AppendVarint(bytes, uint64(byteOffset))
 }
+
+const (
+	FixedInterval IndexType = iota
+	//Next
+)
+
+const (
+	NoCompression CompressionType = iota
+	//StandardZ
+	//Snappy
+)

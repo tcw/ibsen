@@ -6,7 +6,10 @@ import (
 )
 
 type Index struct {
-	IndexOffsets []IndexOffset
+	indexType        IndexType
+	density          uint32
+	indexCompression CompressionType
+	IndexOffsets     []IndexOffset
 }
 
 func (idx Index) Size() int {
