@@ -3,9 +3,9 @@ package access
 import (
 	"bufio"
 	"errors"
+	"github.com/golang/protobuf/proto"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
-	"google.golang.org/protobuf/encoding/protowire"
 	"io"
 	"math"
 	"path"
@@ -101,7 +101,7 @@ func MarshallIndex(soi []byte) (Index, error) {
 	for _, byteValue := range soi[4:] {
 		numberPart = append(numberPart, byteValue)
 		if !isLittleEndianMSBSet(byteValue) {
-			value, n := protowire.ConsumeVarint(numberPart)
+			value, n := proto.DecodeVarint(numberPart)
 			if n < 0 {
 				return Index{}, errore.NewWithContext("Vararg returned negative numberPart, indicating a parsing error")
 			}
@@ -209,7 +209,7 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 	}
 }
 
-// |-- (index type) 2 byte --|--(index density) 4 byte --|-- (compression type) 2 byte --|
+// |-- (index type) 2 byte --|-- (index density) 4 byte --|-- (compression type) 2 byte --|
 func createIndexHeader(indexHeaderType IndexType, indexDensity uint32, compression CompressionType) []byte {
 	var indexHeader []byte
 	typeBytes := uint16ToLittleEndian(uint16(indexHeaderType))
@@ -222,8 +222,7 @@ func createIndexHeader(indexHeaderType IndexType, indexDensity uint32, compressi
 }
 
 func toVarInt(byteOffset int64) []byte {
-	var bytes []byte
-	return protowire.AppendVarint(bytes, uint64(byteOffset))
+	return proto.EncodeVarint(uint64(byteOffset))
 }
 
 const (
