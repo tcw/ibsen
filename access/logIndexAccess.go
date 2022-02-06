@@ -89,6 +89,9 @@ func (r ReadWriteLogIndexAccess) ReadTopicIndexBlocks(topic Topic) (Blocks, erro
 
 func LoadIndex(afs *afero.Afero, indexFileName string) ([]byte, error) {
 	file, err := OpenFileForRead(afs, indexFileName)
+	if err != nil {
+		return nil, errore.WrapWithContextAndMessage(err, "opening file: %s", indexFileName)
+	}
 	defer file.Close()
 	if err != nil {
 		return nil, errore.WrapWithContext(err)

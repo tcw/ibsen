@@ -28,7 +28,9 @@ func (idx Index) Head() IndexOffset {
 }
 
 func (idx Index) ToString() string {
-	indexToString := ""
+	indexToString := fmt.Sprintf("Header [type: %d, density: %d, compression: %d] \n",
+		idx.indexType, idx.density, idx.indexCompression)
+	indexToString = indexToString + fmt.Sprintf("log offset -> byte offset\n")
 	for _, offset := range idx.IndexOffsets {
 		indexToString = indexToString + fmt.Sprintf("%d -> %d\n", offset.Offset, offset.ByteOffset)
 	}

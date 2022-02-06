@@ -127,7 +127,7 @@ var (
 	}
 
 	cmdToolsReadIndexLogFile = &cobra.Command{
-		Use:              "read [file] [optional batch size (default 1000)]",
+		Use:              "readidx [file]",
 		Short:            "bench ibsen",
 		Long:             `file`,
 		TraverseChildren: true,
@@ -137,8 +137,11 @@ var (
 				fmt.Println("First parameter must be file name")
 				return
 			}
-			file := args[0]
-			err := ReadLogIndexFile(file)
+			absolutePath, err := filepath.Abs(args[0])
+			if err != nil {
+				log.Fatal(err)
+			}
+			err = ReadLogIndexFile(absolutePath)
 			if err != nil {
 				log.Fatalln(errore.SprintTrace(errore.WrapWithContext(err)))
 			}
