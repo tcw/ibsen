@@ -49,3 +49,16 @@ func TestErrorTraceSprint(t *testing.T) {
 		t.Fail()
 	}
 }
+
+func TestErrorWrapWithNew(t *testing.T) {
+	err := WrapWithContextAndMessage(errors.New("err1"), "err2")
+	err2 := WrapWithContext(err)
+	trace := SprintTrace(err2)
+	println(trace)
+	if !strings.Contains(trace, "err1") {
+		t.Fail()
+	}
+	if !strings.Contains(trace, "[err2]") {
+		t.Fail()
+	}
+}

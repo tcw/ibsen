@@ -14,6 +14,13 @@ func NewWithContext(format string, v ...interface{}) error {
 	return fmt.Errorf("at %s(%s:%d) %w", functionName, file, line, errors.New(err))
 }
 
+func WrapWithContextAndMessage(err error, format string, v ...interface{}) error {
+	pc, file, line, _ := runtime.Caller(1)
+	functionName := runtime.FuncForPC(pc).Name()
+	additional := fmt.Sprintf(format, v...)
+	return fmt.Errorf("at %s(%s:%d) [%s] %w", functionName, file, line, additional, err)
+}
+
 func WrapWithContext(err error) error {
 	pc, file, line, _ := runtime.Caller(1)
 	functionName := runtime.FuncForPC(pc).Name()

@@ -22,6 +22,7 @@ type IndexType uint16
 type CompressionType uint16
 
 var NoFile error = errors.New("no such file")
+var NoBytesInIndex = errors.New("no bytes in index")
 
 var _ LogIndexAccess = ReadWriteLogIndexAccess{}
 
@@ -35,6 +36,9 @@ func (r ReadWriteLogIndexAccess) Write(logfile FileName, logfileByteOffset int64
 	index, err := createIndex(r.Afs, logfile, logfileByteOffset, densityToOneInEvery(r.IndexDensity))
 	if err == NoFile {
 		return 0, err
+	}
+	if index == nil {
+		return 0, nil
 	}
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
@@ -54,11 +58,22 @@ func (r ReadWriteLogIndexAccess) Read(indexLogfile FileName) (Index, error) {
 	if !exists {
 		return Index{}, nil
 	}
+	size, err := FileSize(r.Afs, string(indexLogfile))
+	if err != nil {
+		return Index{}, err
+	}
+	if size == 0 {
+		return Index{}, nil
+	}
 	index, err := LoadIndex(r.Afs, string(indexLogfile))
 	if err != nil {
 		return Index{}, errore.WrapWithContext(err)
 	}
-	return MarshallIndex(index)
+	marshalledIndex, err := MarshallIndex(index)
+	if err != nil {
+		return Index{}, errore.WrapWithContextAndMessage(err, "reading index file: %s", indexLogfile)
+	}
+	return marshalledIndex, err
 }
 
 func (r ReadWriteLogIndexAccess) ReadTopicIndexBlocks(topic Topic) (Blocks, error) {
@@ -86,6 +101,9 @@ func LoadIndex(afs *afero.Afero, indexFileName string) ([]byte, error) {
 }
 
 func MarshallIndex(soi []byte) (Index, error) {
+	if len(soi) == 0 {
+		return Index{}, NoBytesInIndex
+	}
 	var numberPart []byte
 	var offset uint64
 	isOffset := true
@@ -98,7 +116,7 @@ func MarshallIndex(soi []byte) (Index, error) {
 		indexCompression: CompressionType(indexHeaderCompression),
 		IndexOffsets:     nil,
 	}
-	for _, byteValue := range soi[4:] {
+	for _, byteValue := range soi[8:] {
 		numberPart = append(numberPart, byteValue)
 		if !isLittleEndianMSBSet(byteValue) {
 			value, n := proto.DecodeVarint(numberPart)
@@ -155,6 +173,7 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 	if !exists {
 		return nil, NoFile
 	}
+
 	file, err := OpenFileForRead(afs, string(logFile))
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
