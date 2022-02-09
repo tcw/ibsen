@@ -110,16 +110,10 @@ func MarshallIndex(soi []byte) (Index, error) {
 	var numberPart []byte
 	var offset uint64
 	isOffset := true
-	indexHeaderType := littleEndianToUint16(soi[:2])
-	indexHeaderDensity := littleEndianToUint32(soi[2:6])
-	indexHeaderCompression := littleEndianToUint16(soi[6:8])
 	var index = Index{
-		indexType:        IndexType(indexHeaderType),
-		density:          indexHeaderDensity,
-		indexCompression: CompressionType(indexHeaderCompression),
-		IndexOffsets:     nil,
+		IndexOffsets: nil,
 	}
-	for _, byteValue := range soi[8:] {
+	for _, byteValue := range soi {
 		numberPart = append(numberPart, byteValue)
 		if !isLittleEndianMSBSet(byteValue) {
 			value, n := proto.DecodeVarint(numberPart)
@@ -189,8 +183,6 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-	} else {
-		index = append(createIndexHeader(FixedInterval, oneEntryForEvery, NoCompression))
 	}
 	isFirst := true
 	reader := bufio.NewReader(file)
@@ -213,7 +205,7 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 		if err != nil {
 			return nil, errore.WrapWithContext(err)
 		}
-		size := littleEndianToUint64(bytes)
+		size := littleEndianToUint32(bytes)
 
 		entry := make([]byte, size)
 		entrySize, err := io.ReadFull(reader, entry)
@@ -231,17 +223,16 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 	}
 }
 
-// |-- (index type) 2 byte --|-- (index density) 4 byte --|-- (compression type) 2 byte --|
-func createIndexHeader(indexHeaderType IndexType, indexDensity uint32, compression CompressionType) []byte {
-	var indexHeader []byte
-	typeBytes := uint16ToLittleEndian(uint16(indexHeaderType))
-	densityBytes := uint32ToLittleEndian(indexDensity)
-	compressionBytes := uint16ToLittleEndian(uint16(compression))
-	indexHeader = append(indexHeader, typeBytes...)
-	indexHeader = append(indexHeader, densityBytes...)
-	indexHeader = append(indexHeader, compressionBytes...)
-	return indexHeader
-}
+// Todo: evaluate if this is needed
+// |-- (index type) 2 byte --|-- (compression type) 2 byte --|
+//func createIndexHeader(indexHeaderType IndexType, compression CompressionType) []byte {
+//	var indexHeader []byte
+//	typeBytes := uint16ToLittleEndian(uint16(indexHeaderType))
+//	compressionBytes := uint16ToLittleEndian(uint16(compression))
+//	indexHeader = append(indexHeader, typeBytes...)
+//	indexHeader = append(indexHeader, compressionBytes...)
+//	return indexHeader
+//}
 
 func toVarInt(byteOffset int64) []byte {
 	return proto.EncodeVarint(uint64(byteOffset))

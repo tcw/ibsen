@@ -286,12 +286,6 @@ func uint16ToLittleEndian(number uint16) []byte {
 	return bytes
 }
 
-func intToLittleEndian(number int) []byte {
-	bytes := make([]byte, 8)
-	binary.LittleEndian.PutUint32(bytes, uint32(number))
-	return bytes
-}
-
 func littleEndianToUint64(bytes []byte) uint64 {
 	return binary.LittleEndian.Uint64(bytes)
 }

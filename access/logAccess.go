@@ -182,10 +182,19 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 }
 
 func writeBatchToFile(file afero.File, entries Entries, fromOffset Offset) (Offset, BlockSizeInBytes, error) {
-	var bytes []byte
 	currentOffset := fromOffset
+	neededAllocation := 0
 	for _, entry := range *entries {
-		bytes = append(bytes, createByteEntry(entry, currentOffset)...)
+		neededAllocation = neededAllocation + len(entry) + 20
+	}
+	var bytes = make([]byte, neededAllocation)
+	start := 0
+	end := 0
+	for _, entry := range *entries {
+		byteEntry := createByteEntry(entry, currentOffset)
+		end = start + len(byteEntry)
+		copy(bytes[start:end], byteEntry)
+		start = start + len(byteEntry)
 		currentOffset = currentOffset + 1
 	}
 	n, err := file.Write(bytes)
@@ -197,13 +206,11 @@ func writeBatchToFile(file afero.File, entries Entries, fromOffset Offset) (Offs
 
 func createByteEntry(entry []byte, currentOffset Offset) []byte {
 	offset := uint64ToLittleEndian(uint64(currentOffset))
-	byteSize := intToLittleEndian(len(entry))
+	entrySize := len(entry)
+	byteSize := uint64ToLittleEndian(uint64(entrySize))
 	checksum := crc32.Checksum(offset, crc32q)
 	checksum = crc32.Update(checksum, crc32q, byteSize)
 	checksum = crc32.Update(checksum, crc32q, entry)
 	check := uint32ToLittleEndian(checksum)
-	bytes := append(offset, check...)
-	bytes = append(bytes, byteSize...)
-	bytes = append(bytes, entry...)
-	return bytes
+	return JoinSize(20+entrySize, offset, check, byteSize, entry)
 }

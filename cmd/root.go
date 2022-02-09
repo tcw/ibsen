@@ -99,8 +99,8 @@ var (
 	}
 
 	cmdToolsReadLogFile = &cobra.Command{
-		Use:              "read [file] [optional batch size (default 1000)]",
-		Short:            "bench ibsen",
+		Use:              "read-log [file] [optional batch size (default 1000)]",
+		Short:            "read ibsen log file from disk",
 		Long:             `file`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(0),
@@ -118,7 +118,10 @@ var (
 					log.Fatalf("%s is not a number", batchSizeString)
 				}
 			}
-			file := args[0]
+			file, err := filepath.Abs(args[0])
+			if err != nil {
+				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+			}
 			err = ReadLogFile(file, uint32(batchSize))
 			if err != nil {
 				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
@@ -127,8 +130,8 @@ var (
 	}
 
 	cmdToolsReadIndexLogFile = &cobra.Command{
-		Use:              "readidx [file]",
-		Short:            "bench ibsen",
+		Use:              "read-index [file]",
+		Short:            "read ibsen index file from disk",
 		Long:             `file`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(0),
@@ -171,7 +174,7 @@ var (
 
 	cmdClientWrite = &cobra.Command{
 		Use:              "write",
-		Short:            "access files directly from file",
+		Short:            "write with grpc client",
 		Long:             `file`,
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(0),
@@ -200,7 +203,7 @@ var (
 	}
 	cmdClientRead = &cobra.Command{
 		Use:              "read [file] [offset (default=0)] [batch size (default=1000)]",
-		Short:            "access files directly from file",
+		Short:            "read with grpc client",
 		Long:             `file`,
 		TraverseChildren: true,
 		Run: func(cmd *cobra.Command, args []string) {
