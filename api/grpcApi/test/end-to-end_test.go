@@ -30,7 +30,7 @@ func startGrpcServer() {
 	if err != nil {
 		log.Fatal(errore.WrapWithContext(err))
 	}
-	topicsManager, err := manager.NewLogTopicsManager(afs, 5*time.Second, 1*time.Second, rootPath, 10)
+	topicsManager, err := manager.NewLogTopicsManager(afs, 15*time.Second, 15*time.Second, rootPath, 1)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -42,16 +42,39 @@ func startGrpcServer() {
 	ibsenServer.StartGRPC(lis)
 }
 
-func TestReadVerification(t *testing.T) {
+func TestReadWriteVerification(t *testing.T) {
 	go startGrpcServer()
-	write()
-	entries, err := read()
+	numberOfEntries := 10000
+	write(numberOfEntries, 100)
+	entries, err := read(0, 1000)
 	if err != nil {
 		t.Error(errore.WrapWithContext(err))
 	}
-	if len(entries) != 10 {
+	if len(entries) != numberOfEntries {
+		t.Logf("Actualt entries read %d expected %d", len(entries), numberOfEntries)
 		t.Fail()
 	}
+	ibsenServer.Shutdown()
+}
+
+func TestReadWriteWithOffsetVerification(t *testing.T) {
+	go startGrpcServer()
+	writeEntries := 1000
+	write(writeEntries, 100)
+	for i := 0; i < writeEntries; i++ {
+		offset := uint64(writeEntries - i)
+		expected := writeEntries - int(offset)
+		entries, err := read(offset, 10)
+		if err != nil {
+			t.Error(errore.WrapWithContext(err))
+		}
+		actual := len(entries)
+		if actual != expected {
+			t.Logf("Actualt entries read %d expected %d", actual, expected)
+			t.Fail()
+		}
+	}
+	ibsenServer.Shutdown()
 }
 
 type IbsenClient struct {
@@ -59,21 +82,21 @@ type IbsenClient struct {
 	Ctx    context.Context
 }
 
-func write() {
+func write(numberOfEntries int, entryByteSize int) {
 	client := newIbsenClient(target)
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	entries := createInputEntries(10, 100)
+	entries := createInputEntries(numberOfEntries, entryByteSize)
 	client.Client.Write(ctx, &entries)
 }
 
-func read() ([]*grpcApi.Entry, error) {
+func read(offset uint64, batchSize uint32) ([]*grpcApi.Entry, error) {
 	client := newIbsenClient(target)
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 	entryStream, err := client.Client.Read(ctx, &grpcApi.ReadParams{
 		StopOnCompletion: true,
 		Topic:            "test",
-		Offset:           0,
-		BatchSize:        10,
+		Offset:           offset,
+		BatchSize:        batchSize,
 	})
 	if err != nil {
 		return nil, errore.WrapWithContext(err)

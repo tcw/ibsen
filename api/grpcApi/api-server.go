@@ -67,6 +67,10 @@ func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener) error {
 	return grpcServer.Serve(listener)
 }
 
+func (igs *IbsenGrpcServer) Shutdown() {
+	igs.IbsenServer.Stop()
+}
+
 var _ IbsenServer = &server{}
 
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
