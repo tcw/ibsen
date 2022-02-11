@@ -90,7 +90,7 @@ func (b *IbsenBench) benchWrite(topic string, entryByteSize int, entriesInEachBa
 }
 
 func createInputEntries(topic string, numberOfEntries int, entryByteSize int) grpcApi.InputEntries {
-	var tmpBytes = make([][]byte, entries)
+	var tmpBytes = make([][]byte, numberOfEntries)
 	for i := 0; i < numberOfEntries; i++ {
 		tmpBytes = append(tmpBytes, createTestValues(entryByteSize))
 	}

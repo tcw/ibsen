@@ -37,7 +37,7 @@ func newIbsenClient(target string) IbsenClient {
 	}
 }
 
-func (ic *IbsenClient) ReadTopic(topic string, offset uint64, batchSize uint32) error {
+func (ic *IbsenClient) Read(topic string, offset uint64, batchSize uint32) error {
 	entryStream, err := ic.Client.Read(ic.Ctx, &grpcApi.ReadParams{
 		StopOnCompletion: true,
 		Topic:            topic,

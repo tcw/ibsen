@@ -19,7 +19,6 @@ var (
 	host                   string
 	serverPort             int
 	maxBlockSizeMB         int
-	entries                int
 	benchEntiesByteSize    int
 	benchEntiesInEachBatch int
 	benchWriteBaches       int
@@ -228,7 +227,7 @@ var (
 				}
 			}
 			client := newIbsenClient(host + ":" + strconv.Itoa(serverPort))
-			err = client.ReadTopic(topic, offset, uint32(batchSize64))
+			err = client.Read(topic, offset, uint32(batchSize64))
 			if err != nil {
 				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
 			}
