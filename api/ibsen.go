@@ -62,7 +62,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		}
 		log.Printf("Waiting for single writer lock on file [%s]...\n", ibs.RootPath)
 		if !ibs.Lock.AcquireLock() {
-			return errore.NewWithContext("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.RootPath)
+			log.Fatalf("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.RootPath)
 		}
 	}
 

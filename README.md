@@ -82,7 +82,6 @@ openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out c
 - topic aliasing
 - improved error recovery/analysis
 - io separated tests (better interfaces)
-- allow reading from the lowest block number
 - block compression (Zstandard,snappy) ?
 
 ## Benchmarks

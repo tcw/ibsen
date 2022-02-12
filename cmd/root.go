@@ -61,7 +61,7 @@ var (
 				afs = &afero.Afero{Fs: fs}
 			}
 			writeLock := absolutePath + string(os.PathSeparator) + ".writeLock"
-			lock := consensus.NewFileLock(afs, writeLock, time.Second*20)
+			lock := consensus.NewFileLock(afs, writeLock, time.Second*10, time.Second*5)
 			ibsenServer := api.IbsenServer{
 				Lock:         lock,
 				InMemory:     inMemory,
