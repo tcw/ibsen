@@ -64,7 +64,7 @@ func (b *IbsenBench) benchRead(topic string, batchSize uint32) (string, error) {
 		in, err := entryStream.Recv()
 		if err == io.EOF {
 			used := time.Now().Sub(start)
-			return fmt.Sprintf("Read\t%d in %s", entriesRead, used), nil
+			return fmt.Sprintf("Read\t%d in %s[batchSize:%d]", entriesRead, used, batchSize), nil
 		}
 		if err != nil {
 			return "", errore.WrapWithContext(err)
@@ -86,11 +86,12 @@ func (b *IbsenBench) benchWrite(topic string, entryByteSize int, entriesInEachBa
 		entriesWritten = entriesWritten + len(inputEntries.Entries)
 	}
 	used := time.Now().Sub(start)
-	return fmt.Sprintf("Wrote\t%d in %s", entriesWritten, used), nil
+	return fmt.Sprintf("Wrote\t%d in %s\t[batchSize:%d, batches:%d, entryByteSize:%d]",
+		entriesWritten, used, entriesInEachBatch, batches, entryByteSize), nil
 }
 
 func createInputEntries(topic string, numberOfEntries int, entryByteSize int) grpcApi.InputEntries {
-	var tmpBytes = make([][]byte, numberOfEntries)
+	var tmpBytes = make([][]byte, 0)
 	for i := 0; i < numberOfEntries; i++ {
 		tmpBytes = append(tmpBytes, createTestValues(entryByteSize))
 	}

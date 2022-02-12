@@ -13,11 +13,11 @@ go get github.com/tcw/ibsen
 #### Create image
 
 ```shell script
-docker build -t ibsen .
+./release.sh
 
 ```
 
-#### Run grpc server version (recommended)
+#### Run Ibsen server as docker container
 
 ```shell script
 docker run --name ibsen_solveig -p 50001:50001 ibsen
@@ -73,12 +73,6 @@ GRPC_GO_LOG_VERBOSITY_LEVEL=99 GRPC_GO_LOG_SEVERITY_LEVEL=info
 openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out cert.pem
 ```
 
-For darwin bench
-
-```shell script
-ibsen client bench read <topic>
-```
-
 ## Todo
 
 - index cache files
@@ -94,11 +88,9 @@ ibsen client bench read <topic>
 
 ## Benchmarks
 
-To free pagecache:
+```shell script
+To free pagecache in linux:
 echo 1 > /proc/sys/vm/drop_caches To free reclaimable slab objects (includes dentries and inodes):
 echo 2 > /proc/sys/vm/drop_caches To free slab objects and pagecache:
 echo 3 > /proc/sys/vm/drop_caches
-
-## Dir types
-
-$ sudo debugfs /dev/partition $ htree / htree: Not a hash-indexed directory
+```
