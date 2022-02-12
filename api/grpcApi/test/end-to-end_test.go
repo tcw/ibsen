@@ -14,6 +14,7 @@ import (
 	"math"
 	"math/rand"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -31,7 +32,7 @@ func startGrpcServer() {
 	if err != nil {
 		log.Fatal(errore.WrapWithContext(err))
 	}
-	topicsManager, err := manager.NewLogTopicsManager(afs, 15*time.Second, 15*time.Second, rootPath, 1)
+	topicsManager, err := manager.NewLogTopicsManager(afs, 30*time.Second, 30*time.Second, rootPath, 1)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -57,6 +58,26 @@ func TestTopicList(t *testing.T) {
 	}
 	if len(topicList.GetTopics()) != 5 {
 		t.Logf("Actualt entries read %d expected %d", len(topicList.GetTopics()), 5)
+	}
+	ibsenServer.Shutdown()
+}
+
+func TestReadWriteLargeObject(t *testing.T) {
+	go startGrpcServer()
+	numberOfEntries := 1
+	objectBytes := writeLarge("test", numberOfEntries, 500_000)
+	entries, err := read("test", 0, uint32(numberOfEntries))
+	if err != nil {
+		t.Error(errore.WrapWithContext(err))
+	}
+	if len(entries) != numberOfEntries {
+		t.Logf("Actualt entries read %d expected %d", len(entries), numberOfEntries)
+		t.Fail()
+	}
+	actualObjectSize := len(entries[0].Content)
+	if actualObjectSize != objectBytes {
+		t.Logf("Actualt object size %d expected %d", objectBytes, actualObjectSize)
+		t.Fail()
 	}
 	ibsenServer.Shutdown()
 }
@@ -103,8 +124,15 @@ type IbsenClient struct {
 
 func list() (*grpcApi.TopicList, error) {
 	client := newIbsenClient(target)
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
 	return client.Client.List(ctx, &empty.Empty{})
+}
+func writeLarge(topic string, numberOfEntries int, entryKb int) int {
+	client := newIbsenClient(target)
+	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	entries, size := createLargeInputEntries(topic, numberOfEntries, entryKb)
+	client.Client.Write(ctx, &entries)
+	return size
 }
 
 func write(topic string, numberOfEntries int, entryByteSize int) {
@@ -148,6 +176,35 @@ func createInputEntries(topic string, numberOfEntries int, entryByteSize int) gr
 		Topic:   topic,
 		Entries: tmpBytes,
 	}
+}
+
+func createLargeInputEntries(topic string, numberOfEntries int, entryKB int) (grpcApi.InputEntries, int) {
+	var tmpBytes = make([][]byte, 0)
+	for i := 0; i < numberOfEntries; i++ {
+		tmpBytes = append(tmpBytes, createLargeTestValues(entryKB))
+	}
+	byteSize := 0
+	for _, tmpByte := range tmpBytes {
+		byteSize = byteSize + len(tmpByte)
+	}
+
+	return grpcApi.InputEntries{
+		Topic:   topic,
+		Entries: tmpBytes,
+	}, byteSize
+}
+
+func createLargeTestValues(entrySizeKB int) []byte {
+	var sbKB strings.Builder
+	for i := 0; i < 10; i++ {
+		sbKB.WriteString("123abcdefghijklmabcdefghijklmnopqrstuvabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
+	}
+	kbString := sbKB.String()
+	var large strings.Builder
+	for i := 0; i < entrySizeKB; i++ {
+		large.WriteString(kbString)
+	}
+	return []byte(large.String())
 }
 
 func createTestValues(entrySizeBytes int) []byte {
