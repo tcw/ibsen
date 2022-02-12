@@ -94,10 +94,13 @@ func (bs Blocks) Contains(offset Offset) (Block, error) {
 }
 
 func (bs Blocks) GetBlocksIncludingAndAfter(offset Offset) ([]Block, error) {
-	if bs.Size() == 0 {
+	if bs.Size() <= 0 {
 		return []Block{}, BlockNotFound
 	}
 	if bs.Size() == 1 {
+		return bs.BlockList[0:], nil
+	}
+	if offset < Offset(bs.Get(0)) {
 		return bs.BlockList[0:], nil
 	}
 	for i := bs.Size() - 1; i >= 0; i-- {

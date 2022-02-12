@@ -64,7 +64,7 @@ func (b *IbsenBench) benchRead(topic string, batchSize uint32) (string, error) {
 		in, err := entryStream.Recv()
 		if err == io.EOF {
 			used := time.Now().Sub(start)
-			return fmt.Sprintf("Read\t%d in %s[batchSize:%d]", entriesRead, used, batchSize), nil
+			return fmt.Sprintf("Read\t%d in %s [batchSize:%d]", entriesRead, used, batchSize), nil
 		}
 		if err != nil {
 			return "", errore.WrapWithContext(err)

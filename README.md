@@ -78,7 +78,6 @@ openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out c
 - index cache files
 - humanized error messages
 - better command completion
-- infinite read streaming (no pull) ?
 - embedded etcd for clustering ?
 - topic aliasing
 - improved error recovery/analysis
