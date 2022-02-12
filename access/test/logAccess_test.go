@@ -6,22 +6,6 @@ import (
 	"testing"
 )
 
-func TestCreateAndListTopic(t *testing.T) {
-	setUp()
-	testTopic := access.Topic("cars")
-	err := logAccess.CreateTopic(testTopic)
-	if err != nil {
-		t.Error(err)
-	}
-	topics, err := logAccess.ListTopics()
-	if err != nil {
-		t.Error(err)
-	}
-	if topics[0] != testTopic {
-		t.Fail()
-	}
-}
-
 func TestWriteToTopic(t *testing.T) {
 	setUp()
 	var blockList []access.Block
@@ -58,7 +42,7 @@ func TestWriteToTopic(t *testing.T) {
 	logChan := make(chan *[]access.LogEntry)
 	var wg sync.WaitGroup
 	go readVerification(t, logChan, &wg)
-	readOffset, err := logAccess.ReadLog(logBlocks.Head().LogFileName(rootPath, testTopic), access.ReadParams{
+	readOffset, err := logAccess.Read(logBlocks.Head().LogFileName(rootPath, testTopic), access.ReadParams{
 		Topic:     testTopic,
 		Offset:    0,
 		BatchSize: 10,

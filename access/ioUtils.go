@@ -80,7 +80,7 @@ func filesToBlocks(paths []string) ([]Block, error) {
 
 func listAllTopics(afs *afero.Afero, dir string) ([]Topic, error) {
 	var filenames []Topic
-	file, err := OpenFileForRead(afs, string(dir))
+	file, err := OpenFileForRead(afs, dir)
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}

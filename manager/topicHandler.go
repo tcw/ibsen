@@ -117,7 +117,7 @@ func (t *TopicHandler) Read(params access.ReadParams) (access.Offset, error) {
 		if err == NoOffset {
 			return 0, err
 		}
-		lastReadOffset, err = t.LogAccess.ReadLog(logFileName, params, byteOffset, currentOffset)
+		lastReadOffset, err = t.LogAccess.Read(logFileName, params, byteOffset, currentOffset)
 		if err == io.EOF {
 			return lastReadOffset, nil
 		}

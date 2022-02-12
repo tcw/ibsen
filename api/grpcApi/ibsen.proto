@@ -1,5 +1,6 @@
 syntax = "proto3";
 
+import "google/protobuf/empty.proto";
 option go_package = "/api/grpcApi";
 option java_multiple_files = true;
 option java_package = "github.com.tcw.ibsen";
@@ -10,6 +11,8 @@ service Ibsen {
   rpc write (InputEntries) returns (WriteStatus) {
   }
   rpc read (ReadParams) returns (stream OutputEntries) {
+  }
+  rpc list (google.protobuf.Empty) returns (TopicList){
   }
 }
 
@@ -27,6 +30,10 @@ message ReadParams {
 message InputEntries {
   string topic = 1;
   repeated bytes entries = 2;
+}
+
+message TopicList{
+  repeated string topics = 1;
 }
 
 message Entry{

@@ -10,6 +10,7 @@ import (
 )
 
 type LogManager interface {
+	List() ([]access.Topic, error)
 	Write(topic access.Topic, entries access.Entries) (uint32, error)
 	Read(params access.ReadParams) error
 }
@@ -17,6 +18,7 @@ type LogManager interface {
 var _ LogManager = LogTopicsManager{}
 
 type LogTopicsManager struct {
+	LogAccess        access.LogAccess
 	Afs              *afero.Afero
 	TTL              time.Duration
 	CheckForNewEvery time.Duration
@@ -41,6 +43,7 @@ func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, checkForNew
 		handlers[topic] = &handler
 	}
 	return LogTopicsManager{
+		LogAccess:        logAccess,
 		Afs:              afs,
 		TTL:              timeToLive,
 		CheckForNewEvery: checkForNewEvery,
@@ -48,6 +51,10 @@ func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, checkForNew
 		RootPath:         rootPath,
 		Topics:           handlers,
 	}, nil
+}
+
+func (l LogTopicsManager) List() ([]access.Topic, error) {
+	return l.LogAccess.ListTopics()
 }
 
 func (l LogTopicsManager) Write(topic access.Topic, entries access.Entries) (uint32, error) {

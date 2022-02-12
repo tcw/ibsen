@@ -12,10 +12,9 @@ import (
 
 type LogAccess interface {
 	ListTopics() ([]Topic, error)
-	CreateTopic(topic Topic) error
 	Write(fileName FileName, entries Entries, fromOffset Offset) (Offset, BlockSizeInBytes, error)
+	Read(fileName FileName, readBatchParam ReadParams, byteOffset int64, nextOffset Offset) (Offset, error)
 	ReadTopicLogBlocks(topic Topic) (Blocks, error)
-	ReadLog(fileName FileName, readBatchParam ReadParams, byteOffset int64, nextOffset Offset) (Offset, error)
 }
 
 var _ LogAccess = ReadWriteLogAccess{}
@@ -31,14 +30,6 @@ func (la ReadWriteLogAccess) ListTopics() ([]Topic, error) {
 		return nil, errore.WrapWithContext(err)
 	}
 	return topics, err
-}
-
-func (la ReadWriteLogAccess) CreateTopic(topic Topic) error {
-	err := la.Afs.Mkdir(la.RootPath+Sep+string(topic), 0640)
-	if err != nil {
-		return errore.WrapWithContext(err)
-	}
-	return nil
 }
 
 func (la ReadWriteLogAccess) Write(fileName FileName, entries Entries, fromOffset Offset) (Offset, BlockSizeInBytes, error) {
@@ -66,7 +57,7 @@ func (la ReadWriteLogAccess) ReadTopicLogBlocks(topic Topic) (Blocks, error) {
 	return domainBlocks, nil
 }
 
-func (la ReadWriteLogAccess) ReadLog(fileName FileName, readBatchParam ReadParams, byteOffset int64, currentOffset Offset) (Offset, error) {
+func (la ReadWriteLogAccess) Read(fileName FileName, readBatchParam ReadParams, byteOffset int64, currentOffset Offset) (Offset, error) {
 	logFile, err := OpenFileForRead(la.Afs, string(fileName))
 	defer logFile.Close()
 	if err != nil {

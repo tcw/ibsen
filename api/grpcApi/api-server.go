@@ -2,6 +2,7 @@ package grpcApi
 
 import (
 	"context"
+	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/manager"
@@ -72,6 +73,21 @@ func (igs *IbsenGrpcServer) Shutdown() {
 }
 
 var _ IbsenServer = &server{}
+
+func (s server) List(ctx context.Context, empty *empty.Empty) (*TopicList, error) {
+	list, err := s.manager.List()
+	return &TopicList{
+		Topics: convertTopics(list),
+	}, err
+}
+
+func convertTopics(topics []access.Topic) []string {
+	var sTopic []string
+	for _, topic := range topics {
+		sTopic = append(sTopic, string(topic))
+	}
+	return sTopic
+}
 
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
 	n, err := s.manager.Write(access.Topic(entries.Topic), &entries.Entries)

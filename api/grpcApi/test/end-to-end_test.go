@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"fmt"
+	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/errore"
@@ -42,11 +43,29 @@ func startGrpcServer() {
 	ibsenServer.StartGRPC(lis)
 }
 
+func TestTopicList(t *testing.T) {
+	go startGrpcServer()
+	write("test1", 10, 10)
+	write("test2", 10, 10)
+	write("test3", 10, 10)
+	write("test4", 10, 10)
+	write("test5", 10, 10)
+
+	topicList, err := list()
+	if err != nil {
+		t.Error(errore.WrapWithContext(err))
+	}
+	if len(topicList.GetTopics()) != 5 {
+		t.Logf("Actualt entries read %d expected %d", len(topicList.GetTopics()), 5)
+	}
+	ibsenServer.Shutdown()
+}
+
 func TestReadWriteVerification(t *testing.T) {
 	go startGrpcServer()
 	numberOfEntries := 10000
-	write(numberOfEntries, 100)
-	entries, err := read(0, 1000)
+	write("test", numberOfEntries, 100)
+	entries, err := read("test", 0, 1000)
 	if err != nil {
 		t.Error(errore.WrapWithContext(err))
 	}
@@ -60,11 +79,11 @@ func TestReadWriteVerification(t *testing.T) {
 func TestReadWriteWithOffsetVerification(t *testing.T) {
 	go startGrpcServer()
 	writeEntries := 1000
-	write(writeEntries, 100)
+	write("test", writeEntries, 100)
 	for i := 0; i < writeEntries; i++ {
 		offset := uint64(writeEntries - i)
 		expected := writeEntries - int(offset)
-		entries, err := read(offset, 10)
+		entries, err := read("test", offset, 10)
 		if err != nil {
 			t.Error(errore.WrapWithContext(err))
 		}
@@ -82,19 +101,25 @@ type IbsenClient struct {
 	Ctx    context.Context
 }
 
-func write(numberOfEntries int, entryByteSize int) {
+func list() (*grpcApi.TopicList, error) {
 	client := newIbsenClient(target)
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
-	entries := createInputEntries(numberOfEntries, entryByteSize)
+	return client.Client.List(ctx, &empty.Empty{})
+}
+
+func write(topic string, numberOfEntries int, entryByteSize int) {
+	client := newIbsenClient(target)
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	entries := createInputEntries(topic, numberOfEntries, entryByteSize)
 	client.Client.Write(ctx, &entries)
 }
 
-func read(offset uint64, batchSize uint32) ([]*grpcApi.Entry, error) {
+func read(topic string, offset uint64, batchSize uint32) ([]*grpcApi.Entry, error) {
 	client := newIbsenClient(target)
 	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 	entryStream, err := client.Client.Read(ctx, &grpcApi.ReadParams{
 		StopOnCompletion: true,
-		Topic:            "test",
+		Topic:            topic,
 		Offset:           offset,
 		BatchSize:        batchSize,
 	})
@@ -114,13 +139,13 @@ func read(offset uint64, batchSize uint32) ([]*grpcApi.Entry, error) {
 	}
 }
 
-func createInputEntries(numberOfEntries int, entryByteSize int) grpcApi.InputEntries {
+func createInputEntries(topic string, numberOfEntries int, entryByteSize int) grpcApi.InputEntries {
 	var tmpBytes = make([][]byte, 0)
 	for i := 0; i < numberOfEntries; i++ {
 		tmpBytes = append(tmpBytes, createTestValues(entryByteSize))
 	}
 	return grpcApi.InputEntries{
-		Topic:   "test",
+		Topic:   topic,
 		Entries: tmpBytes,
 	}
 }
