@@ -20,3 +20,10 @@ func JoinSize(size int, s ...[]byte) []byte {
 	}
 	return b
 }
+
+func JoinSizeFixed(fs []byte, s ...[]byte) {
+	i := 0
+	for _, v := range s {
+		i += copy(fs[i:], v)
+	}
+}
