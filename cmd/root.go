@@ -23,6 +23,7 @@ var (
 	benchEntiesInEachBatch int
 	benchWriteBaches       int
 	benchReadBatches       int
+	concurrent             int
 	cpuProfile             string
 	memProfile             string
 
@@ -163,11 +164,20 @@ var (
 			}
 			topic := args[0]
 			client := newIbsenBench(host + ":" + strconv.Itoa(serverPort))
-			benchmark, err := client.Benchmark(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches)
-			if err != nil {
-				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+			benchmarkReport := ""
+			var err error
+			if concurrent > 1 {
+				benchmarkReport, err = client.BenchmarkConcurrent(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches, concurrent)
+				if err != nil {
+					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				}
+			} else {
+				benchmarkReport, err = client.Benchmark(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches)
+				if err != nil {
+					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				}
 			}
-			fmt.Println(benchmark)
+			fmt.Println(benchmarkReport)
 		},
 	}
 
@@ -257,6 +267,7 @@ func init() {
 	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatch, "ben", "b", 1000, "Entries in each batch in bench")
 	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "r", 1000, "Read in batches of")
 	cmdClientBench.Flags().IntVarP(&benchWriteBaches, "bwb", "w", 1000, "Write in batches of")
+	cmdClientBench.Flags().IntVarP(&concurrent, "concurrent", "c", 1, "Concurrency number")
 
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdTools)
 	cmdTools.AddCommand(cmdToolsReadIndexLogFile, cmdToolsReadLogFile)

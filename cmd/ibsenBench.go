@@ -10,6 +10,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"sync"
 	"time"
 )
 
@@ -36,8 +37,33 @@ func newIbsenBench(target string) IbsenBench {
 	}
 }
 
-func (b *IbsenBench) Benchmark(topic string, writeEntryByteSize int, WriteEntriesInEachBatch int, writeBatches int, readBatchSize int) (string, error) {
-	writeReport, err := b.benchWrite(topic, writeEntryByteSize, WriteEntriesInEachBatch, writeBatches)
+func (b *IbsenBench) BenchmarkConcurrent(topic string, writeEntryByteSize int, writeEntriesInEachBatch int, writeBatches int, readBatchSize int, concurrency int) (string, error) {
+	var wgWrite sync.WaitGroup
+	wgWrite.Add(concurrency)
+	topicPostfixCounter := 1
+	start := time.Now()
+	for i := 0; i < concurrency; i++ {
+		topicWithPostfix := fmt.Sprintf("%s_%d", topic, topicPostfixCounter)
+		go b.benchWriteWaitGroup(topicWithPostfix, writeEntryByteSize, writeEntriesInEachBatch, writeBatches, &wgWrite)
+	}
+	wgWrite.Wait()
+	writeTime := time.Now().Sub(start)
+	var wgRead sync.WaitGroup
+	wgRead.Add(concurrency)
+	topicPostfixCounter = 1
+	start = time.Now()
+	for i := 0; i < concurrency; i++ {
+		topicWithPostfix := fmt.Sprintf("%s_%d", topic, topicPostfixCounter)
+		go b.benchReadWaitGroup(topicWithPostfix, uint32(readBatchSize), &wgRead)
+	}
+	wgRead.Wait()
+	readTime := time.Now().Sub(start)
+	totalWritten := writeEntriesInEachBatch * writeBatches * concurrency
+	return fmt.Sprintf("wrote\t%d in %s\nread\t%d in %s", totalWritten, writeTime, totalWritten, readTime), nil
+}
+
+func (b *IbsenBench) Benchmark(topic string, writeEntryByteSize int, writeEntriesInEachBatch int, writeBatches int, readBatchSize int) (string, error) {
+	writeReport, err := b.benchWrite(topic, writeEntryByteSize, writeEntriesInEachBatch, writeBatches)
 	if err != nil {
 		return "", errore.WrapWithContext(err)
 	}
@@ -46,6 +72,14 @@ func (b *IbsenBench) Benchmark(topic string, writeEntryByteSize int, WriteEntrie
 		return "", errore.WrapWithContext(err)
 	}
 	return fmt.Sprintf("%s\n%s", writeReport, readReport), nil
+}
+
+func (b *IbsenBench) benchReadWaitGroup(topic string, batchSize uint32, wg *sync.WaitGroup) {
+	_, err := b.benchRead(topic, batchSize)
+	if err != nil {
+		log.Fatalln(errore.WrapWithContext(err))
+	}
+	wg.Done()
 }
 
 func (b *IbsenBench) benchRead(topic string, batchSize uint32) (string, error) {
@@ -72,6 +106,14 @@ func (b *IbsenBench) benchRead(topic string, batchSize uint32) (string, error) {
 		entries := in.Entries
 		entriesRead = entriesRead + len(entries)
 	}
+}
+
+func (b *IbsenBench) benchWriteWaitGroup(topic string, entryByteSize int, entriesInEachBatch int, batches int, wg *sync.WaitGroup) {
+	_, err := b.benchWrite(topic, entryByteSize, entriesInEachBatch, batches)
+	if err != nil {
+		log.Fatalln(errore.WrapWithContext(err))
+	}
+	wg.Done()
 }
 
 func (b *IbsenBench) benchWrite(topic string, entryByteSize int, entriesInEachBatch int, batches int) (string, error) {
