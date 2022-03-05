@@ -151,12 +151,13 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 			if err != nil {
 				return lastOffset, errore.WrapWithContext(err)
 			}
-
+			var contentCopy = make([]byte, contentSize)
+			copy(contentCopy, default1MBEntry[:contentSize])
 			logEntries[slicePointer] = LogEntry{
 				Offset:   uint64(offset),
 				Crc:      checksumValue,
 				ByteSize: int(contentSize),
-				Entry:    default1MBEntry[:contentSize],
+				Entry:    contentCopy,
 			}
 		} else {
 			entry := make([]byte, contentSize)

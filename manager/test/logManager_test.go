@@ -16,7 +16,8 @@ func TestLogT(t *testing.T) {
 		t.Error(err)
 	}
 	const testTopic = "cars"
-	_, err = topicsManager.Write(testTopic, createEntry(10))
+	entries := createEntry(10, "hello", 0)
+	_, err = topicsManager.Write(testTopic, entries)
 	if err != nil {
 		t.Error(err)
 	}
@@ -24,7 +25,7 @@ func TestLogT(t *testing.T) {
 	//go writeEvery100ms(handler, 1*time.Second, 100*time.Millisecond)
 	logChan := make(chan *[]access.LogEntry)
 	var wg sync.WaitGroup
-	go readVerification(t, logChan, &wg)
+	go readVerification(t, logChan, &wg, "hello", 2)
 	err = topicsManager.Read(access.ReadParams{
 		Topic:     testTopic,
 		Offset:    2,

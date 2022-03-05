@@ -24,6 +24,8 @@ var (
 	benchWriteBaches       int
 	benchReadBatches       int
 	concurrent             int
+	inMemoryOnly           bool
+	inMemoryOnlySetByEnv   bool
 	cpuProfile             string
 	memProfile             string
 
@@ -44,7 +46,7 @@ var (
 			inMemory := false
 			var afs *afero.Afero
 			absolutePath := "/tmp/data"
-			if len(args) == 0 {
+			if len(args) == 0 || (inMemoryOnlySetByEnv && inMemoryOnly) {
 				var fs = afero.NewMemMapFs()
 				afs = &afero.Afero{Fs: fs}
 				inMemory = true
@@ -253,6 +255,15 @@ func Execute() {
 }
 
 func init() {
+	inMemoryOnlyFromEnv := getenv("IBSEN_IN_MEMORY_ONLY", "")
+	if inMemoryOnlyFromEnv != "" {
+		parseBool, err := strconv.ParseBool(inMemoryOnlyFromEnv)
+		if err != nil {
+			log.Fatal("IBSEN_IN_MEMORY_ONLY has illegal input should be true/false")
+		}
+		inMemoryOnly = parseBool
+		inMemoryOnlySetByEnv = true
+	}
 	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(50001)))
 	host = getenv("IBSEN_HOST", "0.0.0.0")
 	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "1000"))

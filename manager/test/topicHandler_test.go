@@ -27,14 +27,14 @@ func TestTopicHandlerWriteRead(t *testing.T) {
 		t.Error(err)
 	}
 	for i := 0; i < 100; i++ {
-		_, err = handler.Write(createEntry(10000))
+		_, err = handler.Write(createEntry(10000, "hello", 10000*i))
 		if err != nil {
 			t.Error(err)
 		}
 	}
 	logChan := make(chan *[]access.LogEntry)
 	var wg sync.WaitGroup
-	go readVerification(t, logChan, &wg)
+	go readWithoutVerification(logChan, &wg)
 	_, err = handler.Read(access.ReadParams{
 		Topic:     "cars",
 		Offset:    0,

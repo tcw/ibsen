@@ -24,6 +24,8 @@ docker run --name ibsen_solveig -p 50001:50001 ibsen
 
 ```
 
+docker run --name ibsen_solvei -e IBSEN_IN_MEMORY_ONLY='true' -p 50001:50001 ibsen
+
 ## Usage
 
 ### GRPC
