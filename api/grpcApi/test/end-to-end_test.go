@@ -32,7 +32,7 @@ func startGrpcServer() {
 	if err != nil {
 		log.Fatal(errore.WrapWithContext(err))
 	}
-	topicsManager, err := manager.NewLogTopicsManager(afs, 30*time.Second, 30*time.Second, rootPath, 1)
+	topicsManager, err := manager.NewLogTopicsManager(afs, false, 30*time.Second, 30*time.Second, rootPath, 1)
 	if err != nil {
 		log.Fatal(err)
 	}

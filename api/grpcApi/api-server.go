@@ -23,8 +23,6 @@ type server struct {
 }
 
 type IbsenGrpcServer struct {
-	Host        string
-	Port        uint16
 	CertFile    string
 	KeyFile     string
 	UseTls      bool
@@ -34,8 +32,6 @@ type IbsenGrpcServer struct {
 
 func NewIbsenGrpcServer(manager manager.LogManager) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
-		Host:     "0.0.0.0",
-		Port:     50001,
 		CertFile: "",
 		KeyFile:  "",
 		UseTls:   false,

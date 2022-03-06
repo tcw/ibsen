@@ -17,6 +17,7 @@ var NoOffset error = errors.New("no offset exits for this topic")
 
 type TopicHandler struct {
 	Afs            *afero.Afero
+	ReadOnly       bool
 	RootPath       string
 	Topic          access.Topic
 	MaxBlockSize   access.BlockSizeInBytes
@@ -33,9 +34,10 @@ type TopicHandler struct {
 	loaded         bool
 }
 
-func NewTopicHandler(afs *afero.Afero, rootPath string, topic access.Topic, maxBlockSize uint64) TopicHandler {
+func NewTopicHandler(afs *afero.Afero, readOnly bool, rootPath string, topic access.Topic, maxBlockSize uint64) TopicHandler {
 	return TopicHandler{
 		Afs:           afs,
+		ReadOnly:      readOnly,
 		RootPath:      rootPath,
 		MaxBlockSize:  access.BlockSizeInBytes(maxBlockSize),
 		Topic:         topic,
@@ -139,7 +141,9 @@ func (t *TopicHandler) Load() error {
 				return errore.WrapWithContext(err)
 			}
 			t.loaded = true
-			go t.indexScheduler()
+			if !t.ReadOnly {
+				go t.indexScheduler()
+			}
 		}
 	}
 	return nil
@@ -184,7 +188,7 @@ func (t *TopicHandler) lazyLoad() error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	if !exists {
+	if !t.ReadOnly && !exists {
 		err = t.Afs.Mkdir(topicPath, 0770) //Todo: do more restrictive
 		if err != nil {
 			return errore.WrapWithContext(err)

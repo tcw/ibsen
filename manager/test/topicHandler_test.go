@@ -11,7 +11,7 @@ import (
 func TestTopicHandlerLoading(t *testing.T) {
 	setUp()
 	const tenMB = 1024 * 1024 * 10
-	handler := manager.NewTopicHandler(afs, rootPath, "cars", tenMB)
+	handler := manager.NewTopicHandler(afs, false, rootPath, "cars", tenMB)
 	err := handler.Load()
 	if err != nil {
 		t.Error(err)
@@ -21,7 +21,7 @@ func TestTopicHandlerLoading(t *testing.T) {
 func TestTopicHandlerWriteRead(t *testing.T) {
 	setUp()
 	const oneMB = 1024 * 1024
-	handler := manager.NewTopicHandler(afs, rootPath, "cars", oneMB)
+	handler := manager.NewTopicHandler(afs, false, rootPath, "cars", oneMB)
 	err := handler.Load()
 	if err != nil {
 		t.Error(err)

@@ -5,7 +5,7 @@
 ### GO
 
 ```shell script
-go get github.com/tcw/ibsen
+go get -u github.com/tcw/ibsen
 ```
 
 ### Docker
@@ -14,17 +14,18 @@ go get github.com/tcw/ibsen
 
 ```shell script
 ./release.sh
-
 ```
 
 #### Run Ibsen server as docker container
 
 ```shell script
 docker run --name ibsen_solveig -p 50001:50001 ibsen
-
 ```
 
+In memory only
+```shell script
 docker run --name ibsen_solvei -e IBSEN_IN_MEMORY_ONLY='true' -p 50001:50001 ibsen
+```
 
 ## Usage
 
@@ -84,9 +85,7 @@ openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out c
 
 ## Benchmarks
 
-```shell script
 To free pagecache in linux:
-echo 1 > /proc/sys/vm/drop_caches To free reclaimable slab objects (includes dentries and inodes):
-echo 2 > /proc/sys/vm/drop_caches To free slab objects and pagecache:
-echo 3 > /proc/sys/vm/drop_caches
+```shell script
+echo 1 > /proc/sys/vm/drop_caches 
 ```

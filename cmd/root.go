@@ -17,15 +17,15 @@ import (
 
 var (
 	host                   string
-	serverPort             int
+	port                   int
 	maxBlockSizeMB         int
+	readOnly               bool
+	rootDirectory          string
 	benchEntiesByteSize    int
 	benchEntiesInEachBatch int
 	benchWriteBaches       int
 	benchReadBatches       int
 	concurrent             int
-	inMemoryOnly           bool
-	inMemoryOnlySetByEnv   bool
 	cpuProfile             string
 	memProfile             string
 
@@ -37,7 +37,7 @@ var (
 	}
 
 	cmdServer = &cobra.Command{
-		Use:              "server [data directory]",
+		Use:              "server",
 		Short:            "start a ibsen server",
 		Long:             `server`,
 		TraverseChildren: true,
@@ -46,26 +46,26 @@ var (
 			inMemory := false
 			var afs *afero.Afero
 			absolutePath := "/tmp/data"
-			if len(args) == 0 || (inMemoryOnlySetByEnv && inMemoryOnly) {
+			if rootDirectory == "" {
 				var fs = afero.NewMemMapFs()
 				afs = &afero.Afero{Fs: fs}
 				inMemory = true
 			} else {
 				var err error
-				if len(args) != 1 {
-					fmt.Println("No file path to ibsen data directory was given, use -i to run in-memory or specify path")
-					return
-				}
-				absolutePath, err = filepath.Abs(args[0])
+				absolutePath, err = filepath.Abs(rootDirectory)
 				if err != nil {
 					log.Fatal(err)
 				}
 				var fs = afero.NewOsFs()
+				if readOnly {
+					fs = afero.NewReadOnlyFs(fs)
+				}
 				afs = &afero.Afero{Fs: fs}
 			}
 			writeLock := absolutePath + string(os.PathSeparator) + ".writeLock"
 			lock := consensus.NewFileLock(afs, writeLock, time.Second*10, time.Second*5)
 			ibsenServer := api.IbsenServer{
+				Readonly:     readOnly,
 				Lock:         lock,
 				InMemory:     inMemory,
 				Afs:          afs,
@@ -74,7 +74,7 @@ var (
 				CpuProfile:   cpuProfile,
 				MemProfile:   memProfile,
 			}
-			lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, serverPort))
+			lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 			if err != nil {
 				log.Println(errore.SprintTrace(err))
 				return
@@ -165,7 +165,7 @@ var (
 				return
 			}
 			topic := args[0]
-			client := newIbsenBench(host + ":" + strconv.Itoa(serverPort))
+			client := newIbsenBench(host + ":" + strconv.Itoa(port))
 			benchmarkReport := ""
 			var err error
 			if concurrent > 1 {
@@ -195,7 +195,7 @@ var (
 				return
 			}
 			topic := args[0]
-			client := newIbsenClient(host + ":" + strconv.Itoa(serverPort))
+			client := newIbsenClient(host + ":" + strconv.Itoa(port))
 			result := ""
 			var err error
 			if len(args) > 1 {
@@ -238,7 +238,7 @@ var (
 					fmt.Printf("offset %s not a uint64", args[1])
 				}
 			}
-			client := newIbsenClient(host + ":" + strconv.Itoa(serverPort))
+			client := newIbsenClient(host + ":" + strconv.Itoa(port))
 			err = client.Read(topic, offset, uint32(batchSize64))
 			if err != nil {
 				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
@@ -255,21 +255,18 @@ func Execute() {
 }
 
 func init() {
-	inMemoryOnlyFromEnv := getenv("IBSEN_IN_MEMORY_ONLY", "")
-	if inMemoryOnlyFromEnv != "" {
-		parseBool, err := strconv.ParseBool(inMemoryOnlyFromEnv)
-		if err != nil {
-			log.Fatal("IBSEN_IN_MEMORY_ONLY has illegal input should be true/false")
-		}
-		inMemoryOnly = parseBool
-		inMemoryOnlySetByEnv = true
-	}
-	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(50001)))
+
+	port, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(50001)))
 	host = getenv("IBSEN_HOST", "0.0.0.0")
 	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "1000"))
-	rootCmd.Flags().IntVarP(&serverPort, "port", "p", serverPort, "config file (default is current directory)")
+	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
+	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
+
+	rootCmd.Flags().IntVarP(&port, "port", "p", port, "config file (default is current directory)")
 	rootCmd.Flags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
+	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
+	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
 
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")

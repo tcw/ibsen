@@ -11,7 +11,7 @@ import (
 
 func TestLogT(t *testing.T) {
 	setUp()
-	topicsManager, err := manager.NewLogTopicsManager(afs, 1*time.Second, 200*time.Millisecond, rootPath, 100)
+	topicsManager, err := manager.NewLogTopicsManager(afs, false, 1*time.Second, 200*time.Millisecond, rootPath, 100)
 	if err != nil {
 		t.Error(err)
 	}

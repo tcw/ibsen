@@ -18,6 +18,7 @@ type LogManager interface {
 var _ LogManager = LogTopicsManager{}
 
 type LogTopicsManager struct {
+	ReadOnly         bool
 	LogAccess        access.LogAccess
 	Afs              *afero.Afero
 	TTL              time.Duration
@@ -27,7 +28,7 @@ type LogTopicsManager struct {
 	Topics           map[access.Topic]*TopicHandler
 }
 
-func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, checkForNewEvery time.Duration, rootPath string, maxBlockSizeMB uint64) (LogTopicsManager, error) {
+func NewLogTopicsManager(afs *afero.Afero, readonly bool, timeToLive time.Duration, checkForNewEvery time.Duration, rootPath string, maxBlockSizeMB uint64) (LogTopicsManager, error) {
 	logAccess := access.ReadWriteLogAccess{
 		Afs:      afs,
 		RootPath: rootPath,
@@ -39,10 +40,11 @@ func NewLogTopicsManager(afs *afero.Afero, timeToLive time.Duration, checkForNew
 	handlers := make(map[access.Topic]*TopicHandler)
 	maxBlockSize := maxBlockSizeMB * 1024 * 1024
 	for _, topic := range topics {
-		handler := NewTopicHandler(afs, rootPath, topic, maxBlockSize)
+		handler := NewTopicHandler(afs, readonly, rootPath, topic, maxBlockSize)
 		handlers[topic] = &handler
 	}
 	return LogTopicsManager{
+		ReadOnly:         readonly,
 		LogAccess:        logAccess,
 		Afs:              afs,
 		TTL:              timeToLive,
@@ -58,6 +60,9 @@ func (l LogTopicsManager) List() ([]access.Topic, error) {
 }
 
 func (l LogTopicsManager) Write(topic access.Topic, entries access.Entries) (uint32, error) {
+	if l.ReadOnly {
+		return 0, errors.New("ibsen is in read only mode and will not accept any writes")
+	}
 	_, exists := l.Topics[topic]
 	if !exists {
 		l.addTopic(topic)
@@ -92,6 +97,6 @@ func (l LogTopicsManager) Read(params access.ReadParams) error {
 }
 
 func (l *LogTopicsManager) addTopic(topic access.Topic) {
-	handler := NewTopicHandler(l.Afs, l.RootPath, topic, l.MaxBlockSize)
+	handler := NewTopicHandler(l.Afs, l.ReadOnly, l.RootPath, topic, l.MaxBlockSize)
 	l.Topics[topic] = &handler
 }

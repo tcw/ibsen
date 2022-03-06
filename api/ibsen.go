@@ -32,6 +32,7 @@ var ibsenFiglet = `
 `
 
 type IbsenServer struct {
+	Readonly       bool
 	Lock           consensus.Lock
 	InMemory       bool
 	Afs            *afero.Afero
@@ -46,8 +47,11 @@ type IbsenServer struct {
 func (ibs *IbsenServer) Start(listener net.Listener) error {
 	go ibs.initSignals()
 	log.Printf("Using listener: %s", listener.Addr().String())
+	if ibs.Readonly {
+		log.Println("running in read only mode")
+	}
 	if ibs.InMemory {
-		log.Println("Running in-memory only!")
+		log.Println("running in-memory only mode")
 		err := ibs.Afs.Mkdir(ibs.RootPath, 0600)
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -61,7 +65,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 			return errore.NewWithContext("path [%s] does not exist, will not start unless existing path is specified", ibs.RootPath)
 		}
 		log.Printf("Waiting for single writer lock on file [%s]...\n", ibs.RootPath)
-		if !ibs.Lock.AcquireLock() {
+		if !ibs.Readonly && !ibs.Lock.AcquireLock() {
 			log.Fatalf("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.RootPath)
 		}
 	}
@@ -78,7 +82,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		log.Printf("Started profiling, creating file %s", ibs.CpuProfile)
 	}
 
-	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, time.Minute*10, time.Second*5, ibs.RootPath, uint64(ibs.MaxBlockSize))
+	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, ibs.Readonly, time.Minute*10, time.Second*5, ibs.RootPath, uint64(ibs.MaxBlockSize))
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -91,8 +95,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 
 func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager manager.LogManager) error {
 	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(manager)
-	log.Printf("Ibsen grpc server started on [%s:%d]\n", ibsenGrpcServer.Host, ibsenGrpcServer.Port)
-	log.Printf("With listener: [%s]\n", lis.Addr().String())
+	log.Printf("Started ibsen server on: [%s]\n", lis.Addr().String())
 	fmt.Print(ibsenFiglet)
 	err := ibsenGrpcServer.StartGRPC(lis)
 	if err != nil {
