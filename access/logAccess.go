@@ -10,8 +10,7 @@ import (
 	"sync"
 )
 
-const ONE_MB = 1024 * 1024
-const BYTE_SUM_HEADER_STATIC = 20
+const ByteSumHeaderStatic = 20
 
 type LogAccess interface {
 	ListTopics() ([]Topic, error)
@@ -100,13 +99,12 @@ func (la ReadWriteLogAccess) Read(fileName FileName, readBatchParam ReadParams, 
 
 func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, batchSize uint32, currentOffset Offset) (Offset, error) {
 	reader := bufio.NewReader(file)
-	bytes := make([]byte, BYTE_SUM_HEADER_STATIC)
+	bytes := make([]byte, 8)
+	checksum := make([]byte, 4)
 	logEntries := make([]LogEntry, batchSize)
 	slicePointer := 0
 	var lastOffset Offset = math.MaxUint64
 	readAtLeastOneEntry := false
-
-	default1MBEntry := make([]byte, ONE_MB)
 
 	for {
 		if slicePointer != 0 && uint32(slicePointer)%batchSize == 0 {
@@ -142,38 +140,33 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 		if err != nil {
 			return lastOffset, errore.WrapWithContext(err)
 		}
-		offset := int64(littleEndianToUint64(bytes[:8]))
-		checksumValue := littleEndianToUint32(bytes[8:12])
-		contentSize := littleEndianToUint64(bytes[12:])
+		offset := int64(littleEndianToUint64(bytes))
 
-		if contentSize <= ONE_MB {
-			_, err = io.ReadFull(reader, default1MBEntry[:contentSize])
-			if err != nil {
-				return lastOffset, errore.WrapWithContext(err)
-			}
-			var contentCopy = make([]byte, contentSize)
-			copy(contentCopy, default1MBEntry[:contentSize])
-			logEntries[slicePointer] = LogEntry{
-				Offset:   uint64(offset),
-				Crc:      checksumValue,
-				ByteSize: int(contentSize),
-				Entry:    contentCopy,
-			}
-		} else {
-			entry := make([]byte, contentSize)
-			_, err = io.ReadFull(reader, entry)
-			if err != nil {
-				return lastOffset, errore.WrapWithContext(err)
-			}
+		_, err = io.ReadFull(reader, checksum)
+		if err != nil {
+			return lastOffset, errore.WrapWithContext(err)
+		}
+		checksumValue := littleEndianToUint32(bytes)
 
-			logEntries[slicePointer] = LogEntry{
-				Offset:   uint64(offset),
-				Crc:      checksumValue,
-				ByteSize: int(contentSize),
-				Entry:    entry,
-			}
+		_, err = io.ReadFull(reader, bytes)
+		if err != nil {
+			return lastOffset, errore.WrapWithContext(err)
+		}
+		size := littleEndianToUint64(bytes)
+
+		entry := make([]byte, size)
+
+		_, err = io.ReadFull(reader, entry)
+		if err != nil {
+			return lastOffset, errore.WrapWithContext(err)
 		}
 
+		logEntries[slicePointer] = LogEntry{
+			Offset:   uint64(offset),
+			Crc:      checksumValue,
+			ByteSize: int(size),
+			Entry:    entry,
+		}
 		slicePointer = slicePointer + 1
 		lastOffset = Offset(offset)
 		readAtLeastOneEntry = true
@@ -184,7 +177,7 @@ func writeBatchToFile(file afero.File, entries Entries, fromOffset Offset) (Offs
 	currentOffset := fromOffset
 	neededAllocation := 0
 	for _, entry := range *entries {
-		neededAllocation = neededAllocation + len(entry) + BYTE_SUM_HEADER_STATIC
+		neededAllocation = neededAllocation + len(entry) + ByteSumHeaderStatic
 	}
 	var bytes = make([]byte, neededAllocation)
 	start := 0
