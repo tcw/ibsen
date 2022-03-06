@@ -10,7 +10,7 @@ import (
 	"sync"
 )
 
-const ByteSumHeaderStatic = 20
+const ByteSumHeaderSize = 20
 
 type LogAccess interface {
 	ListTopics() ([]Topic, error)
@@ -177,7 +177,7 @@ func writeBatchToFile(file afero.File, entries Entries, fromOffset Offset) (Offs
 	currentOffset := fromOffset
 	neededAllocation := 0
 	for _, entry := range *entries {
-		neededAllocation = neededAllocation + len(entry) + ByteSumHeaderStatic
+		neededAllocation = neededAllocation + len(entry) + ByteSumHeaderSize
 	}
 	var bytes = make([]byte, neededAllocation)
 	start := 0
@@ -204,5 +204,5 @@ func createByteEntry(entry []byte, currentOffset Offset) []byte {
 	checksum = crc32.Update(checksum, crc32q, byteSize)
 	checksum = crc32.Update(checksum, crc32q, entry)
 	check := uint32ToLittleEndian(checksum)
-	return JoinSize(20+entrySize, offset, check, byteSize, entry)
+	return JoinSize(ByteSumHeaderSize+entrySize, offset, check, byteSize, entry)
 }

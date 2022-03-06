@@ -77,13 +77,9 @@ openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out c
 
 ## Todo
 
-- index cache files
-- humanized error messages
 - better command completion
-- embedded etcd for clustering ?
 - topic aliasing
 - improved error recovery/analysis
-- io separated tests (better interfaces)
 - block compression (Zstandard,snappy) ?
 
 ## Benchmarks
