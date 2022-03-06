@@ -5,27 +5,29 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/tcw/ibsen/api"
-	"github.com/tcw/ibsen/client"
 	"github.com/tcw/ibsen/consensus"
+	"github.com/tcw/ibsen/errore"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 )
 
 var (
-	inMemory       bool
-	host           string
-	serverPort     int
-	maxBlockSizeMB int
-	toBase64       bool
-	entryByteSize  int
-	entries        int
-	batches        int
-	cpuProfile     string
-	memProfile     string
+	host                   string
+	serverPort             int
+	maxBlockSizeMB         int
+	benchEntiesByteSize    int
+	benchEntiesInEachBatch int
+	benchWriteBaches       int
+	benchReadBatches       int
+	concurrent             int
+	inMemoryOnly           bool
+	inMemoryOnlySetByEnv   bool
+	cpuProfile             string
+	memProfile             string
 
 	rootCmd = &cobra.Command{
 		Use:              "ibsen",
@@ -41,16 +43,17 @@ var (
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
-
+			inMemory := false
 			var afs *afero.Afero
 			absolutePath := "/tmp/data"
-			if inMemory {
+			if len(args) == 0 || (inMemoryOnlySetByEnv && inMemoryOnly) {
 				var fs = afero.NewMemMapFs()
 				afs = &afero.Afero{Fs: fs}
+				inMemory = true
 			} else {
 				var err error
 				if len(args) != 1 {
-					fmt.Println("No file path to ibsen storage was given, use -i to run in-memory or specify path")
+					fmt.Println("No file path to ibsen data directory was given, use -i to run in-memory or specify path")
 					return
 				}
 				absolutePath, err = filepath.Abs(args[0])
@@ -61,153 +64,188 @@ var (
 				afs = &afero.Afero{Fs: fs}
 			}
 			writeLock := absolutePath + string(os.PathSeparator) + ".writeLock"
-			lock := consensus.NewFileLock(afs, writeLock, time.Second*20)
+			lock := consensus.NewFileLock(afs, writeLock, time.Second*10, time.Second*5)
 			ibsenServer := api.IbsenServer{
 				Lock:         lock,
 				InMemory:     inMemory,
 				Afs:          afs,
-				DataPath:     absolutePath,
-				Host:         host,
-				Port:         serverPort,
+				RootPath:     absolutePath,
 				MaxBlockSize: maxBlockSizeMB,
 				CpuProfile:   cpuProfile,
 				MemProfile:   memProfile,
 			}
-			ibsenServer.Start()
+			lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, serverPort))
+			if err != nil {
+				log.Println(errore.SprintTrace(err))
+				return
+			}
+			err = ibsenServer.Start(lis)
+			if err != nil {
+				log.Fatalf(errore.SprintTrace(err))
+			}
 		},
 	}
 
 	cmdClient = &cobra.Command{
 		Use:              "client",
-		Short:            "client from commandline",
-		Long:             `client`,
-		TraverseChildren: true,
-	}
-
-	cmdClientCreate = &cobra.Command{
-		Use:              "create [topic]",
-		Short:            "create a new topic",
-		Long:             `create`,
-		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			ibsenClient := startClient()
-			ibsenClient.CreateTopic(args[0])
-			fmt.Printf("created topic %s\n", args[0])
-		},
-	}
-
-	cmdClientRead = &cobra.Command{
-		Use:              "read [topic] <offset>",
-		Short:            "read entries from a topic",
-		Long:             `read`,
-		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			ibsenClient := startClient()
-			if len(args) > 1 {
-				offset, err := strconv.ParseUint(args[1], 10, 64)
-				if err != nil {
-					fmt.Printf("Illegal offset [%s]", args[1])
-				}
-				ibsenClient.ReadTopic(args[0], offset, uint32(entries))
-			} else {
-				ibsenClient.ReadTopic(args[0], 0, uint32(entries))
-			}
-		},
-	}
-
-	cmdClientWrite = &cobra.Command{
-		Use:              "write [topic]",
-		Short:            "write entries to a topic",
-		Long:             `write`,
-		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			ibsenClient := startClient()
-			ibsenClient.WriteTopic(args[0])
-		},
-	}
-
-	cmdClientStatus = &cobra.Command{
-		Use:              "status",
-		Short:            "topic status as json",
-		Long:             `status`,
-		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			ibsenClient := startClient()
-			ibsenClient.Status()
-		},
-	}
-
-	cmdBench = &cobra.Command{
-		Use:              "bench",
-		Short:            "benchmark read/write",
-		Long:             `bench`,
-		TraverseChildren: true,
-	}
-
-	cmdBenchWrite = &cobra.Command{
-		Use:              "write [topic]",
-		Short:            "benchmark write to topic",
-		Long:             `bench write`,
-		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			ibsenClient := startClient()
-			ibsenClient.BenchWrite(args[0], entryByteSize, entries, batches)
-		},
-	}
-
-	cmdBenchRead = &cobra.Command{
-		Use:              "read [topic]",
-		Short:            "benchmark read from topic",
-		Long:             `bench read`,
-		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			ibsenClient := startClient()
-			ibsenClient.BenchRead(args[0], 0, uint32(entries))
-		},
-	}
-
-	cmdFile = &cobra.Command{
-		Use:              "file",
 		Short:            "access files directly from file",
 		Long:             `file`,
 		TraverseChildren: true,
 	}
 
-	cmdCat = &cobra.Command{
-		Use:              "cat [from file/directory]",
-		Short:            "cat a log file or topic directory",
-		Long:             `cat`,
+	cmdTools = &cobra.Command{
+		Use:              "tools",
+		Short:            "access files directly from file",
+		Long:             `file`,
 		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(1),
+	}
+
+	cmdToolsReadLogFile = &cobra.Command{
+		Use:              "read-log [file] [optional batch size (default 1000)]",
+		Short:            "read ibsen log file from disk",
+		Long:             `file`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
-			var fs = afero.NewOsFs()
-			afs := &afero.Afero{Fs: fs}
-			client.ReadTopic(afs, args[0], toBase64)
+			batchSize := 1000
+			var err error
+			if len(args) < 1 {
+				fmt.Println("First parameter must be file name")
+				return
+			}
+			if len(args) == 2 {
+				batchSizeString := args[1]
+				batchSize, err = strconv.Atoi(batchSizeString)
+				if err != nil {
+					log.Fatalf("%s is not a number", batchSizeString)
+				}
+			}
+			file, err := filepath.Abs(args[0])
+			if err != nil {
+				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+			}
+			err = ReadLogFile(file, uint32(batchSize))
+			if err != nil {
+				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+			}
 		},
 	}
 
-	cmdCheck = &cobra.Command{
-		Use:              "check [from directory]",
-		Short:            "check for file entry corruption",
-		Long:             `check`,
+	cmdToolsReadIndexLogFile = &cobra.Command{
+		Use:              "read-index [file]",
+		Short:            "read ibsen index file from disk",
+		Long:             `file`,
 		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(1),
+		Args:             cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("Echo: " + strings.Join(args, " "))
+			if len(args) < 1 {
+				fmt.Println("First parameter must be file name")
+				return
+			}
+			absolutePath, err := filepath.Abs(args[0])
+			if err != nil {
+				log.Fatal(err)
+			}
+			err = ReadLogIndexFile(absolutePath)
+			if err != nil {
+				log.Fatalln(errore.SprintTrace(errore.WrapWithContext(err)))
+			}
+		},
+	}
+
+	cmdClientBench = &cobra.Command{
+		Use:              "bench [options] [topic]",
+		Short:            "bench ibsen",
+		Long:             `file`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) < 1 {
+				fmt.Println("First parameter must be topic name")
+				return
+			}
+			topic := args[0]
+			client := newIbsenBench(host + ":" + strconv.Itoa(serverPort))
+			benchmarkReport := ""
+			var err error
+			if concurrent > 1 {
+				benchmarkReport, err = client.BenchmarkConcurrent(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches, concurrent)
+				if err != nil {
+					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				}
+			} else {
+				benchmarkReport, err = client.Benchmark(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches)
+				if err != nil {
+					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				}
+			}
+			fmt.Println(benchmarkReport)
+		},
+	}
+
+	cmdClientWrite = &cobra.Command{
+		Use:              "write",
+		Short:            "write with grpc client",
+		Long:             `file`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) < 1 {
+				fmt.Println("First parameter must be topic name")
+				return
+			}
+			topic := args[0]
+			client := newIbsenClient(host + ":" + strconv.Itoa(serverPort))
+			result := ""
+			var err error
+			if len(args) > 1 {
+				result, err = client.Write(topic, args[1])
+				if err != nil {
+					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				}
+			} else {
+				result, err = client.Write(topic)
+				if err != nil {
+					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				}
+			}
+			fmt.Println(result)
+		},
+	}
+	cmdClientRead = &cobra.Command{
+		Use:              "read [file] [offset (default=0)] [batch size (default=1000)]",
+		Short:            "read with grpc client",
+		Long:             `file`,
+		TraverseChildren: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) < 1 {
+				fmt.Println("First parameter must be topic name")
+				return
+			}
+			topic := args[0]
+			var offset uint64 = 0
+			var batchSize64 uint64 = 1000
+			var err error
+			if len(args) == 2 {
+				offset, err = strconv.ParseUint(args[1], 10, 64)
+				if err != nil {
+					fmt.Printf("offset %s not a uint64", args[1])
+				}
+			}
+			if len(args) == 3 {
+				batchSize64, err = strconv.ParseUint(args[2], 10, 32)
+				if err != nil {
+					fmt.Printf("offset %s not a uint64", args[1])
+				}
+			}
+			client := newIbsenClient(host + ":" + strconv.Itoa(serverPort))
+			err = client.Read(topic, offset, uint32(batchSize64))
+			if err != nil {
+				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+			}
 		},
 	}
 )
-
-func startClient() client.IbsenClient {
-	target := host + ":" + strconv.Itoa(serverPort)
-	return client.Start(target)
-}
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
@@ -217,25 +255,34 @@ func Execute() {
 }
 
 func init() {
+	inMemoryOnlyFromEnv := getenv("IBSEN_IN_MEMORY_ONLY", "")
+	if inMemoryOnlyFromEnv != "" {
+		parseBool, err := strconv.ParseBool(inMemoryOnlyFromEnv)
+		if err != nil {
+			log.Fatal("IBSEN_IN_MEMORY_ONLY has illegal input should be true/false")
+		}
+		inMemoryOnly = parseBool
+		inMemoryOnlySetByEnv = true
+	}
 	serverPort, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(50001)))
 	host = getenv("IBSEN_HOST", "0.0.0.0")
-	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "100"))
-	entries, _ = strconv.Atoi(getenv("IBSEN_ENTRIES", "1000"))
+	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "1000"))
 	rootCmd.Flags().IntVarP(&serverPort, "port", "p", serverPort, "config file (default is current directory)")
 	rootCmd.Flags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
-	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "config file")
-	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "config file")
-	cmdServer.Flags().BoolVarP(&inMemory, "inMemory", "i", false, "run in-memory only")
-	cmdCat.Flags().BoolVarP(&toBase64, "base64", "b", false, "Convert messages to base64")
-	cmdClient.Flags().IntVarP(&entries, "entries", "e", entries, "Number of entries in each batch")
-	cmdBenchWrite.Flags().IntVarP(&entryByteSize, "entryByteSize", "s", 100, "Test data entry size in bytes")
-	cmdBenchWrite.Flags().IntVarP(&batches, "batches", "a", 1, "Number of batches")
 
-	rootCmd.AddCommand(cmdServer, cmdClient, cmdFile)
-	cmdFile.AddCommand(cmdCat, cmdCheck)
-	cmdBench.AddCommand(cmdBenchWrite, cmdBenchRead)
-	cmdClient.AddCommand(cmdClientCreate, cmdClientRead, cmdClientWrite, cmdBench, cmdClientStatus)
+	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
+	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")
+
+	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "bwe", "e", 100, "Entry byte size in bench")
+	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatch, "ben", "b", 1000, "Entries in each batch in bench")
+	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "r", 1000, "Read in batches of")
+	cmdClientBench.Flags().IntVarP(&benchWriteBaches, "bwb", "w", 1000, "Write in batches of")
+	cmdClientBench.Flags().IntVarP(&concurrent, "concurrent", "c", 1, "Concurrency number")
+
+	rootCmd.AddCommand(cmdServer, cmdClient, cmdTools)
+	cmdTools.AddCommand(cmdToolsReadIndexLogFile, cmdToolsReadLogFile)
+	cmdClient.AddCommand(cmdClientWrite, cmdClientRead, cmdClientBench)
 }
 
 func getenv(key, fallback string) string {

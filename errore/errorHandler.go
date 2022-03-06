@@ -7,16 +7,24 @@ import (
 	"strings"
 )
 
-func NewWithContext(err string) error {
-	pc, fn, line, _ := runtime.Caller(1)
+func NewWithContext(format string, v ...interface{}) error {
+	pc, file, line, _ := runtime.Caller(1)
 	functionName := runtime.FuncForPC(pc).Name()
-	return fmt.Errorf("file:[%s:%d] function:[%s] %w", fn, line, functionName, errors.New(err))
+	err := fmt.Sprintf(format, v...)
+	return fmt.Errorf("at %s(%s:%d) %w", functionName, file, line, errors.New(err))
+}
+
+func WrapWithContextAndMessage(err error, format string, v ...interface{}) error {
+	pc, file, line, _ := runtime.Caller(1)
+	functionName := runtime.FuncForPC(pc).Name()
+	additional := fmt.Sprintf(format, v...)
+	return fmt.Errorf("at %s(%s:%d) [%s] %w", functionName, file, line, additional, err)
 }
 
 func WrapWithContext(err error) error {
-	pc, fn, line, _ := runtime.Caller(1)
+	pc, file, line, _ := runtime.Caller(1)
 	functionName := runtime.FuncForPC(pc).Name()
-	return fmt.Errorf("file:[%s:%d] function:[%s] %w", fn, line, functionName, err)
+	return fmt.Errorf("at %s(%s:%d) %w", functionName, file, line, err)
 }
 
 func RootCause(err error) error {

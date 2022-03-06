@@ -1,5 +1,6 @@
 syntax = "proto3";
 
+import "google/protobuf/empty.proto";
 option go_package = "/api/grpcApi";
 option java_multiple_files = true;
 option java_package = "github.com.tcw.ibsen";
@@ -7,70 +8,39 @@ option java_outer_classname = "IbsenProto";
 option objc_class_prefix = "IBSEN";
 
 service Ibsen {
-
-    rpc create (Topic) returns (CreateStatus) {
-    }
-    rpc drop (Topic) returns (DropStatus) {
-    }
-    rpc status (Empty) returns (TopicsStatus) {
-    }
-
-    rpc write (InputEntries) returns (WriteStatus) {
-    }
-    rpc writeStream (stream InputEntries) returns (stream WriteStatus) {
-    }
-    rpc read (ReadParams) returns (stream OutputEntries) {
-    }
-}
-
-message TopicsStatus {
-    repeated TopicStatus topicStatus = 1;
-}
-
-message TopicStatus {
-    string topic = 1;
-    int64 blocks = 2;
-    int64 offset = 3;
-    int64 maxBlockSize = 4;
-    string path = 5;
-}
-
-message Topic {
-    string name = 1;
-}
-
-message CreateStatus {
-    bool created = 1;
-}
-
-message DropStatus {
-    bool dropped = 1;
+  rpc write (InputEntries) returns (WriteStatus) {
+  }
+  rpc read (ReadParams) returns (stream OutputEntries) {
+  }
+  rpc list (google.protobuf.Empty) returns (TopicList){
+  }
 }
 
 message WriteStatus {
-    int64 wrote = 1;
-    int64 timeNano = 2;
-}
-
-message Empty {
+  int64 wrote = 1;
 }
 
 message ReadParams {
-    string topic = 1;
-    uint64 offset = 2;
-    uint32 batchSize = 3;
+  string topic = 1;
+  uint64 offset = 2;
+  uint32 batchSize = 3;
+  bool stopOnCompletion = 4;
 }
 
 message InputEntries {
-    string topic = 1;
-    repeated bytes entries = 2;
+  string topic = 1;
+  repeated bytes entries = 2;
+}
+
+message TopicList{
+  repeated string topics = 1;
 }
 
 message Entry{
-    uint64 offset = 1;
-    bytes content = 2;
+  uint64 offset = 1;
+  bytes content = 2;
 }
 
 message OutputEntries {
-    repeated Entry entries = 2;
+  repeated Entry entries = 2;
 }

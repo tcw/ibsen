@@ -6,9 +6,9 @@ import (
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/consensus"
 	"github.com/tcw/ibsen/errore"
-	"github.com/tcw/ibsen/storage"
+	"github.com/tcw/ibsen/manager"
 	"log"
-	"net/http"
+	"net"
 	"os"
 	"os/signal"
 	"runtime"
@@ -18,7 +18,6 @@ import (
 )
 
 var ibsenGrpcServer *grpcApi.IbsenGrpcServer
-var httpServer *http.Server
 var ibsenFiglet = `
                            _____ _                    
                           |_   _| |                   
@@ -31,79 +30,71 @@ var ibsenFiglet = `
 	 Henrik Ibsen (1828–1906)
 
 `
-var fProfile *os.File
 
 type IbsenServer struct {
-	Lock         consensus.Lock
-	InMemory     bool
-	Afs          *afero.Afero
-	DataPath     string
-	Host         string
-	Port         int
-	MaxBlockSize int
-	CpuProfile   string
-	MemProfile   string
+	Lock           consensus.Lock
+	InMemory       bool
+	Afs            *afero.Afero
+	TTL            time.Duration
+	RootPath       string
+	MaxBlockSize   int
+	CpuProfile     string
+	MemProfile     string
+	cpuProfileFile *os.File
 }
 
-func (ibs *IbsenServer) Start() {
+func (ibs *IbsenServer) Start(listener net.Listener) error {
 	go ibs.initSignals()
-
-	exists, err := ibs.Afs.Exists(ibs.DataPath)
-	if err != nil {
-		log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
-	}
-	if !exists {
-		log.Fatalf("path [%s] does not exist, will not start unless existing path is specified", ibs.DataPath)
-	}
-
+	log.Printf("Using listener: %s", listener.Addr().String())
 	if ibs.InMemory {
 		log.Println("Running in-memory only!")
+		err := ibs.Afs.Mkdir(ibs.RootPath, 0600)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
 	} else {
-		log.Printf("Waiting for single writer lock on file [%s]...\n", ibs.DataPath)
+		exists, err := ibs.Afs.Exists(ibs.RootPath)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+		if !exists {
+			return errore.NewWithContext("path [%s] does not exist, will not start unless existing path is specified", ibs.RootPath)
+		}
+		log.Printf("Waiting for single writer lock on file [%s]...\n", ibs.RootPath)
 		if !ibs.Lock.AcquireLock() {
-			log.Fatalf("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.DataPath)
+			log.Fatalf("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.RootPath)
 		}
 	}
 
-	useCpuProfiling(ibs.CpuProfile)
-
-	start := time.Now()
-	logStorage, err := storage.NewLogStorage(ibs.Afs, ibs.DataPath, int64(ibs.MaxBlockSize)*1024*1024)
-	stop := time.Now()
-	log.Printf("loaded existing topic in [%s]", stop.Sub(start).String())
-	if err != nil {
-		log.Println(errore.SprintTrace(err))
-		return
-	}
-
-	err = ibs.startGRPCServer(logStorage)
-	if err != nil {
-		log.Printf(errore.SprintTrace(err))
-		ibs.ShutdownCleanly()
-	}
-}
-
-func useCpuProfiling(cpuProfile string) {
-	if cpuProfile != "" {
+	if ibs.CpuProfile != "" {
 		var err error
-		fProfile, err = os.Create(cpuProfile)
+		ibs.cpuProfileFile, err = os.Create(ibs.CpuProfile)
 		if err != nil {
 			log.Fatal("could not create CPU profile: ", err)
 		}
-		if err := pprof.StartCPUProfile(fProfile); err != nil {
+		if err := pprof.StartCPUProfile(ibs.cpuProfileFile); err != nil {
 			log.Fatal("could not start CPU profile: ", err)
 		}
-		log.Printf("Started profiling, creating file %s", cpuProfile)
+		log.Printf("Started profiling, creating file %s", ibs.CpuProfile)
 	}
+
+	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, time.Minute*10, time.Second*5, ibs.RootPath, uint64(ibs.MaxBlockSize))
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	err = ibs.startGRPCServer(listener, topicsManager)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	return nil
 }
 
-func (ibs *IbsenServer) startGRPCServer(storage storage.LogStorage) error {
-	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(storage)
-	ibsenGrpcServer.Port = uint16(ibs.Port)
-	ibsenGrpcServer.Host = ibs.Host
+func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager manager.LogManager) error {
+	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(manager)
 	log.Printf("Ibsen grpc server started on [%s:%d]\n", ibsenGrpcServer.Host, ibsenGrpcServer.Port)
+	log.Printf("With listener: [%s]\n", lis.Addr().String())
 	fmt.Print(ibsenFiglet)
-	err := ibsenGrpcServer.StartGRPC()
+	err := ibsenGrpcServer.StartGRPC(lis)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -131,7 +122,16 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 		log.Printf("Ended memory profiling, writing to file %s", ibs.MemProfile)
 	}
 
-	log.Printf("gracefully stopping grpc server on port [%d]...", ibs.Port)
+	if ibs.CpuProfile != "" {
+		log.Printf("Ended cpu profiling, writing to file %s", ibs.CpuProfile)
+		pprof.StopCPUProfile()
+		err := ibs.cpuProfileFile.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	log.Println("gracefully stopping grpc server...")
 
 	stopped := make(chan struct{})
 	go func() {
@@ -151,18 +151,9 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 	if !ibs.InMemory {
 		isReleased := ibs.Lock.ReleaseLock()
 		if isReleased {
-			log.Printf("single writer lock [%s] was released!\n", ibs.DataPath)
+			log.Printf("single writer lock [%s] was released!\n", ibs.RootPath)
 		} else {
-			log.Printf("unable to release single writer lock [%s]\n", ibs.DataPath)
-		}
-	}
-
-	if ibs.CpuProfile != "" {
-		log.Printf("Ended cpu profiling, writing to file %s", ibs.CpuProfile)
-		pprof.StopCPUProfile()
-		err := fProfile.Close()
-		if err != nil {
-			log.Fatal(err)
+			log.Printf("unable to release single writer lock [%s]\n", ibs.RootPath)
 		}
 	}
 }

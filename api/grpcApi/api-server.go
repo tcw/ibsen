@@ -2,15 +2,15 @@ package grpcApi
 
 import (
 	"context"
-	"fmt"
+	"github.com/golang/protobuf/ptypes/empty"
+	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/errore"
-	"github.com/tcw/ibsen/storage"
+	"github.com/tcw/ibsen/manager"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/testdata"
-	"io"
 	"log"
 	"math"
 	"net"
@@ -19,7 +19,7 @@ import (
 )
 
 type server struct {
-	logStorage storage.LogStorage
+	manager manager.LogManager
 }
 
 type IbsenGrpcServer struct {
@@ -29,28 +29,24 @@ type IbsenGrpcServer struct {
 	KeyFile     string
 	UseTls      bool
 	IbsenServer *grpc.Server
-	Storage     storage.LogStorage
+	Manager     manager.LogManager
 }
 
-func NewIbsenGrpcServer(storage storage.LogStorage) *IbsenGrpcServer {
+func NewIbsenGrpcServer(manager manager.LogManager) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
 		Host:     "0.0.0.0",
 		Port:     50001,
 		CertFile: "",
 		KeyFile:  "",
 		UseTls:   false,
-		Storage:  storage,
+		Manager:  manager,
 	}
 }
 
-func (igs *IbsenGrpcServer) StartGRPC() error {
-	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", igs.Host, igs.Port))
-	if err != nil {
-		return errore.WrapWithContext(err)
-	}
+func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener) error {
 	var opts []grpc.ServerOption
 	opts = []grpc.ServerOption{
-		grpc.ConnectionTimeout(time.Second * 30),
+		grpc.ConnectionTimeout(time.Hour * 1),
 		grpc.MaxRecvMsgSize(math.MaxInt32),
 		grpc.MaxSendMsgSize(math.MaxInt32)}
 	if igs.UseTls {
@@ -67,110 +63,55 @@ func (igs *IbsenGrpcServer) StartGRPC() error {
 	igs.IbsenServer = grpcServer
 
 	RegisterIbsenServer(grpcServer, &server{
-		logStorage: igs.Storage,
+		manager: igs.Manager,
 	})
-	return grpcServer.Serve(lis)
+	return grpcServer.Serve(listener)
+}
+
+func (igs *IbsenGrpcServer) Shutdown() {
+	igs.IbsenServer.Stop()
 }
 
 var _ IbsenServer = &server{}
 
-func (s server) Create(ctx context.Context, topic *Topic) (*CreateStatus, error) {
-	create, err := s.logStorage.Create(topic.Name)
-	if err != nil {
-		err = errore.WrapWithContext(err)
-		log.Println(errore.SprintTrace(err))
-		return nil, status.Errorf(codes.Internal, "Failed while creating topic %s", topic.Name)
-	}
-	return &CreateStatus{
-		Created: create,
+func (s server) List(ctx context.Context, empty *empty.Empty) (*TopicList, error) {
+	list, err := s.manager.List()
+	return &TopicList{
+		Topics: convertTopics(list),
 	}, err
 }
 
-func (s server) Drop(ctx context.Context, topic *Topic) (*DropStatus, error) {
-	dropped, err := s.logStorage.Drop(topic.Name)
-	if err != nil {
-		err = errore.WrapWithContext(err)
-		log.Println(errore.SprintTrace(err))
-		return nil, status.Errorf(codes.Internal, "Failed while dropping topic %s", topic.Name)
+func convertTopics(topics []access.Topic) []string {
+	var sTopic []string
+	for _, topic := range topics {
+		sTopic = append(sTopic, string(topic))
 	}
-	return &DropStatus{
-		Dropped: dropped,
-	}, err
+	return sTopic
 }
 
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
-	start := time.Now()
-	n, err := s.logStorage.WriteBatch(&storage.TopicBatchMessage{
-		Topic:   entries.Topic,
-		Message: entries.Entries,
-	})
+	n, err := s.manager.Write(access.Topic(entries.Topic), &entries.Entries)
 	if err != nil {
 		err = errore.WrapWithContext(err)
 		log.Println(errore.SprintTrace(err))
 		return nil, status.Error(codes.Unknown, "Error writing batch")
 	}
-
-	stop := time.Now()
-	timeElapsed := stop.Sub(start)
 	return &WriteStatus{
-		Wrote:    int64(n),
-		TimeNano: timeElapsed.Nanoseconds(),
+		Wrote: int64(n),
 	}, nil
 }
 
-func (s server) WriteStream(inStream Ibsen_WriteStreamServer) error {
-	start := time.Now()
-	var sum int32
-	var entriesWritten int64
-
-	for {
-		in, err := inStream.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			err = errore.WrapWithContext(err)
-			log.Println(errore.SprintTrace(err))
-			return status.Error(codes.Unknown, "Error receiving writing streaming batch")
-		}
-		written, err := s.logStorage.WriteBatch(&storage.TopicBatchMessage{
-			Topic:   in.Topic,
-			Message: in.Entries,
-		})
-		if err != nil {
-			err = errore.WrapWithContext(err)
-			log.Println(errore.SprintTrace(err))
-			return status.Error(codes.Unknown, "Error writing streaming batch")
-		}
-		sum = sum + 1
-		entriesWritten = entriesWritten + int64(written)
-	}
-	stop := time.Now()
-	timeElapsed := stop.Sub(start)
-
-	err := inStream.Send(&WriteStatus{
-		Wrote:    entriesWritten,
-		TimeNano: timeElapsed.Nanoseconds(),
-	})
-	if err != nil {
-		err = errore.WrapWithContext(err)
-		log.Println(errore.SprintTrace(err))
-		return status.Error(codes.Unknown, "Error sending status from writing streaming batch")
-	}
-	return nil
-}
-
-func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
-	logChan := make(chan *storage.LogEntryBatch)
+func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
+	logChan := make(chan *[]access.LogEntry)
 	var wg sync.WaitGroup
-	go sendBatchMessage(logChan, &wg, outStream)
-
-	err := s.logStorage.ReadBatchFromOffsetNotIncluding(storage.ReadBatchParam{
-		LogChan:   logChan,
-		Wg:        &wg,
-		Topic:     readParams.Topic,
-		BatchSize: int(readParams.BatchSize),
-		Offset:    readParams.Offset,
+	go sendBatchMessage(logChan, &wg, readServer)
+	err := s.manager.Read(access.ReadParams{
+		Topic:            access.Topic(params.Topic),
+		Offset:           access.Offset(params.Offset),
+		StopOnCompletion: params.StopOnCompletion,
+		BatchSize:        params.BatchSize,
+		LogChan:          logChan,
+		Wg:               &wg,
 	})
 
 	if err != nil {
@@ -182,31 +123,11 @@ func (s server) Read(readParams *ReadParams, outStream Ibsen_ReadServer) error {
 	return nil
 }
 
-func (s server) Status(context.Context, *Empty) (*TopicsStatus, error) {
-	logStatus := s.logStorage.Status()
-	statuses := make([]*TopicStatus, 0)
-	for _, message := range logStatus {
-		statuses = append(statuses, &TopicStatus{
-			Topic:        message.Topic,
-			Blocks:       int64(message.Blocks),
-			Offset:       message.Offset,
-			MaxBlockSize: message.MaxBlockSize,
-			Path:         message.Path,
-		})
-	}
-	return &TopicsStatus{
-		TopicStatus: statuses,
-	}, nil
-}
-
-func (s server) Close() {
-	s.logStorage.Close()
-}
-
-func sendBatchMessage(logChan chan *storage.LogEntryBatch, wg *sync.WaitGroup, outStream Ibsen_ReadServer) {
+func sendBatchMessage(logChan chan *[]access.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadServer) {
 	for {
 		entryBatch := <-logChan
-		if entryBatch.Size() == 0 {
+		batch := *entryBatch
+		if len(batch) == 0 {
 			break
 		}
 		err := outStream.Send(&OutputEntries{
@@ -221,10 +142,9 @@ func sendBatchMessage(logChan chan *storage.LogEntryBatch, wg *sync.WaitGroup, o
 	}
 }
 
-func convert(entryBatch *storage.LogEntryBatch) []*Entry {
-	entries := entryBatch.Entries
-	outEntries := make([]*Entry, len(entries))
-	for i, entry := range entries {
+func convert(entries *[]access.LogEntry) []*Entry {
+	outEntries := make([]*Entry, len(*entries))
+	for i, entry := range *entries {
 		outEntries[i] = &Entry{
 			Offset:  entry.Offset,
 			Content: entry.Entry,
