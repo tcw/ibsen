@@ -3,16 +3,22 @@ package access
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"github.com/golang/protobuf/proto"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
+	"hash/crc32"
 	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
 func openFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	f, err := afs.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
@@ -54,8 +60,8 @@ func listFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([
 	return filenames, nil
 }
 
-func ListAllFilesInTopic(afs *afero.Afero, rootPath string, topic Topic) ([]os.FileInfo, error) {
-	dir, err := OpenFileForRead(afs, rootPath+Sep+string(topic))
+func ListAllFilesInTopic(afs *afero.Afero, rootPath string, topic string) ([]os.FileInfo, error) {
+	dir, err := OpenFileForRead(afs, rootPath+Sep+topic)
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
@@ -78,8 +84,8 @@ func filesToBlocks(paths []string) ([]Block, error) {
 	return blocks, nil
 }
 
-func listAllTopics(afs *afero.Afero, dir string) ([]Topic, error) {
-	var filenames []Topic
+func listAllTopics(afs *afero.Afero, dir string) ([]string, error) {
+	var filenames []string
 	file, err := OpenFileForRead(afs, dir)
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
@@ -89,7 +95,7 @@ func listAllTopics(afs *afero.Afero, dir string) ([]Topic, error) {
 	for _, name := range names {
 		isHidden := strings.HasPrefix(name, ".")
 		if !isHidden {
-			filenames = append(filenames, Topic(name))
+			filenames = append(filenames, name)
 		}
 	}
 	return filenames, nil
@@ -266,6 +272,116 @@ func FindLastOffset(afs *afero.Afero, blockFileName FileName, from int64) (int64
 			return offsetFound, errore.WrapWithContext(err)
 		}
 	}
+}
+
+func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, batchSize uint32, byteOffset int64) error {
+	_, err := file.Seek(byteOffset, io.SeekStart)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	reader := bufio.NewReader(file)
+	bytes := make([]byte, 8)
+	checksum := make([]byte, 4)
+	logEntries := make([]LogEntry, batchSize)
+	slicePointer := 0
+	for {
+		if slicePointer != 0 && uint32(slicePointer)%batchSize == 0 {
+			wg.Add(1)
+			sendingEntries := logEntries[:slicePointer]
+			logChan <- &sendingEntries
+			logEntries = make([]LogEntry, batchSize)
+			slicePointer = 0
+		}
+		_, err := io.ReadFull(reader, bytes)
+		if err == io.EOF {
+			if logEntries != nil && slicePointer > 0 {
+				wg.Add(1)
+				sendingEntries := logEntries[:slicePointer]
+				logChan <- &sendingEntries
+			}
+			return nil
+		}
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+
+		offset := int64(littleEndianToUint64(bytes))
+		_, err = io.ReadFull(reader, checksum)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+
+		checksumValue := littleEndianToUint32(bytes)
+		_, err = io.ReadFull(reader, bytes)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+
+		size := littleEndianToUint64(bytes)
+
+		entry := make([]byte, size)
+
+		_, err = io.ReadFull(reader, entry)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+
+		logEntries[slicePointer] = LogEntry{
+			Offset:   uint64(offset),
+			Crc:      checksumValue,
+			ByteSize: int(size),
+			Entry:    entry,
+		}
+		slicePointer = slicePointer + 1
+	}
+}
+
+func MarshallIndex(soi []byte) (Index, error) {
+	if len(soi) == 0 {
+		return Index{}, errors.New("NoBytesInIndex")
+	}
+	var numberPart []byte
+	var offset uint64
+	isOffset := true
+	var index = Index{
+		IndexOffsets: nil,
+	}
+	for _, byteValue := range soi {
+		numberPart = append(numberPart, byteValue)
+		if !isLittleEndianMSBSet(byteValue) {
+			value, n := proto.DecodeVarint(numberPart)
+			if n < 0 {
+				return Index{}, errore.NewWithContext("Vararg returned negative numberPart, indicating a parsing error")
+			}
+			if isOffset {
+				offset = value
+				isOffset = false
+			} else {
+				index.add(IndexOffset{
+					Offset:     Offset(offset),
+					ByteOffset: int64(value),
+				})
+				isOffset = true
+			}
+			numberPart = make([]byte, 0)
+		}
+	}
+	return index, nil
+}
+
+func createByteEntry(entry []byte, currentOffset Offset) []byte {
+	offset := uint64ToLittleEndian(uint64(currentOffset))
+	entrySize := len(entry)
+	byteSize := uint64ToLittleEndian(uint64(entrySize))
+	checksum := crc32.Checksum(offset, crc32q)
+	checksum = crc32.Update(checksum, crc32q, byteSize)
+	checksum = crc32.Update(checksum, crc32q, entry)
+	check := uint32ToLittleEndian(checksum)
+	return JoinSize(20+entrySize, offset, check, byteSize, entry)
+}
+
+func isLittleEndianMSBSet(byteValue byte) bool {
+	return (byteValue>>7)&1 == 1
 }
 
 func uint64ToLittleEndian(offset uint64) []byte {

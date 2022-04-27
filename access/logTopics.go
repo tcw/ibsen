@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
-	"hash/crc32"
 	"os"
 	"sort"
 	"sync"
@@ -17,7 +16,6 @@ type Offset uint64
 type Block uint64
 type BlockIndex uint32
 
-var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
 var BlockNotFound = errors.New("block not found")
 
@@ -29,28 +27,33 @@ type LogEntry struct {
 }
 
 type Topic struct {
-	Afs            *afero.Afero
-	RootPath       string
-	TopicName      string
+	Afs                    *afero.Afero
+	RootPath               string
+	TopicName              string
 	MaxBlockSize   int
 	NextOffset     Offset
 	HeadBlockSize  int
 	LogBlockList   []Block
 	IndexBlockList []Block
+	WorkingIndex   Index
+	WorkingIndexLogPointer int
 }
 
 type Entries *[][]byte
 
 func newLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSize int) Topic {
 	return Topic{
-		Afs:            afs,
-		RootPath:       rootPath,
-		TopicName:      topicName,
-		NextOffset:     0,
-		HeadBlockSize:  0,
-		MaxBlockSize:   maxBlockSize,
-		LogBlockList:   []Block{},
-		IndexBlockList: []Block{}}
+		Afs:                    afs,
+		RootPath:               rootPath,
+		TopicName:              topicName,
+		NextOffset:             0,
+		HeadBlockSize:          0,
+		MaxBlockSize:           maxBlockSize,
+		LogBlockList:           []Block{},
+		IndexBlockList:         []Block{},
+		WorkingIndex:           Index{},
+		WorkingIndexLogPointer: 0,
+	}
 }
 
 func (t Topic) UpdateIndex() {
@@ -61,18 +64,24 @@ func (t *Topic) Load() {
 
 }
 
-func (t Topic) Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, batchSize uint32) {
+func (t Topic) Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, batchSize uint32) error {
 	if t.logBlockIsEmpty() {
 		return
 	}
-
+	logBlock := t.LogBlockContaining(from)
+	byteOffset, err := t.findByteOffsetInIndex(from)
+	if err != nil{
+		return errore.WrapWithContext(err)
+	}
+	OpenFileForRead(t.Afs,t.)
+	ReadFile(t.Afs,logChan,wg,batchSize,byteOffset)
 }
 
 func (t *Topic) Write(entries Entries) error {
 	if t.logBlockIsEmpty() {
 		t.addNewLogBlock()
 	}
-	if t.logSize() > int(t.MaxBlockSize) {
+	if t.logSize() > t.MaxBlockSize {
 		t.addNewLogBlock()
 		t.resetHeadBlockSize()
 	}
@@ -126,7 +135,7 @@ func (t *Topic) indexBlockFileName(block Block) (string, error) {
 	return t.RootPath + Sep + t.TopicName + Sep + fmt.Sprintf("%020d.idx", block), nil
 }
 
-func (t Topic) findByteOffset(offset Offset) (int, error) {
+func (t Topic) findByteOffsetInIndex(offset Offset) (int64, error) {
 	indexBlock, err := t.IndexBlockContaining(offset)
 	if err == BlockNotFound {
 		// scan log for byteoffset
@@ -136,10 +145,10 @@ func (t Topic) findByteOffset(offset Offset) (int, error) {
 		return 0, errore.WrapWithContext(err)
 	}
 	file, err := OpenFileForRead(t.Afs, fileName)
-	defer file.Close()
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
+	defer file.Close()
 
 }
 
@@ -178,6 +187,10 @@ func (t Topic) logSize() int {
 	return len(t.LogBlockList)
 }
 
+func (t Topic) indexSize() int {
+	return len(t.IndexBlockList)
+}
+
 func (t Topic) ToString() string {
 	list := t.LogBlockList
 	blocklist := ""
@@ -194,14 +207,14 @@ func (t *Topic) sort() {
 	sort.Slice(t.LogBlockList, func(i, j int) bool { return t.LogBlockList[i] < t.LogBlockList[j] })
 }
 
-func (t Topic) Diff(blocks []Block) ([]Block, error) {
+func (t Topic) findLogBlocksNotIndexed() ([]Block, error) {
 	if t.logSize() == 0 {
 		return nil, BlockNotFound
 	}
-	if len(blocks) == 1 {
-		return t.LogBlockList[1:], nil
-	}
-	return t.LogBlockList[len(t.LogBlockList)-1:], nil
+	logStartPos := t.indexSize()
+	logEndPos := t.logSize() - 1
+
+	return t.LogBlockList[logStartPos:logEndPos], nil
 }
 
 func (t Topic) Tail() ([]Block, error) {
@@ -212,13 +225,10 @@ func (t Topic) Tail() ([]Block, error) {
 }
 
 func (t Topic) IndexBlockContaining(offset Offset) (Block, error) {
-	if t.logSize() == 0 {
+	if t.indexSize() == 0 {
 		return 0, BlockNotFound
 	}
-	if t.logSize() == 1 {
-		return t.LogBlockList[0], nil
-	}
-	for i := t.logSize() - 1; i >= 0; i-- {
+	for i := t.indexSize() - 1; i >= 0; i-- {
 		if offset >= Offset(t.IndexBlockList[i]) {
 			return t.LogBlockList[i], nil
 		}
@@ -259,10 +269,6 @@ func (t Topic) GetBlocksIncludingAndAfter(offset Offset) ([]Block, error) {
 	return []Block{}, BlockNotFound
 }
 
-func joinSize(size int, s ...[]byte) []byte {
-	b, i := make([]byte, size), 0
-	for _, v := range s {
-		i += copy(b[i:], v)
-	}
-	return b
-}
+
+
+
