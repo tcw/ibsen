@@ -275,9 +275,11 @@ func FindLastOffset(afs *afero.Afero, blockFileName FileName, from int64) (int64
 }
 
 func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, batchSize uint32, byteOffset int64) error {
-	_, err := file.Seek(byteOffset, io.SeekStart)
-	if err != nil {
-		return errore.WrapWithContext(err)
+	if byteOffset > 0 {
+		_, err := file.Seek(byteOffset, io.SeekStart)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
 	}
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)

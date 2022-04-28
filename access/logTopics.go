@@ -16,7 +16,6 @@ type Offset uint64
 type Block uint64
 type BlockIndex uint32
 
-
 var BlockNotFound = errors.New("block not found")
 
 type LogEntry struct {
@@ -30,12 +29,12 @@ type Topic struct {
 	Afs                    *afero.Afero
 	RootPath               string
 	TopicName              string
-	MaxBlockSize   int
-	NextOffset     Offset
-	HeadBlockSize  int
-	LogBlockList   []Block
-	IndexBlockList []Block
-	WorkingIndex   Index
+	MaxBlockSize           int
+	NextOffset             Offset
+	HeadBlockSize          int
+	LogBlockList           []Block
+	IndexBlockList         []Block
+	WorkingIndex           Index
 	WorkingIndexLogPointer int
 }
 
@@ -66,15 +65,28 @@ func (t *Topic) Load() {
 
 func (t Topic) Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, batchSize uint32) error {
 	if t.logBlockIsEmpty() {
-		return
+		return nil
 	}
-	logBlock := t.LogBlockContaining(from)
+	block, err := t.LogBlockContaining(from)
 	byteOffset, err := t.findByteOffsetInIndex(from)
-	if err != nil{
+	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	OpenFileForRead(t.Afs,t.)
-	ReadFile(t.Afs,logChan,wg,batchSize,byteOffset)
+	fileName, err := t.logBlockFileName(block)
+	file, err := OpenFileForRead(t.Afs, fileName)
+	err = ReadFile(file, logChan, wg, batchSize, byteOffset)
+	wasFound, i := t.findBlockArrayIndex(block)
+	if wasFound {
+		if t.logSize()-1 == i {
+			return nil
+		}
+		for _, b := range t.LogBlockList[i+1:] {
+			fileName, err = t.logBlockFileName(b)
+			file, err = OpenFileForRead(t.Afs, fileName)
+			err = ReadFile(file, logChan, wg, batchSize, 0)
+		}
+	}
+	return nil
 }
 
 func (t *Topic) Write(entries Entries) error {
@@ -251,6 +263,15 @@ func (t Topic) LogBlockContaining(offset Offset) (Block, error) {
 	return 0, BlockNotFound
 }
 
+func (t Topic) findBlockArrayIndex(block Block) (bool, int) {
+	for i, b := range t.LogBlockList {
+		if b == block {
+			return true, i
+		}
+	}
+	return false, 0
+}
+
 func (t Topic) GetBlocksIncludingAndAfter(offset Offset) ([]Block, error) {
 	if t.logSize() <= 0 {
 		return []Block{}, BlockNotFound
@@ -268,7 +289,3 @@ func (t Topic) GetBlocksIncludingAndAfter(offset Offset) ([]Block, error) {
 	}
 	return []Block{}, BlockNotFound
 }
-
-
-
-
