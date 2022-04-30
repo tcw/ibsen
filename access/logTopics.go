@@ -6,14 +6,14 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"os"
-	"sort"
 	"sync"
 )
 
 const Sep = string(os.PathSeparator)
 
 type Offset uint64
-type Block uint64
+type LogBlock uint64
+type IndexBlock uint64
 type BlockIndex uint32
 
 var BlockNotFound = errors.New("block not found")
@@ -29,11 +29,13 @@ type Topic struct {
 	Afs                    *afero.Afero
 	RootPath               string
 	TopicName              string
+	writeLock              sync.Mutex
+	updateLock             sync.Mutex
 	MaxBlockSize           int
 	NextOffset             Offset
 	HeadBlockSize          int
-	LogBlockList           []Block
-	IndexBlockList         []Block
+	LogBlockList           []LogBlock
+	IndexBlockList         []IndexBlock
 	WorkingIndex           Index
 	WorkingIndexLogPointer int
 }
@@ -45,36 +47,60 @@ func newLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSi
 		Afs:                    afs,
 		RootPath:               rootPath,
 		TopicName:              topicName,
+		writeLock:              sync.Mutex{},
+		updateLock:             sync.Mutex{},
 		NextOffset:             0,
 		HeadBlockSize:          0,
 		MaxBlockSize:           maxBlockSize,
-		LogBlockList:           []Block{},
-		IndexBlockList:         []Block{},
+		LogBlockList:           []LogBlock{},
+		IndexBlockList:         []IndexBlock{},
 		WorkingIndex:           Index{},
 		WorkingIndexLogPointer: 0,
 	}
 }
 
-func (t Topic) UpdateIndex() {
+func (t *Topic) UpdateIndex() {
+	t.updateLock.Lock()
+	defer t.updateLock.Unlock()
+
+	//t.WorkingIndex =
+	//t.WorkingIndexLogPointer =
 
 }
 
-func (t *Topic) Load() {
-
+func (t *Topic) Load() error {
+	t.updateLock.Lock()
+	defer t.updateLock.Unlock()
+	logBlocks, indexBlocks, err := LoadTopicBlocks(t.Afs, t.RootPath, t.TopicName)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	t.IndexBlockList = indexBlocks
+	t.LogBlockList = logBlocks
+	//t.NextOffset =
+	//t.HeadBlockSize =
+	return nil
 }
 
-func (t Topic) Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, batchSize uint32) error {
+func (t *Topic) Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, batchSize uint32) error {
 	if t.logBlockIsEmpty() {
 		return nil
 	}
-	block, err := t.LogBlockContaining(from)
+	block, found := t.logBlockContaining(from)
+	if !found {
+		return errors.New("offset out of bounds")
+	}
 	byteOffset, err := t.findByteOffsetInIndex(from)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
 	fileName, err := t.logBlockFileName(block)
+	endOffset, hasEnd := t.endBoundaryForReadOffset()
+	if !hasEnd {
+		return nil
+	}
 	file, err := OpenFileForRead(t.Afs, fileName)
-	err = ReadFile(file, logChan, wg, batchSize, byteOffset)
+	err = ReadFile(file, logChan, wg, batchSize, byteOffset, endOffset)
 	wasFound, i := t.findBlockArrayIndex(block)
 	if wasFound {
 		if t.logSize()-1 == i {
@@ -83,13 +109,17 @@ func (t Topic) Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, b
 		for _, b := range t.LogBlockList[i+1:] {
 			fileName, err = t.logBlockFileName(b)
 			file, err = OpenFileForRead(t.Afs, fileName)
-			err = ReadFile(file, logChan, wg, batchSize, 0)
+			endOffset, _ = t.endBoundaryForReadOffset()
+			err = ReadFile(file, logChan, wg, batchSize, 0, endOffset)
 		}
 	}
 	return nil
 }
 
 func (t *Topic) Write(entries Entries) error {
+	t.writeLock.Lock()
+	defer t.writeLock.Unlock()
+
 	if t.logBlockIsEmpty() {
 		t.addNewLogBlock()
 	}
@@ -105,12 +135,13 @@ func (t *Topic) Write(entries Entries) error {
 	var bytes = make([]byte, neededAllocation)
 	start := 0
 	end := 0
+	entriesWritten := 0
 	for _, entry := range *entries {
-		byteEntry := createByteEntry(entry, t.NextOffset)
+		byteEntry := createByteEntry(entry, t.NextOffset+Offset(entriesWritten))
 		end = start + len(byteEntry)
 		copy(bytes[start:end], byteEntry)
 		start = start + len(byteEntry)
-		t.incrementOffset(1)
+		entriesWritten = entriesWritten + 1
 	}
 	head, err := t.head()
 	if err != nil {
@@ -126,6 +157,7 @@ func (t *Topic) Write(entries Entries) error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
+	t.incrementOffset(entriesWritten)
 	t.incrementHeadBlockSize(n)
 	if err != nil {
 		return errore.WrapWithContext(err)
@@ -133,14 +165,30 @@ func (t *Topic) Write(entries Entries) error {
 	return nil
 }
 
-func (t *Topic) logBlockFileName(block Block) (string, error) {
+func (t Topic) ToString() string {
+	list := t.LogBlockList
+	blocklist := ""
+	for i, val := range list {
+		blocklist = blocklist + fmt.Sprintf("%d -> %d\n", i, val)
+	}
+	return blocklist
+}
+
+func (t *Topic) endBoundaryForReadOffset() (Offset, bool) {
+	if t.NextOffset == 0 {
+		return 0, false
+	}
+	return t.NextOffset - 1, true
+}
+
+func (t *Topic) logBlockFileName(block LogBlock) (string, error) {
 	if t.logBlockIsEmpty() {
 		return "", BlockNotFound
 	}
 	return t.RootPath + Sep + t.TopicName + Sep + fmt.Sprintf("%020d.log", block), nil
 }
 
-func (t *Topic) indexBlockFileName(block Block) (string, error) {
+func (t *Topic) indexBlockFileName(block IndexBlock) (string, error) {
 	if t.logBlockIsEmpty() {
 		return "", BlockNotFound
 	}
@@ -148,20 +196,41 @@ func (t *Topic) indexBlockFileName(block Block) (string, error) {
 }
 
 func (t Topic) findByteOffsetInIndex(offset Offset) (int64, error) {
-	indexBlock, err := t.IndexBlockContaining(offset)
-	if err == BlockNotFound {
-		// scan log for byteoffset
+	indexBlock, foundIndexBlock := t.indexBlockContaining(offset)
+	if offset >= t.NextOffset {
+		return 0, errors.New("offset out of bounds")
 	}
-	fileName, err := t.indexBlockFileName(indexBlock)
+	logBlock, logBlockFound := t.logBlockContaining(offset)
+	if !logBlockFound {
+		return 0, errors.New("no log block containing offset found")
+	}
+	logBlockFileName, err := t.logBlockFileName(logBlock)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
-	file, err := OpenFileForRead(t.Afs, fileName)
+	if !foundIndexBlock {
+		return FindByteOffsetFromOffset(t.Afs, logBlockFileName, 0, offset)
+	}
+	indexBlockFileName, err := t.indexBlockFileName(indexBlock)
 	if err != nil {
 		return 0, errore.WrapWithContext(err)
 	}
-	defer file.Close()
-
+	bytes, err := t.Afs.ReadFile(indexBlockFileName)
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	index, err := MarshallIndex(bytes)
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	indexOffset := index.FindNearestByteOffset(offset)
+	if indexOffset.Offset > offset {
+		return 0, errore.NewWithContext("found larger offset than upper bound")
+	}
+	if indexOffset.Offset == offset {
+		return indexOffset.ByteOffset, nil
+	}
+	return FindByteOffsetFromOffset(t.Afs, logBlockFileName, indexOffset.ByteOffset, offset)
 }
 
 func (t *Topic) incrementOffset(n int) {
@@ -177,10 +246,10 @@ func (t *Topic) resetHeadBlockSize() {
 }
 
 func (t *Topic) addNewLogBlock() {
-	t.LogBlockList = append(t.LogBlockList, Block(t.NextOffset))
+	t.LogBlockList = append(t.LogBlockList, LogBlock(t.NextOffset))
 }
 
-func (t Topic) head() (Block, error) {
+func (t Topic) head() (LogBlock, error) {
 	if t.logBlockIsEmpty() {
 		return 0, BlockNotFound
 	}
@@ -191,7 +260,7 @@ func (t Topic) logBlockIsEmpty() bool {
 	return len(t.LogBlockList) == 0
 }
 
-func (t Topic) getLogBlock(index int) Block {
+func (t Topic) getLogBlock(index int) LogBlock {
 	return t.LogBlockList[index]
 }
 
@@ -203,23 +272,7 @@ func (t Topic) indexSize() int {
 	return len(t.IndexBlockList)
 }
 
-func (t Topic) ToString() string {
-	list := t.LogBlockList
-	blocklist := ""
-	for i, val := range list {
-		blocklist = blocklist + fmt.Sprintf("%d -> %d\n", i, val)
-	}
-	return blocklist
-}
-
-func (t *Topic) sort() {
-	if t.logBlockIsEmpty() {
-		return
-	}
-	sort.Slice(t.LogBlockList, func(i, j int) bool { return t.LogBlockList[i] < t.LogBlockList[j] })
-}
-
-func (t Topic) findLogBlocksNotIndexed() ([]Block, error) {
+func (t Topic) findLogBlocksNotIndexed() ([]LogBlock, error) {
 	if t.logSize() == 0 {
 		return nil, BlockNotFound
 	}
@@ -229,41 +282,44 @@ func (t Topic) findLogBlocksNotIndexed() ([]Block, error) {
 	return t.LogBlockList[logStartPos:logEndPos], nil
 }
 
-func (t Topic) Tail() ([]Block, error) {
+func (t Topic) tail() ([]LogBlock, error) {
 	if t.logSize() < 2 {
-		return []Block{}, BlockNotFound
+		return []LogBlock{}, BlockNotFound
 	}
 	return t.LogBlockList[:t.logSize()-2], nil
 }
 
-func (t Topic) IndexBlockContaining(offset Offset) (Block, error) {
+func (t Topic) indexBlockContaining(offset Offset) (IndexBlock, bool) {
 	if t.indexSize() == 0 {
-		return 0, BlockNotFound
+		return 0, false
 	}
 	for i := t.indexSize() - 1; i >= 0; i-- {
 		if offset >= Offset(t.IndexBlockList[i]) {
-			return t.LogBlockList[i], nil
+			return t.IndexBlockList[i], true
 		}
 	}
-	return 0, BlockNotFound
+	return 0, false
 }
 
-func (t Topic) LogBlockContaining(offset Offset) (Block, error) {
+func (t Topic) logBlockContaining(offset Offset) (LogBlock, bool) {
 	if t.logSize() == 0 {
-		return 0, BlockNotFound
+		return 0, false
+	}
+	if t.NextOffset <= offset {
+		return 0, false
 	}
 	if t.logSize() == 1 {
-		return t.LogBlockList[0], nil
+		return t.LogBlockList[0], true
 	}
 	for i := t.logSize() - 1; i >= 0; i-- {
 		if offset >= Offset(t.LogBlockList[i]) {
-			return t.LogBlockList[i], nil
+			return t.LogBlockList[i], true
 		}
 	}
-	return 0, BlockNotFound
+	return 0, false
 }
 
-func (t Topic) findBlockArrayIndex(block Block) (bool, int) {
+func (t Topic) findBlockArrayIndex(block LogBlock) (bool, int) {
 	for i, b := range t.LogBlockList {
 		if b == block {
 			return true, i
@@ -272,9 +328,9 @@ func (t Topic) findBlockArrayIndex(block Block) (bool, int) {
 	return false, 0
 }
 
-func (t Topic) GetBlocksIncludingAndAfter(offset Offset) ([]Block, error) {
+func (t Topic) getBlocksIncludingAndAfter(offset Offset) ([]LogBlock, error) {
 	if t.logSize() <= 0 {
-		return []Block{}, BlockNotFound
+		return []LogBlock{}, BlockNotFound
 	}
 	if t.logSize() == 1 {
 		return t.LogBlockList[0:], nil
@@ -287,5 +343,5 @@ func (t Topic) GetBlocksIncludingAndAfter(offset Offset) ([]Block, error) {
 			return t.LogBlockList[i:], nil
 		}
 	}
-	return []Block{}, BlockNotFound
+	return []LogBlock{}, BlockNotFound
 }

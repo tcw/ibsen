@@ -76,7 +76,7 @@ func (t *TopicHandler) Write(entries access.Entries) (uint32, error) {
 	t.NextLogOffset = offset
 	t.HeadBlockSize = t.HeadBlockSize + bytes
 	if t.HeadBlockSize > t.MaxBlockSize {
-		t.LogBlocks.AddBlock(access.Block(t.NextLogOffset))
+		t.LogBlocks.AddBlock(access.LogBlock(t.NextLogOffset))
 		t.HeadBlockSize = 0
 	}
 	go t.updateIndex()

@@ -40,14 +40,14 @@ func (idx *Index) addAll(pair []IndexOffset) {
 }
 
 //Todo: this is linear search, should use range tree for large indices
-func (idx Index) FindNearestByteOffset(offset Offset) int64 {
+func (idx Index) FindNearestByteOffset(offset Offset) IndexOffset {
 	for i := len(idx.IndexOffsets) - 1; i >= 0; i-- {
 		if offset > idx.IndexOffsets[i].Offset {
-			byteOffset := idx.IndexOffsets[i].ByteOffset
+			byteOffset := idx.IndexOffsets[i]
 			return byteOffset
 		}
 	}
-	return 0
+	return IndexOffset{}
 }
 
 func (idx *Index) addIndex(index Index) {

@@ -8,7 +8,7 @@ import (
 
 func TestWriteToTopic(t *testing.T) {
 	setUp()
-	var blockList []access.Block
+	var blockList []access.LogBlock
 	blockList = append(blockList, 0)
 	blocks := access.Blocks{BlockList: blockList}
 	testTopic := access.Topic("cars")

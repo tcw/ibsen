@@ -13,7 +13,7 @@ func TestWriteIndexFile(t *testing.T) {
 		RootPath:     rootPath,
 		IndexDensity: 0.01,
 	}
-	var blockList []access.Block
+	var blockList []access.LogBlock
 	blockList = append(blockList, 0)
 	blocks := access.Blocks{BlockList: blockList}
 	testTopic := access.Topic("cars")
@@ -51,7 +51,7 @@ func TestWriteIndexFileFromOffset(t *testing.T) {
 		RootPath:     rootPath,
 		IndexDensity: 0.1,
 	}
-	var blockList []access.Block
+	var blockList []access.LogBlock
 	blockList = append(blockList, 0)
 	blocks := access.Blocks{BlockList: blockList}
 	testTopic := access.Topic("cars")
