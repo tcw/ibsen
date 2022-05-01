@@ -18,6 +18,8 @@ type BlockIndex uint32
 
 var BlockNotFound = errors.New("block not found")
 
+type Entries *[][]byte
+
 type LogEntry struct {
 	Offset   uint64
 	Crc      uint32
@@ -39,8 +41,6 @@ type Topic struct {
 	WorkingIndex           Index
 	WorkingIndexLogPointer int
 }
-
-type Entries *[][]byte
 
 func newLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSize int) Topic {
 	return Topic{
@@ -77,8 +77,20 @@ func (t *Topic) Load() error {
 	}
 	t.IndexBlockList = indexBlocks
 	t.LogBlockList = logBlocks
-	//t.NextOffset =
-	//t.HeadBlockSize =
+	head, err := t.logBlockHead()
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	blockFileName, err := t.logBlockFileName(head)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	offset, byteSize, err := FindBlockInfo(t.Afs, blockFileName)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	t.NextOffset = offset + 1
+	t.HeadBlockSize = int(byteSize)
 	return nil
 }
 
@@ -143,7 +155,7 @@ func (t *Topic) Write(entries Entries) error {
 		start = start + len(byteEntry)
 		entriesWritten = entriesWritten + 1
 	}
-	head, err := t.head()
+	head, err := t.logBlockHead()
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -165,7 +177,7 @@ func (t *Topic) Write(entries Entries) error {
 	return nil
 }
 
-func (t Topic) ToString() string {
+func (t *Topic) ToString() string {
 	list := t.LogBlockList
 	blocklist := ""
 	for i, val := range list {
@@ -195,7 +207,7 @@ func (t *Topic) indexBlockFileName(block IndexBlock) (string, error) {
 	return t.RootPath + Sep + t.TopicName + Sep + fmt.Sprintf("%020d.idx", block), nil
 }
 
-func (t Topic) findByteOffsetInIndex(offset Offset) (int64, error) {
+func (t *Topic) findByteOffsetInIndex(offset Offset) (int64, error) {
 	indexBlock, foundIndexBlock := t.indexBlockContaining(offset)
 	if offset >= t.NextOffset {
 		return 0, errors.New("offset out of bounds")
@@ -249,30 +261,30 @@ func (t *Topic) addNewLogBlock() {
 	t.LogBlockList = append(t.LogBlockList, LogBlock(t.NextOffset))
 }
 
-func (t Topic) head() (LogBlock, error) {
+func (t *Topic) logBlockHead() (LogBlock, error) {
 	if t.logBlockIsEmpty() {
 		return 0, BlockNotFound
 	}
 	return t.LogBlockList[len(t.LogBlockList)-1], nil
 }
 
-func (t Topic) logBlockIsEmpty() bool {
+func (t *Topic) logBlockIsEmpty() bool {
 	return len(t.LogBlockList) == 0
 }
 
-func (t Topic) getLogBlock(index int) LogBlock {
+func (t *Topic) getLogBlock(index int) LogBlock {
 	return t.LogBlockList[index]
 }
 
-func (t Topic) logSize() int {
+func (t *Topic) logSize() int {
 	return len(t.LogBlockList)
 }
 
-func (t Topic) indexSize() int {
+func (t *Topic) indexSize() int {
 	return len(t.IndexBlockList)
 }
 
-func (t Topic) findLogBlocksNotIndexed() ([]LogBlock, error) {
+func (t *Topic) findLogBlocksNotIndexed() ([]LogBlock, error) {
 	if t.logSize() == 0 {
 		return nil, BlockNotFound
 	}
@@ -282,14 +294,14 @@ func (t Topic) findLogBlocksNotIndexed() ([]LogBlock, error) {
 	return t.LogBlockList[logStartPos:logEndPos], nil
 }
 
-func (t Topic) tail() ([]LogBlock, error) {
+func (t *Topic) tail() ([]LogBlock, error) {
 	if t.logSize() < 2 {
 		return []LogBlock{}, BlockNotFound
 	}
 	return t.LogBlockList[:t.logSize()-2], nil
 }
 
-func (t Topic) indexBlockContaining(offset Offset) (IndexBlock, bool) {
+func (t *Topic) indexBlockContaining(offset Offset) (IndexBlock, bool) {
 	if t.indexSize() == 0 {
 		return 0, false
 	}
@@ -301,7 +313,7 @@ func (t Topic) indexBlockContaining(offset Offset) (IndexBlock, bool) {
 	return 0, false
 }
 
-func (t Topic) logBlockContaining(offset Offset) (LogBlock, bool) {
+func (t *Topic) logBlockContaining(offset Offset) (LogBlock, bool) {
 	if t.logSize() == 0 {
 		return 0, false
 	}
@@ -319,7 +331,7 @@ func (t Topic) logBlockContaining(offset Offset) (LogBlock, bool) {
 	return 0, false
 }
 
-func (t Topic) findBlockArrayIndex(block LogBlock) (bool, int) {
+func (t *Topic) findBlockArrayIndex(block LogBlock) (bool, int) {
 	for i, b := range t.LogBlockList {
 		if b == block {
 			return true, i
@@ -328,7 +340,7 @@ func (t Topic) findBlockArrayIndex(block LogBlock) (bool, int) {
 	return false, 0
 }
 
-func (t Topic) getBlocksIncludingAndAfter(offset Offset) ([]LogBlock, error) {
+func (t *Topic) getBlocksIncludingAndAfter(offset Offset) ([]LogBlock, error) {
 	if t.logSize() <= 0 {
 		return []LogBlock{}, BlockNotFound
 	}

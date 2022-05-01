@@ -3,9 +3,7 @@ package access
 import (
 	"bufio"
 	"encoding/binary"
-	"errors"
 	"fmt"
-	"github.com/golang/protobuf/proto"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"hash/crc32"
@@ -149,25 +147,16 @@ func FindByteOffsetFromOffset(afs *afero.Afero, fileName string, startAtByteOffs
 	bytes := make([]byte, 8)
 	checksum := make([]byte, 4)
 
-	var offsetInFile int64 = math.MaxInt64
+	var offsetInFile int64 = math.MaxInt64 - 1
 	var byteOffset = startAtByteOffset
 	for {
-		offsetBytes, err := io.ReadFull(reader, bytes)
-		if err == io.EOF {
-			return 0, err
-		}
-		if err != nil {
-			return 0, errore.WrapWithContext(err)
-		}
 		if Offset(offsetInFile+1) == offset {
 			return byteOffset, nil
 		}
-		if err != nil {
-			return 0, errore.WrapWithContext(err)
-		}
-		offsetInFile = int64(littleEndianToUint64(bytes))
-
 		checksumBytes, err := io.ReadFull(reader, checksum)
+		if err == io.EOF {
+			return 0, err
+		}
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
 		}
@@ -181,6 +170,11 @@ func FindByteOffsetFromOffset(afs *afero.Afero, fileName string, startAtByteOffs
 		if err != nil {
 			return 0, errore.WrapWithContext(err)
 		}
+		offsetBytes, err := io.ReadFull(reader, bytes)
+		if err != nil {
+			return 0, errore.WrapWithContext(err)
+		}
+		offsetInFile = int64(littleEndianToUint64(bytes))
 		byteOffset = byteOffset + int64(offsetBytes) + int64(checksumBytes) + int64(sizeBytes) + int64(entrySize)
 	}
 }
@@ -207,8 +201,8 @@ func FileSize(asf *afero.Afero, fileName string) (int64, error) {
 	return fi.Size(), nil
 }
 
-func FindBlockInfo(afs *afero.Afero, blockFileName FileName, fromByteOffset int64) (Offset, int64, error) {
-	file, err := OpenFileForRead(afs, string(blockFileName))
+func FindBlockInfo(afs *afero.Afero, blockFileName string) (Offset, int64, error) {
+	file, err := OpenFileForRead(afs, blockFileName)
 	if err != nil {
 		return 0, 0, errore.WrapWithContext(err)
 	}
@@ -255,7 +249,8 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 			}
 			return nil
 		}
-		_, err := io.ReadFull(reader, bytes)
+		// Checksum
+		_, err := io.ReadFull(reader, checksum)
 		if err == io.EOF {
 			if logEntries != nil && slicePointer > 0 {
 				wg.Add(1)
@@ -267,15 +262,9 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
-
-		offset := int64(littleEndianToUint64(bytes))
-		currentOffset = Offset(offset)
-		_, err = io.ReadFull(reader, checksum)
-		if err != nil {
-			return errore.WrapWithContext(err)
-		}
-
 		checksumValue := littleEndianToUint32(bytes)
+
+		// Entry size
 		_, err = io.ReadFull(reader, bytes)
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -283,12 +272,22 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 
 		size := littleEndianToUint64(bytes)
 
+		// Entry bytes
 		entry := make([]byte, size)
 
 		_, err = io.ReadFull(reader, entry)
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
+
+		// offset
+		_, err = io.ReadFull(reader, bytes)
+		if err != nil {
+			return errore.WrapWithContext(err)
+		}
+
+		offset := int64(littleEndianToUint64(bytes))
+		currentOffset = Offset(offset)
 
 		logEntries[slicePointer] = LogEntry{
 			Offset:   uint64(offset),
@@ -298,39 +297,6 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 		}
 		slicePointer = slicePointer + 1
 	}
-}
-
-func MarshallIndex(soi []byte) (Index, error) {
-	if len(soi) == 0 {
-		return Index{}, errors.New("NoBytesInIndex")
-	}
-	var numberPart []byte
-	var offset uint64
-	isOffset := true
-	var index = Index{
-		IndexOffsets: nil,
-	}
-	for _, byteValue := range soi {
-		numberPart = append(numberPart, byteValue)
-		if !isLittleEndianMSBSet(byteValue) {
-			value, n := proto.DecodeVarint(numberPart)
-			if n < 0 {
-				return Index{}, errore.NewWithContext("Vararg returned negative numberPart, indicating a parsing error")
-			}
-			if isOffset {
-				offset = value
-				isOffset = false
-			} else {
-				index.add(IndexOffset{
-					Offset:     Offset(offset),
-					ByteOffset: int64(value),
-				})
-				isOffset = true
-			}
-			numberPart = make([]byte, 0)
-		}
-	}
-	return index, nil
 }
 
 func createByteEntry(entry []byte, currentOffset Offset) []byte {
