@@ -237,8 +237,9 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 		if slicePointer != 0 && uint32(slicePointer)%batchSize == 0 {
 			wg.Add(1)
 			sendingEntries := logEntries[:slicePointer]
-			logChan <- &sendingEntries
-			logEntries = make([]LogEntry, batchSize)
+			logEntryCopy := make([]LogEntry, slicePointer)
+			copy(logEntryCopy, sendingEntries)
+			logChan <- &logEntryCopy
 			slicePointer = 0
 		}
 		if currentOffset >= endOffset {
