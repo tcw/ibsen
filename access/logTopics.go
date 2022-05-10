@@ -16,6 +16,11 @@ type LogBlock uint64
 type IndexBlock uint64
 type BlockIndex uint32
 
+type LogBlockPosition struct {
+	Block      LogBlock
+	ByteOffset int64
+}
+
 var BlockNotFound = errors.New("block not found")
 
 type Entries *[][]byte
@@ -28,34 +33,32 @@ type LogEntry struct {
 }
 
 type Topic struct {
-	Afs                    *afero.Afero
-	RootPath               string
-	TopicName              string
-	writeLock              sync.Mutex
-	updateLock             sync.Mutex
-	MaxBlockSize           int
-	NextOffset             Offset
-	HeadBlockSize          int
-	LogBlockList           []LogBlock
-	IndexBlockList         []IndexBlock
-	WorkingIndex           Index
-	WorkingIndexLogPointer int
+	Afs            *afero.Afero
+	RootPath       string
+	TopicName      string
+	writeLock      sync.Mutex
+	updateLock     sync.Mutex
+	MaxBlockSize   int
+	NextOffset     Offset
+	HeadBlockSize  int
+	LogBlockList   []LogBlock
+	IndexBlockList []IndexBlock
+	IndexPosition  LogBlockPosition
 }
 
 func newLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSize int) Topic {
 	return Topic{
-		Afs:                    afs,
-		RootPath:               rootPath,
-		TopicName:              topicName,
-		writeLock:              sync.Mutex{},
-		updateLock:             sync.Mutex{},
-		NextOffset:             0,
-		HeadBlockSize:          0,
-		MaxBlockSize:           maxBlockSize,
-		LogBlockList:           []LogBlock{},
-		IndexBlockList:         []IndexBlock{},
-		WorkingIndex:           Index{},
-		WorkingIndexLogPointer: 0,
+		Afs:            afs,
+		RootPath:       rootPath,
+		TopicName:      topicName,
+		writeLock:      sync.Mutex{},
+		updateLock:     sync.Mutex{},
+		NextOffset:     0,
+		HeadBlockSize:  0,
+		MaxBlockSize:   maxBlockSize,
+		LogBlockList:   []LogBlock{},
+		IndexBlockList: []IndexBlock{},
+		IndexPosition:  LogBlockPosition{},
 	}
 }
 
@@ -207,6 +210,30 @@ func (t *Topic) indexBlockFileName(block IndexBlock) (string, error) {
 	return t.RootPath + Sep + t.TopicName + Sep + fmt.Sprintf("%020d.idx", block), nil
 }
 
+func (t *Topic) findCurrentIndexLogBlockPosition() (LogBlockPosition, bool, error) {
+	indexBlockHead, hasBlock := t.indexBlockHead()
+	if !hasBlock {
+		return LogBlockPosition{}, false, nil
+	}
+	indexBlockFileName, err := t.indexBlockFileName(indexBlockHead)
+	if err != nil {
+		return LogBlockPosition{}, false, errore.WrapWithContext(err)
+	}
+	byteIndex, err := t.Afs.ReadFile(indexBlockFileName)
+	if err != nil {
+		return LogBlockPosition{}, false, errore.WrapWithContext(err)
+	}
+	index, err := MarshallIndex(byteIndex)
+	if err != nil {
+		return LogBlockPosition{}, false, errore.WrapWithContext(err)
+	}
+	head := index.Head()
+	return LogBlockPosition{
+		Block:      LogBlock(indexBlockHead),
+		ByteOffset: head.ByteOffset,
+	}, true, nil
+}
+
 func (t *Topic) findByteOffsetInIndex(offset Offset) (int64, error) {
 	indexBlock, foundIndexBlock := t.indexBlockContaining(offset)
 	if offset >= t.NextOffset {
@@ -261,11 +288,18 @@ func (t *Topic) addNewLogBlock() {
 	t.LogBlockList = append(t.LogBlockList, LogBlock(t.NextOffset))
 }
 
-func (t *Topic) logBlockHead() (LogBlock, error) {
+func (t *Topic) logBlockHead() (LogBlock, bool) {
 	if t.logBlockIsEmpty() {
-		return 0, BlockNotFound
+		return 0, false
 	}
-	return t.LogBlockList[len(t.LogBlockList)-1], nil
+	return t.LogBlockList[len(t.LogBlockList)-1], true
+}
+
+func (t *Topic) indexBlockHead() (IndexBlock, bool) {
+	if t.logBlockIsEmpty() {
+		return 0, false
+	}
+	return t.IndexBlockList[len(t.IndexBlockList)-1], true
 }
 
 func (t *Topic) logBlockIsEmpty() bool {
