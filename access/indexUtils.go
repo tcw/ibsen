@@ -42,18 +42,18 @@ func MarshallIndex(soi []byte) (Index, error) {
 	return index, nil
 }
 
-func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, oneEntryForEvery uint32) ([]byte, error) {
-	exists, err := afs.Exists(string(logFile))
+func createIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, oneEntryForEvery uint32) ([]byte, int64, error) {
+	exists, err := afs.Exists(logFileName)
 	if err != nil {
-		return nil, errore.WrapWithContext(err)
+		return nil, 0, errore.WrapWithContext(err)
 	}
 	if !exists {
-		return nil, errors.New("NoFile")
+		return nil, 0, errors.New("NoFile")
 	}
 
-	file, err := OpenFileForRead(afs, string(logFile))
+	file, err := OpenFileForRead(afs, logFileName)
 	if err != nil {
-		return nil, errore.WrapWithContext(err)
+		return nil, 0, errore.WrapWithContext(err)
 	}
 	defer file.Close()
 	var index []byte
@@ -61,7 +61,7 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 	if logfileByteOffset > 0 {
 		byteOffset, err = file.Seek(logfileByteOffset, io.SeekStart)
 		if err != nil {
-			return nil, errore.WrapWithContext(err)
+			return nil, byteOffset, errore.WrapWithContext(err)
 		}
 	}
 	isFirst := true
@@ -71,24 +71,24 @@ func createIndex(afs *afero.Afero, logFile FileName, logfileByteOffset int64, on
 	for {
 		crcSize, err := io.ReadFull(reader, bytesCrc)
 		if err == io.EOF {
-			return index, nil
+			return index, byteOffset, nil
 		}
 		if err != nil {
-			return nil, errore.WrapWithContext(err)
+			return nil, byteOffset, errore.WrapWithContext(err)
 		}
 		byteSize, err := io.ReadFull(reader, bytes)
 		if err != nil {
-			return nil, errore.WrapWithContext(err)
+			return nil, byteOffset, errore.WrapWithContext(err)
 		}
 		size := littleEndianToUint32(bytes)
 		entry := make([]byte, size)
 		entrySize, err := io.ReadFull(reader, entry)
 		if err != nil {
-			return nil, errore.WrapWithContext(err)
+			return nil, byteOffset, errore.WrapWithContext(err)
 		}
 		offsetSize, err := io.ReadFull(reader, bytes)
 		if err != nil {
-			return nil, errore.WrapWithContext(err)
+			return nil, byteOffset, errore.WrapWithContext(err)
 		}
 		offset := littleEndianToUint64(bytes)
 		if !isFirst && offset%uint64(oneEntryForEvery) == 0 {
