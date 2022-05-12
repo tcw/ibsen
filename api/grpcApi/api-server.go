@@ -71,13 +71,13 @@ func (igs *IbsenGrpcServer) Shutdown() {
 var _ IbsenServer = &server{}
 
 func (s server) List(ctx context.Context, empty *empty.Empty) (*TopicList, error) {
-	list, err := s.manager.List()
+	list := s.manager.List()
 	return &TopicList{
 		Topics: convertTopics(list),
-	}, err
+	}, nil
 }
 
-func convertTopics(topics []access.Topic) []string {
+func convertTopics(topics []manager.TopicName) []string {
 	var sTopic []string
 	for _, topic := range topics {
 		sTopic = append(sTopic, string(topic))
@@ -86,14 +86,14 @@ func convertTopics(topics []access.Topic) []string {
 }
 
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
-	n, err := s.manager.Write(access.Topic(entries.Topic), &entries.Entries)
+	err := s.manager.Write(manager.TopicName(entries.Topic), &entries.Entries)
 	if err != nil {
 		err = errore.WrapWithContext(err)
 		log.Println(errore.SprintTrace(err))
 		return nil, status.Error(codes.Unknown, "Error writing batch")
 	}
 	return &WriteStatus{
-		Wrote: int64(n),
+		Wrote: int64(0), //todo
 	}, nil
 }
 
@@ -101,13 +101,12 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	logChan := make(chan *[]access.LogEntry)
 	var wg sync.WaitGroup
 	go sendBatchMessage(logChan, &wg, readServer)
-	err := s.manager.Read(access.ReadParams{
-		Topic:            access.Topic(params.Topic),
-		Offset:           access.Offset(params.Offset),
-		StopOnCompletion: params.StopOnCompletion,
-		BatchSize:        params.BatchSize,
-		LogChan:          logChan,
-		Wg:               &wg,
+	err := s.manager.Read(manager.ReadParams{
+		TopicName: manager.TopicName(params.Topic),
+		From:      access.Offset(params.Offset),
+		BatchSize: params.BatchSize,
+		LogChan:   logChan,
+		Wg:        &wg,
 	})
 
 	if err != nil {

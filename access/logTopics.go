@@ -5,11 +5,8 @@ import (
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
-	"os"
 	"sync"
 )
-
-const Sep = string(os.PathSeparator)
 
 type Offset uint64
 type LogBlock uint64
@@ -23,7 +20,7 @@ type LogBlockPosition struct {
 
 var BlockNotFound = errors.New("block not found")
 
-type Entries *[][]byte
+type EntriesPtr *[][]byte
 
 type LogEntry struct {
 	Offset   uint64
@@ -46,7 +43,7 @@ type Topic struct {
 	IndexPosition  *LogBlockPosition
 }
 
-func newLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSize int) Topic {
+func NewLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSize int) Topic {
 	return Topic{
 		Afs:            afs,
 		RootPath:       rootPath,
@@ -162,7 +159,7 @@ func (t *Topic) Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, 
 	return nil
 }
 
-func (t *Topic) Write(entries Entries) error {
+func (t *Topic) Write(entries EntriesPtr) error {
 	t.writeLock.Lock()
 	defer t.writeLock.Unlock()
 

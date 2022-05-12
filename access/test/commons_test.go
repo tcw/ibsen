@@ -32,7 +32,7 @@ func readVerification(t *testing.T, logChan chan *[]access.LogEntry, wg *sync.Wa
 	wg.Done()
 }
 
-func createEntry(entries int) access.Entries {
+func createEntry(entries int) access.EntriesPtr {
 	var bytes [][]byte
 	for i := 0; i < entries; i++ {
 		bytes = append(bytes, []byte(fmt.Sprintf("hello_%d", i)))

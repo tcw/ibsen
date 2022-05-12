@@ -17,6 +17,12 @@ import (
 	"sync"
 )
 
+type BlockSizeInBytes uint64
+type FileName string
+type StrictlyMonotonicOrderedVarIntIndex []byte
+
+const Sep = string(os.PathSeparator)
+
 var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
 func openFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
@@ -42,21 +48,8 @@ func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	return f, nil
 }
 
-func listFilesInDirectory(afs *afero.Afero, dir string, fileExtension string) ([]string, error) {
-	filenames := make([]string, 0)
-	file, err := OpenFileForRead(afs, dir)
-	defer file.Close()
-	if err != nil {
-		return nil, errore.WrapWithContext(err)
-	}
-	names, err := file.Readdirnames(0)
-	for _, name := range names {
-		hasSuffix := strings.HasSuffix(name, fileExtension)
-		if hasSuffix {
-			filenames = append(filenames, name)
-		}
-	}
-	return filenames, nil
+func CreateTopic(afs *afero.Afero, rootPath string, topic string) error {
+	return afs.Mkdir(rootPath+Sep+topic, 0744)
 }
 
 func ListAllFilesInTopic(afs *afero.Afero, rootPath string, topic string) ([]os.FileInfo, error) {
@@ -97,22 +90,7 @@ func LoadTopicBlocks(afs *afero.Afero, rootPath string, topic string) ([]LogBloc
 	return logBlocks, indexBlocks, nil
 }
 
-func filesToBlocks(paths []string) ([]LogBlock, error) {
-	blocks := make([]LogBlock, 0)
-	for _, path := range paths {
-		_, file := filepath.Split(path)
-		ext := filepath.Ext(file)
-		fileNameStem := strings.TrimSuffix(file, ext)
-		mod, err := strconv.ParseUint(fileNameStem, 10, 64)
-		if err != nil {
-			return nil, errore.WrapWithContext(err)
-		}
-		blocks = append(blocks, LogBlock(mod))
-	}
-	return blocks, nil
-}
-
-func listAllTopics(afs *afero.Afero, dir string) ([]string, error) {
+func ListAllTopics(afs *afero.Afero, dir string) ([]string, error) {
 	var filenames []string
 	file, err := OpenFileForRead(afs, dir)
 	if err != nil {
@@ -177,28 +155,6 @@ func FindByteOffsetFromOffset(afs *afero.Afero, fileName string, startAtByteOffs
 		offsetInFile = int64(littleEndianToUint64(bytes))
 		byteOffset = byteOffset + int64(offsetBytes) + int64(checksumBytes) + int64(sizeBytes) + int64(entrySize)
 	}
-}
-
-func FileSize(asf *afero.Afero, fileName string) (int64, error) {
-	exists, err := asf.Exists(fileName)
-	if err != nil {
-		return 0, errore.NewWithContext(fmt.Sprintf("Failes checking if file %s exist", fileName))
-	}
-	if !exists {
-		return 0, errore.NewWithContext(fmt.Sprintf("File %s does not exist", fileName))
-	}
-
-	file, err := asf.OpenFile(fileName,
-		os.O_RDONLY, 0400)
-	fi, err := file.Stat()
-	if err != nil {
-		return 0, errore.WrapWithContext(err)
-	}
-	err = file.Close()
-	if err != nil {
-		return 0, errore.WrapWithContext(err)
-	}
-	return fi.Size(), nil
 }
 
 func FindBlockInfo(afs *afero.Afero, blockFileName string) (Offset, int64, error) {

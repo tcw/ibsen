@@ -62,7 +62,7 @@ func writeEvery100ms(handler *manager.TopicHandler, total time.Duration, writeEv
 	}
 }
 
-func createEntry(entries int, entryPrefix string, from int) access.Entries {
+func createEntry(entries int, entryPrefix string, from int) access.EntriesPtr {
 	var bytes [][]byte
 	for i := from; i < entries+from; i++ {
 		bytes = append(bytes, []byte(fmt.Sprintf("%s_%d", entryPrefix, i)))
