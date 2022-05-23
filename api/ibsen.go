@@ -82,11 +82,11 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		log.Printf("Started profiling, creating file %s", ibs.CpuProfile)
 	}
 
-	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, ibs.Readonly, time.Minute*10, time.Second*5, ibs.RootPath, uint64(ibs.MaxBlockSize))
+	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, ibs.Readonly, time.Minute*10, time.Second*5, ibs.RootPath, ibs.MaxBlockSize)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	err = ibs.startGRPCServer(listener, topicsManager)
+	err = ibs.startGRPCServer(listener, &topicsManager)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}

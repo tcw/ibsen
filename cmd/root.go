@@ -131,6 +131,7 @@ var (
 		},
 	}
 
+	//Todo: fix
 	cmdToolsReadIndexLogFile = &cobra.Command{
 		Use:              "read-index [file]",
 		Short:            "read ibsen index file from disk",

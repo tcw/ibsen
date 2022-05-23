@@ -19,26 +19,16 @@ func ReadLogFile(fileName string, batchSize uint32) error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	_, err = access.ReadFile(file, logChan, &wg, batchSize, math.MaxUint64)
+	err = access.ReadFile(file, logChan, &wg, batchSize, 0, math.MaxUint64)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
 	return nil
 }
 
+//Todo: implement
 func ReadLogIndexFile(fileName string) error {
-	var fs = afero.NewOsFs()
-	afs := &afero.Afero{Fs: fs}
-
-	binaryIndex, err := access.LoadIndex(afs, fileName)
-	if err != nil {
-		return errore.WrapWithContext(err)
-	}
-	index, err := access.MarshallIndex(binaryIndex)
-	if err != nil {
-		return errore.WrapWithContext(err)
-	}
-	fmt.Println(index.ToString())
+	fmt.Println(fileName)
 	return nil
 }
 

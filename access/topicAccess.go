@@ -18,6 +18,16 @@ type LogBlockPosition struct {
 	ByteOffset int64
 }
 
+type TopicAccess interface {
+	UpdateIndex() error
+	Load() error
+	IsLoaded() bool
+	Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, batchSize uint32) error
+	Write(entries EntriesPtr) error
+}
+
+var _ TopicAccess = &Topic{}
+
 var BlockNotFound = errors.New("block not found")
 
 type EntriesPtr *[][]byte
@@ -41,10 +51,11 @@ type Topic struct {
 	LogBlockList   []LogBlock
 	IndexBlockList []IndexBlock
 	IndexPosition  *LogBlockPosition
+	Loaded         bool
 }
 
-func NewLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSize int) Topic {
-	return Topic{
+func NewLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSize int, loaded bool) *Topic {
+	return &Topic{
 		Afs:            afs,
 		RootPath:       rootPath,
 		TopicName:      topicName,
@@ -56,6 +67,7 @@ func NewLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSi
 		LogBlockList:   []LogBlock{},
 		IndexBlockList: []IndexBlock{},
 		IndexPosition:  nil,
+		Loaded:         loaded,
 	}
 }
 
@@ -94,9 +106,16 @@ func (t *Topic) UpdateIndex() error {
 	return nil
 }
 
+func (t *Topic) IsLoaded() bool {
+	return t.Loaded
+}
+
 func (t *Topic) Load() error {
 	t.updateLock.Lock()
 	defer t.updateLock.Unlock()
+	if t.Loaded {
+		return nil
+	}
 	logBlocks, indexBlocks, err := LoadTopicBlocks(t.Afs, t.RootPath, t.TopicName)
 	if err != nil {
 		return errore.WrapWithContext(err)
@@ -122,6 +141,7 @@ func (t *Topic) Load() error {
 		return errore.WrapWithContext(err)
 	}
 	t.IndexPosition = &position
+	t.Loaded = true
 	return nil
 }
 

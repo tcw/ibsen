@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/spf13/afero"
+	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/manager"
@@ -36,7 +37,7 @@ func startGrpcServer() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	ibsenServer = grpcApi.NewIbsenGrpcServer(topicsManager)
+	ibsenServer = grpcApi.NewIbsenGrpcServer(&topicsManager)
 	lis, err := net.Listen("tcp", target)
 	if err != nil {
 		log.Fatal(err)
@@ -56,9 +57,7 @@ func TestTopicList(t *testing.T) {
 	if err != nil {
 		t.Error(errore.WrapWithContext(err))
 	}
-	if len(topicList.GetTopics()) != 5 {
-		t.Logf("Actualt entries read %d expected %d", len(topicList.GetTopics()), 5)
-	}
+	assert.Equal(t, 5, len(topicList.GetTopics()), "should be equal")
 	ibsenServer.Shutdown()
 }
 
@@ -70,15 +69,9 @@ func TestReadWriteLargeObject(t *testing.T) {
 	if err != nil {
 		t.Error(errore.WrapWithContext(err))
 	}
-	if len(entries) != numberOfEntries {
-		t.Logf("Actualt entries read %d expected %d", len(entries), numberOfEntries)
-		t.Fail()
-	}
+	assert.Equal(t, numberOfEntries, len(entries), "should be equal")
 	actualObjectSize := len(entries[0].Content)
-	if actualObjectSize != objectBytes {
-		t.Logf("Actualt object size %d expected %d", objectBytes, actualObjectSize)
-		t.Fail()
-	}
+	assert.Equal(t, actualObjectSize, objectBytes, "should be equal")
 	ibsenServer.Shutdown()
 }
 
@@ -90,10 +83,7 @@ func TestReadWriteVerification(t *testing.T) {
 	if err != nil {
 		t.Error(errore.WrapWithContext(err))
 	}
-	if len(entries) != numberOfEntries {
-		t.Logf("Actualt entries read %d expected %d", len(entries), numberOfEntries)
-		t.Fail()
-	}
+	assert.Equal(t, numberOfEntries, len(entries), "should be equal")
 	ibsenServer.Shutdown()
 }
 
@@ -101,18 +91,14 @@ func TestReadWriteWithOffsetVerification(t *testing.T) {
 	go startGrpcServer()
 	writeEntries := 1000
 	write("test", writeEntries, 100)
-	for i := 0; i < writeEntries; i++ {
+	for i := 1; i < writeEntries; i++ {
 		offset := uint64(writeEntries - i)
 		expected := writeEntries - int(offset)
 		entries, err := read("test", offset, 10)
 		if err != nil {
 			t.Error(errore.WrapWithContext(err))
 		}
-		actual := len(entries)
-		if actual != expected {
-			t.Logf("Actualt entries read %d expected %d", actual, expected)
-			t.Fail()
-		}
+		assert.Equal(t, expected, len(entries), "should be equal")
 	}
 	ibsenServer.Shutdown()
 }
@@ -137,14 +123,14 @@ func writeLarge(topic string, numberOfEntries int, entryKb int) int {
 
 func write(topic string, numberOfEntries int, entryByteSize int) {
 	client := newIbsenClient(target)
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
 	entries := createInputEntries(topic, numberOfEntries, entryByteSize)
 	client.Client.Write(ctx, &entries)
 }
 
 func read(topic string, offset uint64, batchSize uint32) ([]*grpcApi.Entry, error) {
 	client := newIbsenClient(target)
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
 	entryStream, err := client.Client.Read(ctx, &grpcApi.ReadParams{
 		StopOnCompletion: true,
 		Topic:            topic,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/utils"
 	"hash/crc32"
 	"io"
 	"math"
@@ -108,6 +109,9 @@ func ListAllTopics(afs *afero.Afero, dir string) ([]string, error) {
 }
 
 func FindByteOffsetFromOffset(afs *afero.Afero, fileName string, startAtByteOffset int64, offset Offset) (int64, error) {
+	if offset == 0 {
+		return 0, nil
+	}
 	file, err := OpenFileForRead(afs, fileName)
 	if err != nil {
 		return 0, err
@@ -198,14 +202,6 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 			logChan <- &logEntryCopy
 			slicePointer = 0
 		}
-		if currentOffset >= endOffset {
-			if logEntries != nil && slicePointer > 0 {
-				wg.Add(1)
-				sendingEntries := logEntries[:slicePointer]
-				logChan <- &sendingEntries
-			}
-			return nil
-		}
 		// Checksum
 		_, err := io.ReadFull(reader, checksum)
 		if err == io.EOF {
@@ -253,6 +249,14 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 			Entry:    entry,
 		}
 		slicePointer = slicePointer + 1
+		if currentOffset == endOffset {
+			if logEntries != nil && slicePointer > 0 {
+				wg.Add(1)
+				sendingEntries := logEntries[:slicePointer]
+				logChan <- &sendingEntries
+			}
+			return nil
+		}
 	}
 }
 
@@ -264,7 +268,7 @@ func createByteEntry(entry []byte, currentOffset Offset) []byte {
 	checksum = crc32.Update(checksum, crc32q, entry)
 	checksum = crc32.Update(checksum, crc32q, offset)
 	check := uint32ToLittleEndian(checksum)
-	return JoinSize(20+entrySize, check, byteSize, entry, offset)
+	return utils.JoinSize(20+entrySize, check, byteSize, entry, offset)
 }
 
 func isLittleEndianMSBSet(byteValue byte) bool {

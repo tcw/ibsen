@@ -1,4 +1,4 @@
-package access
+package utils
 
 func Join(s ...[]byte) []byte {
 	n := 0

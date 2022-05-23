@@ -102,11 +102,12 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	var wg sync.WaitGroup
 	go sendBatchMessage(logChan, &wg, readServer)
 	err := s.manager.Read(manager.ReadParams{
-		TopicName: manager.TopicName(params.Topic),
-		From:      access.Offset(params.Offset),
-		BatchSize: params.BatchSize,
-		LogChan:   logChan,
-		Wg:        &wg,
+		TopicName:        manager.TopicName(params.Topic),
+		From:             access.Offset(params.Offset),
+		BatchSize:        params.BatchSize,
+		LogChan:          logChan,
+		Wg:               &wg,
+		StopOnCompletion: params.StopOnCompletion,
 	})
 
 	if err != nil {
