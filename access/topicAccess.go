@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
+	"log"
 	"sync"
+	"sync/atomic"
 )
 
 type Offset uint64
@@ -45,6 +47,7 @@ type Topic struct {
 	TopicName      string
 	writeLock      sync.Mutex
 	updateLock     sync.Mutex
+	indexMutex     int32
 	MaxBlockSize   int
 	NextOffset     Offset
 	HeadBlockSize  int
@@ -72,6 +75,11 @@ func NewLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSi
 }
 
 func (t *Topic) UpdateIndex() error {
+	if !atomic.CompareAndSwapInt32(&t.indexMutex, 0, 1) {
+		return nil
+	}
+	defer atomic.CompareAndSwapInt32(&t.indexMutex, 1, 0)
+
 	t.updateLock.Lock()
 	defer t.updateLock.Unlock()
 
@@ -225,6 +233,12 @@ func (t *Topic) Write(entries EntriesPtr) error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
+	go func() {
+		err := t.UpdateIndex()
+		if err != nil {
+			log.Default().Printf("warning, indexing failed %v\n", err)
+		}
+	}()
 	return nil
 }
 

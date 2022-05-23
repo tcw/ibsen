@@ -5,6 +5,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/errore"
+	"log"
 	"sync"
 	"time"
 )
@@ -115,6 +116,19 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 		time.Sleep(l.CheckForNewEvery)
 	}
 	return nil
+}
+
+func (l *LogTopicsManager) indexScheduler() {
+	for {
+		for name, topic := range l.Topics {
+			err := topic.UpdateIndex()
+			if err != nil {
+				log.Printf("index builder for topic %s has failed: %s", name,
+					errore.SprintTrace(errore.WrapWithContext(err)))
+			}
+		}
+		time.Sleep(time.Second * 10)
+	}
 }
 
 func keys[K comparable, V any](m map[K]V) []K {
