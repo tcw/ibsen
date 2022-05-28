@@ -40,13 +40,13 @@ type LogTopicsManager struct {
 }
 
 func NewLogTopicsManager(afs *afero.Afero, readonly bool, timeToLive time.Duration, checkForNewEvery time.Duration, rootPath string, maxBlockSizeMB int) (LogTopicsManager, error) {
+	maxBlockSize := maxBlockSizeMB * 1024 * 1024
 	topics, err := access.ListAllTopics(afs, rootPath)
 	if err != nil {
 		return LogTopicsManager{}, errore.WrapWithContext(err)
 	}
 	topicMap := make(map[TopicName]access.TopicAccess)
 	for _, topic := range topics {
-		maxBlockSize := maxBlockSizeMB * 1024 * 1024
 		var iTopic access.TopicAccess
 		iTopic = access.NewLogTopic(afs, rootPath, topic, maxBlockSize, false)
 		topicMap[TopicName(topic)] = iTopic
@@ -56,7 +56,7 @@ func NewLogTopicsManager(afs *afero.Afero, readonly bool, timeToLive time.Durati
 		Afs:              afs,
 		TTL:              timeToLive,
 		CheckForNewEvery: checkForNewEvery,
-		MaxBlockSizeMB:   maxBlockSizeMB,
+		MaxBlockSizeMB:   maxBlockSize,
 		RootPath:         rootPath,
 		Topics:           topicMap,
 	}, nil

@@ -79,10 +79,10 @@ func LoadTopicBlocks(afs *afero.Afero, rootPath string, topic string) ([]LogBloc
 		if err != nil {
 			return nil, nil, errore.WrapWithContext(err)
 		}
-		if fileExtension == "log" {
+		if fileExtension == ".log" {
 			logBlocks = append(logBlocks, LogBlock(parseUint))
 		}
-		if fileExtension == "idx" {
+		if fileExtension == ".idx" {
 			indexBlocks = append(indexBlocks, IndexBlock(parseUint))
 		}
 	}
@@ -108,20 +108,21 @@ func ListAllTopics(afs *afero.Afero, dir string) ([]string, error) {
 	return filenames, nil
 }
 
-func FindByteOffsetFromOffset(afs *afero.Afero, fileName string, startAtByteOffset int64, offset Offset) (int64, error) {
+func FindByteOffsetFromOffset(afs *afero.Afero, fileName string, startAtByteOffset int64, offset Offset) (int64, int, error) {
+	scanCount := 0
 	if offset == 0 {
-		return 0, nil
+		return 0, scanCount, nil
 	}
 	file, err := OpenFileForRead(afs, fileName)
 	if err != nil {
-		return 0, err
+		return 0, scanCount, err
 	}
 	defer file.Close()
 
 	if startAtByteOffset > 0 {
 		_, err = file.Seek(startAtByteOffset, io.SeekStart)
 		if err != nil {
-			return 0, errore.WrapWithContext(err)
+			return 0, scanCount, errore.WrapWithContext(err)
 		}
 	}
 
@@ -133,31 +134,32 @@ func FindByteOffsetFromOffset(afs *afero.Afero, fileName string, startAtByteOffs
 	var byteOffset = startAtByteOffset
 	for {
 		if Offset(offsetInFile+1) == offset {
-			return byteOffset, nil
+			return byteOffset, scanCount, nil
 		}
 		checksumBytes, err := io.ReadFull(reader, checksum)
 		if err == io.EOF {
-			return 0, err
+			return 0, scanCount, err
 		}
 		if err != nil {
-			return 0, errore.WrapWithContext(err)
+			return 0, scanCount, errore.WrapWithContext(err)
 		}
 		sizeBytes, err := io.ReadFull(reader, bytes)
 		if err != nil {
-			return 0, errore.WrapWithContext(err)
+			return 0, scanCount, errore.WrapWithContext(err)
 		}
 		entrySize := littleEndianToUint64(bytes)
 		entryBytes := make([]byte, entrySize)
 		_, err = io.ReadFull(reader, entryBytes)
 		if err != nil {
-			return 0, errore.WrapWithContext(err)
+			return 0, scanCount, errore.WrapWithContext(err)
 		}
 		offsetBytes, err := io.ReadFull(reader, bytes)
 		if err != nil {
-			return 0, errore.WrapWithContext(err)
+			return 0, scanCount, errore.WrapWithContext(err)
 		}
 		offsetInFile = int64(littleEndianToUint64(bytes))
 		byteOffset = byteOffset + int64(offsetBytes) + int64(checksumBytes) + int64(sizeBytes) + int64(entrySize)
+		scanCount = scanCount + 1
 	}
 }
 

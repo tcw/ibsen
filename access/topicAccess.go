@@ -3,9 +3,9 @@ package access
 import (
 	"errors"
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
-	"log"
 	"sync"
 	"sync/atomic"
 )
@@ -125,6 +125,7 @@ func (t *Topic) Load() error {
 		return nil
 	}
 	logBlocks, indexBlocks, err := LoadTopicBlocks(t.Afs, t.RootPath, t.TopicName)
+
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -149,6 +150,14 @@ func (t *Topic) Load() error {
 		return errore.WrapWithContext(err)
 	}
 	t.IndexPosition = &position
+	if e := log.Debug(); e.Enabled() {
+		e.Str("topic", t.TopicName).
+			Int("logBlocks", len(logBlocks)).
+			Int("indexBlocks", len(indexBlocks)).
+			Int("nextOffset", int(t.NextOffset)).
+			Int("headBlockSize", t.HeadBlockSize).
+			Msg("loaded topic")
+	}
 	t.Loaded = true
 	return nil
 }
@@ -161,9 +170,16 @@ func (t *Topic) Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, 
 	if !found {
 		return errors.New("offset out of bounds")
 	}
-	byteOffset, err := t.findByteOffsetInIndex(from)
+	byteOffset, scanCount, err := t.findByteOffsetInIndex(from)
 	if err != nil {
 		return errore.WrapWithContext(err)
+	}
+	if e := log.Debug(); e.Enabled() {
+		e.Str("topic", t.TopicName).
+			Uint64("offset", uint64(from)).
+			Int64("byteOffset", byteOffset).
+			Int("scanned", scanCount).
+			Msg("index scan count")
 	}
 	fileName, err := t.logBlockFileName(block)
 	endOffset, hasEnd := t.endBoundaryForReadOffset()
@@ -194,7 +210,7 @@ func (t *Topic) Write(entries EntriesPtr) error {
 	if t.logBlockIsEmpty() {
 		t.addNewLogBlock()
 	}
-	if t.logSize() > t.MaxBlockSize {
+	if t.HeadBlockSize > t.MaxBlockSize {
 		t.addNewLogBlock()
 		t.resetHeadBlockSize()
 	}
@@ -236,7 +252,7 @@ func (t *Topic) Write(entries EntriesPtr) error {
 	go func() {
 		err := t.UpdateIndex()
 		if err != nil {
-			log.Default().Printf("warning, indexing failed %v\n", err)
+			log.Warn().Err(err)
 		}
 	}()
 	return nil
@@ -344,41 +360,42 @@ func (t *Topic) findCurrentIndexLogBlockPosition() (LogBlockPosition, bool, erro
 	}, true, nil
 }
 
-func (t *Topic) findByteOffsetInIndex(offset Offset) (int64, error) {
+func (t *Topic) findByteOffsetInIndex(offset Offset) (int64, int, error) {
 	indexBlock, foundIndexBlock := t.indexBlockContaining(offset)
 	if offset >= t.NextOffset {
-		return 0, errors.New("offset out of bounds")
+		return 0, 0, errors.New("offset out of bounds")
 	}
 	logBlock, logBlockFound := t.logBlockContaining(offset)
 	if !logBlockFound {
-		return 0, errors.New("no log block containing offset found")
+		return 0, 0, errors.New("no log block containing offset found")
 	}
 	logBlockFileName, err := t.logBlockFileName(logBlock)
 	if err != nil {
-		return 0, errore.WrapWithContext(err)
+		return 0, 0, errore.WrapWithContext(err)
 	}
 	if !foundIndexBlock {
 		return FindByteOffsetFromOffset(t.Afs, logBlockFileName, 0, offset)
 	}
 	indexBlockFileName, err := t.indexBlockFileName(indexBlock)
 	if err != nil {
-		return 0, errore.WrapWithContext(err)
+		return 0, 0, errore.WrapWithContext(err)
 	}
 	bytes, err := t.Afs.ReadFile(indexBlockFileName)
 	if err != nil {
-		return 0, errore.WrapWithContext(err)
+		return 0, 0, errore.WrapWithContext(err)
 	}
 	index, err := MarshallIndex(bytes)
 	if err != nil {
-		return 0, errore.WrapWithContext(err)
+		return 0, 0, errore.WrapWithContext(err)
 	}
 	indexOffset := index.FindNearestByteOffset(offset)
 	if indexOffset.Offset > offset {
-		return 0, errore.NewWithContext("found larger offset than upper bound")
+		return 0, 0, errore.NewWithContext("found larger offset than upper bound")
 	}
 	if indexOffset.Offset == offset {
-		return indexOffset.ByteOffset, nil
+		return indexOffset.ByteOffset, 0, nil
 	}
+
 	return FindByteOffsetFromOffset(t.Afs, logBlockFileName, indexOffset.ByteOffset, offset)
 }
 

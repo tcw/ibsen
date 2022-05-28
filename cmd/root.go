@@ -2,12 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/tcw/ibsen/api"
 	"github.com/tcw/ibsen/consensus"
-	"github.com/tcw/ibsen/errore"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -16,6 +16,8 @@ import (
 )
 
 var (
+	debug                  bool
+	trace                  bool
 	host                   string
 	port                   int
 	maxBlockSizeMB         int
@@ -43,6 +45,16 @@ var (
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
+			if trace {
+				zerolog.SetGlobalLevel(zerolog.TraceLevel)
+				log.Info().Msg("logger lever at trace")
+			} else if debug {
+				zerolog.SetGlobalLevel(zerolog.DebugLevel)
+				log.Info().Msg("logger lever at debug")
+			} else {
+				zerolog.SetGlobalLevel(zerolog.InfoLevel)
+				log.Info().Msg("logger lever at info")
+			}
 			inMemory := false
 			var afs *afero.Afero
 			absolutePath := "/tmp/data"
@@ -54,7 +66,7 @@ var (
 				var err error
 				absolutePath, err = filepath.Abs(rootDirectory)
 				if err != nil {
-					log.Fatal(err)
+					log.Fatal().Err(err)
 				}
 				var fs = afero.NewOsFs()
 				if readOnly {
@@ -76,12 +88,12 @@ var (
 			}
 			lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 			if err != nil {
-				log.Println(errore.SprintTrace(err))
+				log.Err(err)
 				return
 			}
 			err = ibsenServer.Start(lis)
 			if err != nil {
-				log.Fatalf(errore.SprintTrace(err))
+				log.Fatal().Err(err)
 			}
 		},
 	}
@@ -117,16 +129,16 @@ var (
 				batchSizeString := args[1]
 				batchSize, err = strconv.Atoi(batchSizeString)
 				if err != nil {
-					log.Fatalf("%s is not a number", batchSizeString)
+					log.Fatal().Msg(fmt.Sprintf("%s is not a number", batchSizeString))
 				}
 			}
 			file, err := filepath.Abs(args[0])
 			if err != nil {
-				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				log.Fatal().Err(err)
 			}
 			err = ReadLogFile(file, uint32(batchSize))
 			if err != nil {
-				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				log.Fatal().Err(err)
 			}
 		},
 	}
@@ -145,11 +157,11 @@ var (
 			}
 			absolutePath, err := filepath.Abs(args[0])
 			if err != nil {
-				log.Fatal(err)
+				log.Fatal().Err(err)
 			}
 			err = ReadLogIndexFile(absolutePath)
 			if err != nil {
-				log.Fatalln(errore.SprintTrace(errore.WrapWithContext(err)))
+				log.Fatal().Err(err)
 			}
 		},
 	}
@@ -172,12 +184,12 @@ var (
 			if concurrent > 1 {
 				benchmarkReport, err = client.BenchmarkConcurrent(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches, concurrent)
 				if err != nil {
-					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+					log.Fatal().Err(err)
 				}
 			} else {
 				benchmarkReport, err = client.Benchmark(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches)
 				if err != nil {
-					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+					log.Fatal().Err(err)
 				}
 			}
 			fmt.Println(benchmarkReport)
@@ -202,12 +214,12 @@ var (
 			if len(args) > 1 {
 				result, err = client.Write(topic, args[1])
 				if err != nil {
-					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+					log.Fatal().Err(err)
 				}
 			} else {
 				result, err = client.Write(topic)
 				if err != nil {
-					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+					log.Fatal().Err(err)
 				}
 			}
 			fmt.Println(result)
@@ -242,7 +254,7 @@ var (
 			client := newIbsenClient(host + ":" + strconv.Itoa(port))
 			err = client.Read(topic, offset, uint32(batchSize64))
 			if err != nil {
-				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				log.Fatal().Err(err)
 			}
 		},
 	}
@@ -263,8 +275,10 @@ func init() {
 	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
 	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
 
-	rootCmd.Flags().IntVarP(&port, "port", "p", port, "config file (default is current directory)")
-	rootCmd.Flags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
+	rootCmd.PersistentFlags().IntVarP(&port, "port", "p", port, "config file (default is current directory)")
+	rootCmd.PersistentFlags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
+	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "v", false, "set logging to debug level")
+	rootCmd.PersistentFlags().BoolVarP(&trace, "trace", "t", false, "set logging to trace level")
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
 	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
 	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
