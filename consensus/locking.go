@@ -2,10 +2,10 @@ package consensus
 
 import (
 	"github.com/google/uuid"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"io"
-	"log"
 	"os"
 	"time"
 )
@@ -110,7 +110,7 @@ func (fl FileLock) reclaimer() {
 	for {
 		fileLock, err := fl.afero.OpenFile(fl.lockFile, os.O_RDWR|os.O_EXCL, 0660)
 		if err != nil {
-			log.Fatalf("Unable to reclaim write lock %s", fl.lockFile)
+			log.Fatal().Err(err)
 		}
 		_, err = fileLock.Write([]byte(fl.uniqueId))
 		fileLock.Close()

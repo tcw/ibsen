@@ -2,12 +2,12 @@ package api
 
 import (
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	grpcApi "github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/consensus"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/manager"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -46,12 +46,12 @@ type IbsenServer struct {
 
 func (ibs *IbsenServer) Start(listener net.Listener) error {
 	go ibs.initSignals()
-	log.Printf("Using listener: %s", listener.Addr().String())
+	log.Info().Msg(fmt.Sprintf("Using listener: %s", listener.Addr().String()))
 	if ibs.Readonly {
-		log.Println("running in read only mode")
+		log.Info().Msg("running in read only mode")
 	}
 	if ibs.InMemory {
-		log.Println("running in-memory only mode")
+		log.Info().Msg("running in-memory only mode")
 		err := ibs.Afs.Mkdir(ibs.RootPath, 0600)
 		if err != nil {
 			return errore.WrapWithContext(err)
@@ -64,9 +64,9 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		if !exists {
 			return errore.NewWithContext("path [%s] does not exist, will not start unless existing path is specified", ibs.RootPath)
 		}
-		log.Printf("Waiting for single writer lock on file [%s]...\n", ibs.RootPath)
+		log.Info().Msg(fmt.Sprintf("Waiting for single writer lock on file [%s]...", ibs.RootPath))
 		if !ibs.Readonly && !ibs.Lock.AcquireLock() {
-			log.Fatalf("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.RootPath)
+			log.Fatal().Msg(fmt.Sprintf("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.RootPath))
 		}
 	}
 
@@ -74,12 +74,12 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		var err error
 		ibs.cpuProfileFile, err = os.Create(ibs.CpuProfile)
 		if err != nil {
-			log.Fatal("could not create CPU profile: ", err)
+			log.Fatal().Err(err)
 		}
 		if err := pprof.StartCPUProfile(ibs.cpuProfileFile); err != nil {
-			log.Fatal("could not start CPU profile: ", err)
+			log.Fatal().Err(err)
 		}
-		log.Printf("Started profiling, creating file %s", ibs.CpuProfile)
+		log.Info().Msg(fmt.Sprintf("Started profiling, creating file %s", ibs.CpuProfile))
 	}
 
 	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, ibs.Readonly, time.Minute*10, time.Second*5, ibs.RootPath, ibs.MaxBlockSize)
@@ -95,7 +95,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 
 func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager manager.LogManager) error {
 	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(manager)
-	log.Printf("Started ibsen server on: [%s]\n", lis.Addr().String())
+	log.Info().Msg(fmt.Sprintf("Started ibsen server on: [%s]", lis.Addr().String()))
 	fmt.Print(ibsenFiglet)
 	err := ibsenGrpcServer.StartGRPC(lis)
 	if err != nil {
@@ -115,26 +115,26 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 	if ibs.MemProfile != "" {
 		f, err := os.Create(ibs.MemProfile)
 		if err != nil {
-			log.Fatal("could not create memory profile: ", err)
+			log.Fatal().Err(err)
 		}
 		defer f.Close()
 		runtime.GC() // get up-to-date statistics
 		if err := pprof.WriteHeapProfile(f); err != nil {
-			log.Fatal("could not write memory profile: ", err)
+			log.Fatal().Err(err)
 		}
-		log.Printf("Ended memory profiling, writing to file %s", ibs.MemProfile)
+		log.Info().Msg(fmt.Sprintf("Ended memory profiling, writing to file %s", ibs.MemProfile))
 	}
 
 	if ibs.CpuProfile != "" {
-		log.Printf("Ended cpu profiling, writing to file %s", ibs.CpuProfile)
+		log.Info().Msg(fmt.Sprintf("Ended cpu profiling, writing to file %s", ibs.CpuProfile))
 		pprof.StopCPUProfile()
 		err := ibs.cpuProfileFile.Close()
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal().Err(err)
 		}
 	}
 
-	log.Println("gracefully stopping grpc server...")
+	log.Info().Msg("gracefully stopping grpc server...")
 
 	stopped := make(chan struct{})
 	go func() {
@@ -145,7 +145,7 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 	t := time.NewTimer(5 * time.Second)
 	select {
 	case <-t.C:
-		log.Println("stopped gRPC server forcefully")
+		log.Info().Msg("stopped gRPC server forcefully")
 		ibsenGrpcServer.IbsenServer.Stop()
 	case <-stopped:
 		t.Stop()
@@ -154,15 +154,15 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 	if !ibs.InMemory {
 		isReleased := ibs.Lock.ReleaseLock()
 		if isReleased {
-			log.Printf("single writer lock [%s] was released!\n", ibs.RootPath)
+			log.Info().Msg(fmt.Sprintf("single writer lock [%s] was released!\n", ibs.RootPath))
 		} else {
-			log.Printf("unable to release single writer lock [%s]\n", ibs.RootPath)
+			log.Info().Msg(fmt.Sprintf("unable to release single writer lock [%s]\n", ibs.RootPath))
 		}
 	}
 }
 
 func (ibs *IbsenServer) signalHandler(signal os.Signal) {
-	log.Printf("\nIbsen server recieved signal: %+v", signal)
+	log.Info().Msg(fmt.Sprintf("Ibsen server recieved signal: %+v", signal))
 
 	switch signal {
 	case syscall.SIGHUP:
@@ -174,11 +174,11 @@ func (ibs *IbsenServer) signalHandler(signal os.Signal) {
 	case syscall.SIGQUIT:
 		fallthrough
 	case syscall.SIGABRT:
-		log.Printf("recived system signal [%s]. Starting gracefully shutdown...", signal.String())
+		log.Info().Msg(fmt.Sprintf("recived system signal [%s]. Starting gracefully shutdown...", signal.String()))
 		ibs.ShutdownCleanly()
 		break
 	default:
-		log.Printf("recived unexpected system signal [%s]. Trying to gracefully shutdown, without any garanties...", signal.String())
+		log.Info().Msg(fmt.Sprintf("recived unexpected system signal [%s]. Trying to gracefully shutdown, without any garanties...", signal.String()))
 		ibs.ShutdownCleanly()
 	}
 }

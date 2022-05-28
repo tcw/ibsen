@@ -3,6 +3,7 @@ package grpcApi
 import (
 	"context"
 	"github.com/golang/protobuf/ptypes/empty"
+	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/manager"
@@ -11,7 +12,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/testdata"
-	"log"
 	"math"
 	"net"
 	"sync"
@@ -88,8 +88,7 @@ func convertTopics(topics []manager.TopicName) []string {
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
 	err := s.manager.Write(manager.TopicName(entries.Topic), &entries.Entries)
 	if err != nil {
-		err = errore.WrapWithContext(err)
-		log.Println(errore.SprintTrace(err))
+		log.Err(err)
 		return nil, status.Error(codes.Unknown, "Error writing batch")
 	}
 	return &WriteStatus{
@@ -111,8 +110,7 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	})
 
 	if err != nil {
-		err = errore.WrapWithContext(err)
-		log.Println(errore.SprintTrace(err))
+		log.Err(err)
 		return status.Error(codes.Unknown, "Error reading streaming")
 	}
 	wg.Wait()
@@ -130,8 +128,7 @@ func sendBatchMessage(logChan chan *[]access.LogEntry, wg *sync.WaitGroup, outSt
 			Entries: convert(entryBatch),
 		})
 		if err != nil {
-			err = errore.WrapWithContext(err)
-			log.Println(errore.SprintTrace(err))
+			log.Err(err)
 			return
 		}
 		wg.Done()

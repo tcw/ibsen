@@ -2,10 +2,10 @@ package manager
 
 import (
 	"errors"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/errore"
-	"log"
 	"sync"
 	"time"
 )

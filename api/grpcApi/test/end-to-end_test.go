@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/golang/protobuf/ptypes/empty"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/api/grpcApi"
@@ -11,7 +12,6 @@ import (
 	"github.com/tcw/ibsen/manager"
 	"google.golang.org/grpc"
 	"io"
-	"log"
 	"math"
 	"math/rand"
 	"net"
@@ -31,16 +31,16 @@ func startGrpcServer() {
 	afs = &afero.Afero{Fs: fs}
 	err := afs.Mkdir(rootPath, 0600)
 	if err != nil {
-		log.Fatal(errore.WrapWithContext(err))
+		log.Fatal().Err(err)
 	}
 	topicsManager, err := manager.NewLogTopicsManager(afs, false, 30*time.Second, 30*time.Second, rootPath, 1)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal().Err(err)
 	}
 	ibsenServer = grpcApi.NewIbsenGrpcServer(&topicsManager)
 	lis, err := net.Listen("tcp", target)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal().Err(err)
 	}
 	ibsenServer.StartGRPC(lis)
 }
@@ -208,8 +208,7 @@ func newIbsenClient(target string) IbsenClient {
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32),
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
-		err := errore.WrapWithContext(err)
-		log.Fatalf(errore.SprintTrace(err))
+		log.Fatal().Err(err)
 	}
 
 	client := grpcApi.NewIbsenClient(conn)

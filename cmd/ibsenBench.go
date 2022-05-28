@@ -3,11 +3,11 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/errore"
 	"google.golang.org/grpc"
 	"io"
-	"log"
 	"math"
 	"math/rand"
 	"sync"
@@ -25,7 +25,7 @@ func newIbsenBench(target string) IbsenBench {
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
 		err := errore.WrapWithContext(err)
-		log.Fatalf(errore.SprintTrace(err))
+		log.Fatal().Err(err)
 	}
 
 	client := grpcApi.NewIbsenClient(conn)
@@ -77,7 +77,7 @@ func (b *IbsenBench) Benchmark(topic string, writeEntryByteSize int, writeEntrie
 func (b *IbsenBench) benchReadWaitGroup(topic string, batchSize uint32, wg *sync.WaitGroup) {
 	_, err := b.benchRead(topic, batchSize)
 	if err != nil {
-		log.Fatalln(errore.WrapWithContext(err))
+		log.Fatal().Err(err)
 	}
 	wg.Done()
 }
@@ -111,7 +111,7 @@ func (b *IbsenBench) benchRead(topic string, batchSize uint32) (string, error) {
 func (b *IbsenBench) benchWriteWaitGroup(topic string, entryByteSize int, entriesInEachBatch int, batches int, wg *sync.WaitGroup) {
 	_, err := b.benchWrite(topic, entryByteSize, entriesInEachBatch, batches)
 	if err != nil {
-		log.Fatalln(errore.WrapWithContext(err))
+		log.Fatal().Err(err)
 	}
 	wg.Done()
 }
