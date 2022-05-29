@@ -42,7 +42,7 @@ func MarshallIndex(soi []byte) (Index, error) {
 	return index, nil
 }
 
-func createIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, oneEntryForEvery uint32) ([]byte, int64, error) {
+func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, oneEntryForEvery uint32) ([]byte, int64, error) {
 	exists, err := afs.Exists(logFileName)
 	if err != nil {
 		return nil, 0, errore.WrapWithContext(err)

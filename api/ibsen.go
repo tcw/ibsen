@@ -94,7 +94,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 }
 
 func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager manager.LogManager) error {
-	ibsenGrpcServer = grpcApi.NewIbsenGrpcServer(manager)
+	ibsenGrpcServer = grpcApi.NewUnsecureIbsenGrpcServer(manager)
 	log.Info().Msg(fmt.Sprintf("Started ibsen server on: [%s]", lis.Addr().String()))
 	fmt.Print(ibsenFiglet)
 	err := ibsenGrpcServer.StartGRPC(lis)

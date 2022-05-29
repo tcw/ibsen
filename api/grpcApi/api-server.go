@@ -30,11 +30,20 @@ type IbsenGrpcServer struct {
 	Manager     manager.LogManager
 }
 
-func NewIbsenGrpcServer(manager manager.LogManager) *IbsenGrpcServer {
+func NewUnsecureIbsenGrpcServer(manager manager.LogManager) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
 		CertFile: "",
 		KeyFile:  "",
 		UseTls:   false,
+		Manager:  manager,
+	}
+}
+
+func NewIbsenGrpcServer(manager manager.LogManager, key string, cert string) *IbsenGrpcServer {
+	return &IbsenGrpcServer{
+		CertFile: cert,
+		KeyFile:  key,
+		UseTls:   true,
 		Manager:  manager,
 	}
 }

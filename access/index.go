@@ -4,6 +4,11 @@ import (
 	"fmt"
 )
 
+type IndexOffset struct {
+	Offset     Offset
+	ByteOffset int64
+}
+
 type Index struct {
 	IndexOffsets []IndexOffset
 }
@@ -31,14 +36,6 @@ func (idx Index) ToString() string {
 	return indexToString
 }
 
-func (idx *Index) add(pair IndexOffset) {
-	idx.IndexOffsets = append(idx.IndexOffsets, pair)
-}
-
-func (idx *Index) addAll(pair []IndexOffset) {
-	idx.IndexOffsets = append(idx.IndexOffsets, pair...)
-}
-
 //Todo: this is linear search, should use range tree for large indices
 func (idx Index) FindNearestByteOffset(offset Offset) IndexOffset {
 	for i := len(idx.IndexOffsets) - 1; i >= 0; i-- {
@@ -50,13 +47,16 @@ func (idx Index) FindNearestByteOffset(offset Offset) IndexOffset {
 	return IndexOffset{}
 }
 
-func (idx *Index) addIndex(index Index) {
-	idx.addAll(index.IndexOffsets)
+func (idx *Index) add(pair IndexOffset) {
+	idx.IndexOffsets = append(idx.IndexOffsets, pair)
 }
 
-type IndexOffset struct {
-	Offset     Offset
-	ByteOffset int64
+func (idx *Index) addAll(pair []IndexOffset) {
+	idx.IndexOffsets = append(idx.IndexOffsets, pair...)
+}
+
+func (idx *Index) addIndex(index Index) {
+	idx.addAll(index.IndexOffsets)
 }
 
 func (ido IndexOffset) IsEmpty() bool {

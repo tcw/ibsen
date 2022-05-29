@@ -262,7 +262,7 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 	}
 }
 
-func createByteEntry(entry []byte, currentOffset Offset) []byte {
+func CreateByteEntry(entry []byte, currentOffset Offset) []byte {
 	offset := uint64ToLittleEndian(uint64(currentOffset))
 	entrySize := len(entry)
 	byteSize := uint64ToLittleEndian(uint64(entrySize))

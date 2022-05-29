@@ -224,7 +224,7 @@ func (t *Topic) Write(entries EntriesPtr) error {
 	end := 0
 	entriesWritten := 0
 	for _, entry := range *entries {
-		byteEntry := createByteEntry(entry, t.NextOffset+Offset(entriesWritten))
+		byteEntry := CreateByteEntry(entry, t.NextOffset+Offset(entriesWritten))
 		end = start + len(byteEntry)
 		copy(bytes[start:end], byteEntry)
 		start = start + len(byteEntry)
@@ -314,7 +314,7 @@ func (t *Topic) indexBlock(block LogBlock, byteOffset int64) (LogBlockPosition, 
 	if err != nil {
 		return LogBlockPosition{}, errore.WrapWithContext(err)
 	}
-	indexAsBytes, newByteOffset, err := createIndex(t.Afs, logBlockFilename, byteOffset, 10)
+	indexAsBytes, newByteOffset, err := CreateIndex(t.Afs, logBlockFilename, byteOffset, 10)
 	if err != nil {
 		return LogBlockPosition{}, errore.WrapWithContext(err)
 	}

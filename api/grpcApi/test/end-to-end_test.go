@@ -37,7 +37,7 @@ func startGrpcServer() {
 	if err != nil {
 		log.Fatal().Err(err)
 	}
-	ibsenServer = grpcApi.NewIbsenGrpcServer(&topicsManager)
+	ibsenServer = grpcApi.NewUnsecureIbsenGrpcServer(&topicsManager)
 	lis, err := net.Listen("tcp", target)
 	if err != nil {
 		log.Fatal().Err(err)
