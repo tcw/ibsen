@@ -1,13 +1,12 @@
-package test
+package access
 
 import (
 	"github.com/stretchr/testify/assert"
-	"github.com/tcw/ibsen/access"
 	"testing"
 )
 
 func TestFindNearestOffset(t *testing.T) {
-	index := createIndex(10, 10)
+	index := createTestIndex(10, 10)
 	tests := []struct {
 		name               string
 		input              uint64
@@ -35,36 +34,36 @@ func TestFindNearestOffset(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			offset := index.FindNearestByteOffset(access.Offset(test.input))
-			assert.Equal(t, access.Offset(test.expectedOffset), offset.Offset)
+			offset := index.findNearestByteOffset(Offset(test.input))
+			assert.Equal(t, Offset(test.expectedOffset), offset.Offset)
 			assert.Equal(t, test.expectedByteOffset, offset.ByteOffset)
 		})
 	}
 }
 
 func TestHeadEmpty(t *testing.T) {
-	index := createIndex(0, 0)
+	index := createTestIndex(0, 0)
 	head := index.Head()
-	assert.Equal(t, access.Offset(0), head.Offset)
+	assert.Equal(t, Offset(0), head.Offset)
 	assert.Equal(t, int64(0), head.ByteOffset)
 }
 
 func TestHead(t *testing.T) {
-	index := createIndex(10, 10)
+	index := createTestIndex(10, 10)
 	head := index.Head()
-	assert.Equal(t, access.Offset(90), head.Offset)
+	assert.Equal(t, Offset(90), head.Offset)
 	assert.Equal(t, int64(900), head.ByteOffset)
 }
 
 // creates series offset [10,20,30,...] byteOffset [100,200,300,...]
-func createIndex(every int, entries int) access.Index {
-	var indexOffests []access.IndexOffset
+func createTestIndex(every int, entries int) Index {
+	var indexOffests []IndexOffset
 	for i := 0; i < entries; i++ {
-		indexOffset := access.IndexOffset{
-			Offset:     access.Offset(i * every),
+		indexOffset := IndexOffset{
+			Offset:     Offset(i * every),
 			ByteOffset: int64(i * every * 10),
 		}
 		indexOffests = append(indexOffests, indexOffset)
 	}
-	return access.Index{IndexOffsets: indexOffests}
+	return Index{IndexOffsets: indexOffests}
 }

@@ -37,7 +37,7 @@ func (idx Index) ToString() string {
 }
 
 //Todo: this is linear search, should use range tree for large indices
-func (idx Index) FindNearestByteOffset(offset Offset) IndexOffset {
+func (idx Index) findNearestByteOffset(offset Offset) IndexOffset {
 	for i := len(idx.IndexOffsets) - 1; i >= 0; i-- {
 		if offset >= idx.IndexOffsets[i].Offset {
 			byteOffset := idx.IndexOffsets[i]

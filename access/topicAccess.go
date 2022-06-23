@@ -388,7 +388,7 @@ func (t *Topic) findByteOffsetInIndex(offset Offset) (int64, int, error) {
 	if err != nil {
 		return 0, 0, errore.WrapWithContext(err)
 	}
-	indexOffset := index.FindNearestByteOffset(offset)
+	indexOffset := index.findNearestByteOffset(offset)
 	if indexOffset.Offset > offset {
 		return 0, 0, errore.NewWithContext("found larger offset than upper bound")
 	}
