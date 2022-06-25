@@ -20,7 +20,7 @@ import (
 
 type BlockSizeInBytes uint64
 type FileName string
-type StrictlyMonotonicOrderedVarIntIndex []byte
+type StrictlyMonotonicVarIntIndex []byte
 
 const Sep = string(os.PathSeparator)
 
@@ -58,7 +58,10 @@ func ListAllFilesInTopic(afs *afero.Afero, rootPath string, topic string) ([]os.
 	if err != nil {
 		return nil, errore.WrapWithContext(err)
 	}
-	defer dir.Close()
+	err = dir.Close()
+	if err != nil {
+		return nil, err
+	}
 	return dir.Readdir(0)
 }
 
@@ -108,10 +111,10 @@ func ListAllTopics(afs *afero.Afero, dir string) ([]string, error) {
 	return filenames, nil
 }
 
-func FindByteOffsetFromOffset(afs *afero.Afero, fileName string, startAtByteOffset int64, offset Offset) (int64, int, error) {
+func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, startAtByteOffset int64, offset Offset) (int64, int, error) {
 	scanCount := 0
 	if offset == 0 {
-		return 0, scanCount, nil
+		return 0, 0, nil
 	}
 	file, err := OpenFileForRead(afs, fileName)
 	if err != nil {
@@ -123,6 +126,13 @@ func FindByteOffsetFromOffset(afs *afero.Afero, fileName string, startAtByteOffs
 		_, err = file.Seek(startAtByteOffset, io.SeekStart)
 		if err != nil {
 			return 0, scanCount, errore.WrapWithContext(err)
+		}
+		lastOffset, err := offsetLookBack(file)
+		if err != nil {
+			return 0, 0, err
+		}
+		if lastOffset+1 == offset {
+			return startAtByteOffset, 0, err
 		}
 	}
 
@@ -161,6 +171,19 @@ func FindByteOffsetFromOffset(afs *afero.Afero, fileName string, startAtByteOffs
 		byteOffset = byteOffset + int64(offsetBytes) + int64(checksumBytes) + int64(sizeBytes) + int64(entrySize)
 		scanCount = scanCount + 1
 	}
+}
+
+func offsetLookBack(file afero.File) (Offset, error) {
+	_, err := file.Seek(-8, io.SeekCurrent)
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	bytes := make([]byte, 8)
+	_, err = io.ReadFull(file, bytes)
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
+	return Offset(littleEndianToUint64(bytes)), nil
 }
 
 func FindBlockInfo(afs *afero.Afero, blockFileName string) (Offset, int64, error) {

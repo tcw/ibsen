@@ -9,32 +9,38 @@ func TestFindNearestOffset(t *testing.T) {
 	index := createTestIndex(10, 10)
 	tests := []struct {
 		name               string
-		input              uint64
+		inputOffset        uint64
 		expectedOffset     uint64
 		expectedByteOffset int64
 	}{
 		{
 			name:               "before existing index offsets",
-			input:              3,
+			inputOffset:        3,
 			expectedOffset:     0,
 			expectedByteOffset: 0,
 		},
 		{
 			name:               "after existing index offsets",
-			input:              1999,
+			inputOffset:        1999,
 			expectedOffset:     90,
 			expectedByteOffset: 900,
 		},
 		{
 			name:               "in range of existing index offsets",
-			input:              45,
+			inputOffset:        45,
+			expectedOffset:     40,
+			expectedByteOffset: 400,
+		},
+		{
+			name:               "on offset",
+			inputOffset:        40,
 			expectedOffset:     40,
 			expectedByteOffset: 400,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			offset := index.findNearestByteOffset(Offset(test.input))
+			offset := index.findNearestByteOffset(Offset(test.inputOffset))
 			assert.Equal(t, Offset(test.expectedOffset), offset.Offset)
 			assert.Equal(t, test.expectedByteOffset, offset.ByteOffset)
 		})

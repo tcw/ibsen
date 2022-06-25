@@ -390,7 +390,7 @@ func (t *Topic) findByteOffsetInIndex(offset Offset) (int64, int, error) {
 		return 0, 0, errore.WrapWithContext(err)
 	}
 	if !foundIndexBlock {
-		return FindByteOffsetFromOffset(t.Afs, logBlockFileName, 0, offset)
+		return FindByteOffsetFromAndIncludingOffset(t.Afs, logBlockFileName, 0, offset)
 	}
 	indexBlockFileName, err := t.indexBlockFileName(indexBlock)
 	if err != nil {
@@ -412,7 +412,7 @@ func (t *Topic) findByteOffsetInIndex(offset Offset) (int64, int, error) {
 		return indexOffset.ByteOffset, 0, nil
 	}
 
-	return FindByteOffsetFromOffset(t.Afs, logBlockFileName, indexOffset.ByteOffset, offset)
+	return FindByteOffsetFromAndIncludingOffset(t.Afs, logBlockFileName, indexOffset.ByteOffset, offset)
 }
 
 func (t *Topic) incrementOffset(n int) {
