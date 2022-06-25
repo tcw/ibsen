@@ -197,6 +197,18 @@ func Test(t *testing.T) {
 			expectedByteOffset: 52,
 			expectedScanned:    0,
 		},
+		{
+			offsetInput:        3,
+			byteOffsetInput:    52,
+			expectedByteOffset: 78,
+			expectedScanned:    1,
+		},
+		{
+			offsetInput:        3,
+			byteOffsetInput:    78,
+			expectedByteOffset: 78,
+			expectedScanned:    0,
+		},
 	}
 	for _, test := range tests {
 		t.Run(fmt.Sprintf("byteOffset %d and offset %d", test.byteOffsetInput, test.offsetInput), func(t *testing.T) {
