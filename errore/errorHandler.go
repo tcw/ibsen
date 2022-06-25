@@ -27,6 +27,11 @@ func WrapWithContext(err error) error {
 	return fmt.Errorf("at %s(%s:%d) %w", functionName, file, line, err)
 }
 
+func WrapWithError(err1 error, err2 error) error {
+	err2 = WrapWithContext(err2)
+	return fmt.Errorf("%s: %w", err1.Error(), err2)
+}
+
 func RootCause(err error) error {
 	rootErr := err
 	for e := err; e != nil; e = errors.Unwrap(e) {

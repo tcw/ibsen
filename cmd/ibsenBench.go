@@ -7,6 +7,7 @@ import (
 	"github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/errore"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"io"
 	"math"
 	"math/rand"
@@ -19,8 +20,8 @@ type IbsenBench struct {
 	Ctx    context.Context
 }
 
-func newIbsenBench(target string) IbsenBench {
-	conn, err := grpc.Dial(target, grpc.WithInsecure(), grpc.WithBlock(),
+func newIbsenBench(target string) (IbsenBench, error) {
+	conn, err := grpc.Dial(target, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock(),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32),
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
@@ -29,12 +30,15 @@ func newIbsenBench(target string) IbsenBench {
 	}
 
 	client := grpcApi.NewIbsenClient(conn)
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute) //Todo: Handle cancel
+	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute)
+	if ctx.Err() == context.Canceled {
+		return IbsenBench{}, ctx.Err()
+	}
 
 	return IbsenBench{
 		Client: client,
 		Ctx:    ctx,
-	}
+	}, nil
 }
 
 func (b *IbsenBench) BenchmarkConcurrent(topic string, writeEntryByteSize int, writeEntriesInEachBatch int, writeBatches int, readBatchSize int, concurrency int) (string, error) {

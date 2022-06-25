@@ -55,12 +55,15 @@ func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, 
 	if err != nil {
 		return nil, 0, errore.WrapWithContext(err)
 	}
-	defer file.Close()
 	var index []byte
 	var byteOffset int64 = 0
 	if logfileByteOffset > 0 {
 		byteOffset, err = file.Seek(logfileByteOffset, io.SeekStart)
 		if err != nil {
+			ioErr := file.Close()
+			if ioErr != nil {
+				return nil, 0, errore.WrapWithError(ioErr, err)
+			}
 			return nil, byteOffset, errore.WrapWithContext(err)
 		}
 	}
@@ -71,23 +74,43 @@ func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, 
 	for {
 		crcSize, err := io.ReadFull(reader, bytesCrc)
 		if err == io.EOF {
+			ioErr := file.Close()
+			if ioErr != nil {
+				return nil, 0, errore.WrapWithError(ioErr, err)
+			}
 			return index, byteOffset, nil
 		}
 		if err != nil {
+			ioErr := file.Close()
+			if ioErr != nil {
+				return nil, 0, errore.WrapWithError(ioErr, err)
+			}
 			return nil, byteOffset, errore.WrapWithContext(err)
 		}
 		byteSize, err := io.ReadFull(reader, bytes)
 		if err != nil {
+			ioErr := file.Close()
+			if ioErr != nil {
+				return nil, 0, errore.WrapWithError(ioErr, err)
+			}
 			return nil, byteOffset, errore.WrapWithContext(err)
 		}
 		size := littleEndianToUint32(bytes)
 		entry := make([]byte, size)
 		entrySize, err := io.ReadFull(reader, entry)
 		if err != nil {
+			ioErr := file.Close()
+			if ioErr != nil {
+				return nil, 0, errore.WrapWithError(ioErr, err)
+			}
 			return nil, byteOffset, errore.WrapWithContext(err)
 		}
 		offsetSize, err := io.ReadFull(reader, bytes)
 		if err != nil {
+			ioErr := file.Close()
+			if ioErr != nil {
+				return nil, 0, errore.WrapWithError(ioErr, err)
+			}
 			return nil, byteOffset, errore.WrapWithContext(err)
 		}
 		offset := littleEndianToUint64(bytes)

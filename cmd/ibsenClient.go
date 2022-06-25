@@ -8,6 +8,7 @@ import (
 	"github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/errore"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"io"
 	"math"
 	"os"
@@ -19,8 +20,8 @@ type IbsenClient struct {
 	Ctx    context.Context
 }
 
-func newIbsenClient(target string) IbsenClient {
-	conn, err := grpc.Dial(target, grpc.WithInsecure(), grpc.WithBlock(),
+func newIbsenClient(target string) (IbsenClient, error) {
+	conn, err := grpc.Dial(target, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock(),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32),
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
@@ -28,12 +29,15 @@ func newIbsenClient(target string) IbsenClient {
 	}
 
 	client := grpcApi.NewIbsenClient(conn)
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute) //Todo: Handle cancel
+	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute)
+	if ctx.Err() == context.Canceled {
+		return IbsenClient{}, ctx.Err()
+	}
 
 	return IbsenClient{
 		Client: client,
 		Ctx:    ctx,
-	}
+	}, nil
 }
 
 func (ic *IbsenClient) Read(topic string, offset uint64, batchSize uint32) error {
@@ -78,10 +82,10 @@ func (ic *IbsenClient) Write(topic string, fileName ...string) (string, error) {
 		reader = stdin
 	} else {
 		file, err := os.OpenFile(fileName[0], os.O_RDONLY, 0400)
-		defer file.Close()
 		reader = file
 		if err != nil {
-			return "", errore.WrapWithContext(err)
+			ioErr := file.Close()
+			return "", errore.WrapWithContext(errore.WrapWithError(ioErr, err))
 		}
 	}
 

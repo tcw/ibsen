@@ -59,14 +59,23 @@ func (fl FileLock) AcquireLock() bool {
 	}
 	if exists {
 		fileLock, err := fl.afero.OpenFile(fl.lockFile, os.O_RDONLY, 0550)
-		defer fileLock.Close()
 		if err != nil {
 			log.Printf("failed while opening lock file %s", fl.lockFile)
 			return false
 		}
 		byteUUID, err := io.ReadAll(fileLock)
 		if err != nil {
-			log.Printf("failed while opening lock file %s", fl.lockFile)
+			ioErr := fileLock.Close()
+			if ioErr != nil {
+				log.Printf("failed while closing lock file %s", fl.lockFile)
+				return false
+			}
+			log.Printf("failed while reading lock file %s", fl.lockFile)
+			return false
+		}
+		ioErr := fileLock.Close()
+		if ioErr != nil {
+			log.Printf("failed while closing lock file %s", fl.lockFile)
 			return false
 		}
 		lockUUID := string(byteUUID)
@@ -78,7 +87,6 @@ func (fl FileLock) AcquireLock() bool {
 			}
 			if modificationTime.Add(fl.leaseTime).Before(time.Now()) {
 				fileLockAdder, err := fl.afero.OpenFile(fl.lockFile, os.O_WRONLY|os.O_TRUNC, 0660)
-				defer fileLock.Close()
 				if err != nil {
 					log.Printf("failed while opening lock file %s", fl.lockFile)
 					return false
@@ -92,13 +100,26 @@ func (fl FileLock) AcquireLock() bool {
 		}
 	} else {
 		fileLockNew, err := fl.afero.OpenFile(fl.lockFile, os.O_RDWR|os.O_CREATE, 0660)
-		defer fileLockNew.Close()
 		if err != nil {
 			log.Printf("failed while claiming lock file %s", fl.lockFile)
 			return false
 		}
 		_, err = fileLockNew.Write([]byte(fl.uniqueId))
+		if err != nil {
+			ioErr := fileLockNew.Close()
+			if ioErr != nil {
+				log.Printf("failed while closing lock file %s", fl.lockFile)
+				return false
+			}
+			log.Printf("failed while writing to claim lock file %s", fl.lockFile)
+			return false
+		}
 		go fl.reclaimer()
+		ioErr := fileLockNew.Close()
+		if ioErr != nil {
+			log.Printf("failed while closing lock file %s", fl.lockFile)
+			return false
+		}
 		return true
 	}
 	return false
@@ -113,7 +134,10 @@ func (fl FileLock) reclaimer() {
 			log.Fatal().Err(err)
 		}
 		_, err = fileLock.Write([]byte(fl.uniqueId))
-		fileLock.Close()
+		ioErr := fileLock.Close()
+		if ioErr != nil {
+			log.Printf("failed while closing lock file %s", fl.lockFile)
+		}
 		time.Sleep(fl.reclaimLease)
 	}
 }

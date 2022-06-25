@@ -178,9 +178,11 @@ var (
 				return
 			}
 			topic := args[0]
-			client := newIbsenBench(host + ":" + strconv.Itoa(port))
+			client, err := newIbsenBench(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err)
+			}
 			benchmarkReport := ""
-			var err error
 			if concurrent > 1 {
 				benchmarkReport, err = client.BenchmarkConcurrent(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches, concurrent)
 				if err != nil {
@@ -208,9 +210,12 @@ var (
 				return
 			}
 			topic := args[0]
-			client := newIbsenClient(host + ":" + strconv.Itoa(port))
+			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err)
+			}
 			result := ""
-			var err error
+
 			if len(args) > 1 {
 				result, err = client.Write(topic, args[1])
 				if err != nil {
@@ -251,7 +256,10 @@ var (
 					fmt.Printf("offset %s not a uint64", args[1])
 				}
 			}
-			client := newIbsenClient(host + ":" + strconv.Itoa(port))
+			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err)
+			}
 			err = client.Read(topic, offset, uint32(batchSize64))
 			if err != nil {
 				log.Fatal().Err(err)

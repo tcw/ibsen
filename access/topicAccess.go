@@ -236,17 +236,29 @@ func (t *Topic) Write(entries EntriesPtr) error {
 	}
 	blockFileName, err := t.logBlockFileName(head)
 	file, err := openFileForWrite(t.Afs, blockFileName)
-	defer file.Close()
+
 	if err != nil {
+		ioErr := file.Close()
+		if ioErr != nil {
+			return errore.WrapWithError(ioErr, err)
+		}
 		return errore.WrapWithContext(err)
 	}
 	n, err := file.Write(bytes)
 	if err != nil {
+		ioErr := file.Close()
+		if ioErr != nil {
+			return errore.WrapWithError(ioErr, err)
+		}
 		return errore.WrapWithContext(err)
 	}
 	t.incrementOffset(entriesWritten)
 	t.incrementHeadBlockSize(n)
 	if err != nil {
+		ioErr := file.Close()
+		if ioErr != nil {
+			return errore.WrapWithError(ioErr, err)
+		}
 		return errore.WrapWithContext(err)
 	}
 	go func() {
@@ -255,6 +267,10 @@ func (t *Topic) Write(entries EntriesPtr) error {
 			log.Warn().Err(err)
 		}
 	}()
+	ioErr := file.Close()
+	if ioErr != nil {
+		return errore.WrapWithContext(ioErr)
+	}
 	return nil
 }
 

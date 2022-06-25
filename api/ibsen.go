@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
-	grpcApi "github.com/tcw/ibsen/api/grpcApi"
+	"github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/consensus"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/manager"
@@ -117,9 +117,12 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 		if err != nil {
 			log.Fatal().Err(err)
 		}
-		defer f.Close()
 		runtime.GC() // get up-to-date statistics
 		if err := pprof.WriteHeapProfile(f); err != nil {
+			ioErr := f.Close()
+			if ioErr != nil {
+				log.Fatal().Err(errore.WrapWithError(ioErr, err))
+			}
 			log.Fatal().Err(err)
 		}
 		log.Info().Msg(fmt.Sprintf("Ended memory profiling, writing to file %s", ibs.MemProfile))

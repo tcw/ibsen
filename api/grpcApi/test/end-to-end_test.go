@@ -11,6 +11,7 @@ import (
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/manager"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"io"
 	"math"
 	"math/rand"
@@ -42,7 +43,10 @@ func startGrpcServer() {
 	if err != nil {
 		log.Fatal().Err(err)
 	}
-	ibsenServer.StartGRPC(lis)
+	err = ibsenServer.StartGRPC(lis)
+	if err != nil {
+		log.Fatal().Err(err)
+	}
 }
 
 func TestTopicList(t *testing.T) {
@@ -64,7 +68,10 @@ func TestTopicList(t *testing.T) {
 func TestReadWriteLargeObject(t *testing.T) {
 	go startGrpcServer()
 	numberOfEntries := 1
-	objectBytes := writeLarge("test", numberOfEntries, 500_000)
+	objectBytes, err := writeLarge("test", numberOfEntries, 500_000)
+	if err != nil {
+		t.Error(err)
+	}
 	entries, err := read("test", 0, uint32(numberOfEntries))
 	if err != nil {
 		t.Error(errore.WrapWithContext(err))
@@ -109,28 +116,53 @@ type IbsenClient struct {
 }
 
 func list() (*grpcApi.TopicList, error) {
-	client := newIbsenClient(target)
+	client, err := newIbsenClient(target)
+	if err != nil {
+		return nil, errore.WrapWithContext(err)
+	}
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	if ctx.Err() == context.Canceled {
+		return nil, ctx.Err()
+	}
 	return client.Client.List(ctx, &empty.Empty{})
 }
-func writeLarge(topic string, numberOfEntries int, entryKb int) int {
-	client := newIbsenClient(target)
+func writeLarge(topic string, numberOfEntries int, entryKb int) (int, error) {
+	client, err := newIbsenClient(target)
+	if err != nil {
+		return 0, errore.WrapWithContext(err)
+	}
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	if ctx.Err() == context.Canceled {
+		return 0, ctx.Err()
+	}
 	entries, size := createLargeInputEntries(topic, numberOfEntries, entryKb)
 	client.Client.Write(ctx, &entries)
-	return size
+	return size, nil
 }
 
-func write(topic string, numberOfEntries int, entryByteSize int) {
-	client := newIbsenClient(target)
+func write(topic string, numberOfEntries int, entryByteSize int) error {
+	client, err := newIbsenClient(target)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
 	entries := createInputEntries(topic, numberOfEntries, entryByteSize)
-	client.Client.Write(ctx, &entries)
+	_, err = client.Client.Write(ctx, &entries)
+	if err != nil {
+		return errore.WrapWithContext(err)
+	}
+	return nil
 }
 
 func read(topic string, offset uint64, batchSize uint32) ([]*grpcApi.Entry, error) {
-	client := newIbsenClient(target)
+	client, err := newIbsenClient(target)
+	if err != nil {
+		return nil, errore.WrapWithContext(err)
+	}
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	if ctx.Err() == context.Canceled {
+		return nil, ctx.Err()
+	}
 	entryStream, err := client.Client.Read(ctx, &grpcApi.ReadParams{
 		StopOnCompletion: true,
 		Topic:            topic,
@@ -203,8 +235,9 @@ func createTestValues(entrySizeBytes int) []byte {
 	return []byte(string(b))
 }
 
-func newIbsenClient(target string) IbsenClient {
-	conn, err := grpc.Dial(target, grpc.WithInsecure(), grpc.WithBlock(),
+func newIbsenClient(target string) (IbsenClient, error) {
+
+	conn, err := grpc.Dial(target, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock(),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32),
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
@@ -212,10 +245,13 @@ func newIbsenClient(target string) IbsenClient {
 	}
 
 	client := grpcApi.NewIbsenClient(conn)
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute) //Todo: Handle cancel
+	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute)
+	if ctx.Err() == context.Canceled {
+		return IbsenClient{}, ctx.Err()
+	}
 
 	return IbsenClient{
 		Client: client,
 		Ctx:    ctx,
-	}
+	}, nil
 }
