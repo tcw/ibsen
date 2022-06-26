@@ -139,7 +139,7 @@ func (t *Topic) Load() error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	offset, byteSize, err := FindBlockInfo(t.Afs, blockFileName)
+	offset, byteSize, err := BlockInfo(t.Afs, blockFileName)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
@@ -440,6 +440,9 @@ func (t *Topic) logBlockHead() (LogBlock, bool) {
 
 func (t *Topic) indexBlockHead() (IndexBlock, bool) {
 	if t.logBlockIsEmpty() {
+		return 0, false
+	}
+	if len(t.IndexBlockList) == 0 {
 		return 0, false
 	}
 	return t.IndexBlockList[len(t.IndexBlockList)-1], true

@@ -16,38 +16,24 @@ func memAfs() *afero.Afero {
 func TestCreateTopic(t *testing.T) {
 	afs := memAfs()
 	err := CreateTopic(afs, "tmp", "topic1")
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	exists, err := afs.Exists("tmp/topic1")
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	assert.True(t, exists)
 }
 
 func TestListAllFilesInTopic(t *testing.T) {
 	afs := memAfs()
 	err := CreateTopic(afs, "tmp", "topic1")
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	err = afs.WriteFile("tmp/topic1/001.log", []byte("dummy"), 0600)
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	err = afs.WriteFile("tmp/topic1/001.idx", []byte("dummy"), 0600)
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	err = afs.WriteFile("tmp/topic1/001.dummy", []byte("dummy"), 0600)
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	topics, err := ListAllFilesInTopic(afs, "tmp", "topic1")
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	var files []string
 	for _, topic := range topics {
 		files = append(files, topic.Name())
@@ -60,21 +46,13 @@ func TestListAllFilesInTopic(t *testing.T) {
 func TestListAllTopics(t *testing.T) {
 	afs := memAfs()
 	err := CreateTopic(afs, "tmp", "topic1")
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	err = CreateTopic(afs, "tmp", "topic2")
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	err = afs.MkdirAll("tmp/.git", 0744)
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	topics, err := ListAllTopics(afs, "tmp")
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	assert.Contains(t, topics, "topic1")
 	assert.Contains(t, topics, "topic2")
 	assert.NotContains(t, topics, ".git")
@@ -84,20 +62,14 @@ func TestCreateByteEntry(t *testing.T) {
 	entry := CreateByteEntry([]byte("dummy"), 0)
 	afs := memAfs()
 	err := afs.WriteFile("tmp/topic1/001.log", entry, 0600)
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	file, err := OpenFileForRead(afs, "tmp/topic1/001.log")
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	logChan := make(chan *[]LogEntry)
 	var wg sync.WaitGroup
 	go func() {
 		err = ReadFile(file, logChan, &wg, 10, 0, 100)
-		if err != nil {
-			t.Error(err)
-		}
+		assert.Nil(t, err)
 		wg.Done()
 	}()
 	wg.Wait()
@@ -112,26 +84,16 @@ func TestCreateByteEntry(t *testing.T) {
 func TestFindBlockInfo(t *testing.T) {
 	afs := memAfs()
 	file, err := openFileForWrite(afs, "tmp/topic1/001.log")
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	_, err = file.Write(CreateByteEntry([]byte("dummy1"), 0))
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	_, err = file.Write(CreateByteEntry([]byte("dummy2"), 1))
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	_, err = file.Write(CreateByteEntry([]byte("dummy3"), 2))
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 
-	lastOffset, i, err := FindBlockInfo(afs, "tmp/topic1/001.log")
-	if err != nil {
-		t.Error(err)
-	}
+	lastOffset, i, err := BlockInfo(afs, "tmp/topic1/001.log")
+	assert.Nil(t, err)
 	assert.Equal(t, Offset(2), lastOffset)
 	assert.Equal(t, int64(78), i)
 }
@@ -140,21 +102,13 @@ func Test(t *testing.T) {
 	afs := memAfs()
 	fileName := "tmp/topic1/001.log"
 	file, err := openFileForWrite(afs, fileName)
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	_, err = file.Write(CreateByteEntry([]byte("dummy1"), 0))
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	_, err = file.Write(CreateByteEntry([]byte("dummy2"), 1))
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	_, err = file.Write(CreateByteEntry([]byte("dummy3"), 2))
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err)
 	tests := []struct {
 		offsetInput        int
 		byteOffsetInput    int64
@@ -218,4 +172,29 @@ func Test(t *testing.T) {
 			assert.Equal(t, test.expectedScanned, scanned)
 		})
 	}
+}
+
+func TestLoadTopicBlocks(t *testing.T) {
+	afs := memAfs()
+	logFileName := "tmp/topic1/001.log"
+	indexFileName := "tmp/topic1/001.idx"
+	file, err := openFileForWrite(afs, logFileName)
+	if err != nil {
+		t.Error(err)
+	}
+	_, err = file.Write(CreateByteEntry([]byte("dummy1"), 0))
+	assert.Nil(t, err)
+	_, err = file.Write(CreateByteEntry([]byte("dummy2"), 1))
+	assert.Nil(t, err)
+	_, err = file.Write(CreateByteEntry([]byte("dummy3"), 2))
+	assert.Nil(t, err)
+
+	index, _, err := CreateIndex(afs, logFileName, 0, 1)
+	assert.Nil(t, err)
+	err = afs.WriteFile(indexFileName, index, 0600)
+	assert.Nil(t, err)
+	logBlocks, indexBlocks, err := LoadTopicBlocks(afs, "tmp", "topic1")
+	assert.Nil(t, err)
+	assert.Len(t, logBlocks, 1)
+	assert.Len(t, indexBlocks, 1)
 }

@@ -186,7 +186,7 @@ func offsetLookBack(file afero.File) (Offset, error) {
 	return Offset(littleEndianToUint64(bytes)), nil
 }
 
-func FindBlockInfo(afs *afero.Afero, blockFileName string) (Offset, int64, error) {
+func BlockInfo(afs *afero.Afero, blockFileName string) (Offset, int64, error) {
 	file, err := OpenFileForRead(afs, blockFileName)
 	if err != nil {
 		return 0, 0, errore.WrapWithContext(err)

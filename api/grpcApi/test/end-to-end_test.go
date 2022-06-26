@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/golang/protobuf/ptypes/empty"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
@@ -26,6 +27,10 @@ const rootPath = "/tmp/data"
 var afs *afero.Afero
 var ibsenServer *grpcApi.IbsenGrpcServer
 var target = fmt.Sprintf("%s:%d", "localhost", 50002)
+
+func init() {
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+}
 
 func startGrpcServer() {
 	var fs = afero.NewMemMapFs()
