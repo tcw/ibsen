@@ -21,7 +21,7 @@ type LogBlockPosition struct {
 }
 
 type TopicAccess interface {
-	UpdateIndex() error
+	UpdateIndex() (bool, error)
 	Load() error
 	IsLoaded() bool
 	Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, batchSize uint32) error
@@ -48,6 +48,7 @@ type Topic struct {
 	writeLock      sync.Mutex
 	updateLock     sync.Mutex
 	indexMutex     int32
+	indexWg        *sync.WaitGroup
 	MaxBlockSize   int
 	NextOffset     Offset
 	HeadBlockSize  int
@@ -64,6 +65,7 @@ func NewLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSi
 		TopicName:      topicName,
 		writeLock:      sync.Mutex{},
 		updateLock:     sync.Mutex{},
+		indexWg:        &sync.WaitGroup{},
 		NextOffset:     0,
 		HeadBlockSize:  0,
 		MaxBlockSize:   maxBlockSize,
@@ -74,44 +76,53 @@ func NewLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSi
 	}
 }
 
-func (t *Topic) UpdateIndex() error {
+func (t *Topic) UpdateIndex() (bool, error) {
 	if !atomic.CompareAndSwapInt32(&t.indexMutex, 0, 1) {
-		return nil
+		log.Debug().Msg("competing indices")
+		return false, nil
 	}
 	defer atomic.CompareAndSwapInt32(&t.indexMutex, 1, 0)
 
 	t.updateLock.Lock()
-	defer t.updateLock.Unlock()
+	t.indexWg.Add(1)
+	log.Debug().Msg("locked index update")
+	defer func() {
+		t.updateLock.Unlock()
+		t.indexWg.Done()
+		log.Debug().Msg("unlocked index update")
+	}()
 
 	notIndexed, err := t.findLogBlocksNotIndexed()
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return true, errore.WrapWithContext(err)
 	}
 	for _, block := range notIndexed {
 		if t.IndexPosition == nil {
 			pos, err := t.indexBlock(block, 0)
 			if err != nil {
-				return errore.WrapWithContext(err)
+				return true, errore.WrapWithContext(err)
 			}
+			t.addNewIndexBlock(block)
 			t.IndexPosition = &pos
 		} else {
 			position := t.IndexPosition
 			if position.Block == block {
 				pos, err := t.indexBlock(block, position.ByteOffset)
 				if err != nil {
-					return errore.WrapWithContext(err)
+					return true, errore.WrapWithContext(err)
 				}
 				t.IndexPosition = &pos
 			} else {
 				pos, err := t.indexBlock(block, 0)
+				t.addNewIndexBlock(block)
 				if err != nil {
-					return errore.WrapWithContext(err)
+					return true, errore.WrapWithContext(err)
 				}
 				t.IndexPosition = &pos
 			}
 		}
 	}
-	return nil
+	return true, nil
 }
 
 func (t *Topic) IsLoaded() bool {
@@ -262,10 +273,11 @@ func (t *Topic) Write(entries EntriesPtr) error {
 		return errore.WrapWithContext(err)
 	}
 	go func() {
-		err := t.UpdateIndex()
+		wasExecuted, err := t.UpdateIndex()
 		if err != nil {
 			log.Warn().Err(err)
 		}
+		log.Debug().Msg(fmt.Sprintf("index update executed: %t", wasExecuted))
 	}()
 	ioErr := file.Close()
 	if ioErr != nil {
@@ -392,15 +404,7 @@ func (t *Topic) findByteOffsetInIndex(offset Offset) (int64, int, error) {
 	if !foundIndexBlock {
 		return FindByteOffsetFromAndIncludingOffset(t.Afs, logBlockFileName, 0, offset)
 	}
-	indexBlockFileName, err := t.indexBlockFileName(indexBlock)
-	if err != nil {
-		return 0, 0, errore.WrapWithContext(err)
-	}
-	bytes, err := t.Afs.ReadFile(indexBlockFileName)
-	if err != nil {
-		return 0, 0, errore.WrapWithContext(err)
-	}
-	index, err := MarshallIndex(bytes)
+	index, err := t.getIndexFromIndexBlock(indexBlock)
 	if err != nil {
 		return 0, 0, errore.WrapWithContext(err)
 	}
@@ -413,6 +417,29 @@ func (t *Topic) findByteOffsetInIndex(offset Offset) (int64, int, error) {
 	}
 
 	return FindByteOffsetFromAndIncludingOffset(t.Afs, logBlockFileName, indexOffset.ByteOffset, offset)
+}
+
+func (t *Topic) getIndexFromIndexBlock(block IndexBlock) (Index, error) {
+	indexBlockFileName, err := t.indexBlockFileName(block)
+	if err != nil {
+		return Index{}, err
+	}
+	exists, err := t.Afs.Exists(indexBlockFileName)
+	if err != nil {
+		return Index{}, err
+	}
+	if !exists {
+		return Index{}, nil
+	}
+	bytes, err := t.Afs.ReadFile(indexBlockFileName)
+	if err != nil {
+		return Index{}, err
+	}
+	index, err := MarshallIndex(bytes)
+	if err != nil {
+		return Index{}, err
+	}
+	return index, nil
 }
 
 func (t *Topic) incrementOffset(n int) {
@@ -429,6 +456,10 @@ func (t *Topic) resetHeadBlockSize() {
 
 func (t *Topic) addNewLogBlock() {
 	t.LogBlockList = append(t.LogBlockList, LogBlock(t.NextOffset))
+}
+
+func (t *Topic) addNewIndexBlock(logBlock LogBlock) {
+	t.IndexBlockList = append(t.IndexBlockList, IndexBlock(logBlock))
 }
 
 func (t *Topic) logBlockHead() (LogBlock, bool) {

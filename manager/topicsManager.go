@@ -2,6 +2,7 @@ package manager
 
 import (
 	"errors"
+	"fmt"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
@@ -121,10 +122,9 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 func (l *LogTopicsManager) indexScheduler() {
 	for {
 		for name, topic := range l.Topics {
-			err := topic.UpdateIndex()
+			_, err := topic.UpdateIndex()
 			if err != nil {
-				log.Printf("index builder for topic %s has failed: %s", name,
-					errore.SprintTrace(errore.WrapWithContext(err)))
+				log.Err(err).Msg(fmt.Sprintf("index builder for topic %s has failed", name))
 			}
 		}
 		time.Sleep(time.Second * 10)

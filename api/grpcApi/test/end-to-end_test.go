@@ -56,11 +56,16 @@ func startGrpcServer() {
 
 func TestTopicList(t *testing.T) {
 	go startGrpcServer()
-	write("test1", 10, 10)
-	write("test2", 10, 10)
-	write("test3", 10, 10)
-	write("test4", 10, 10)
-	write("test5", 10, 10)
+	err := write("test1", 10, 10)
+	assert.Nil(t, err)
+	err = write("test2", 10, 10)
+	assert.Nil(t, err)
+	err = write("test3", 10, 10)
+	assert.Nil(t, err)
+	err = write("test4", 10, 10)
+	assert.Nil(t, err)
+	err = write("test5", 10, 10)
+	assert.Nil(t, err)
 
 	topicList, err := list()
 	if err != nil {
@@ -90,7 +95,8 @@ func TestReadWriteLargeObject(t *testing.T) {
 func TestReadWriteVerification(t *testing.T) {
 	go startGrpcServer()
 	numberOfEntries := 10000
-	write("test", numberOfEntries, 100)
+	err := write("test", numberOfEntries, 100)
+	assert.Nil(t, err)
 	entries, err := read("test", 0, 1000)
 	if err != nil {
 		t.Error(errore.WrapWithContext(err))
@@ -102,7 +108,8 @@ func TestReadWriteVerification(t *testing.T) {
 func TestReadWriteWithOffsetVerification(t *testing.T) {
 	go startGrpcServer()
 	writeEntries := 1000
-	write("test", writeEntries, 100)
+	err := write("test", writeEntries, 100)
+	assert.Nil(t, err)
 	for i := 1; i < writeEntries; i++ {
 		offset := uint64(writeEntries - i)
 		expected := writeEntries - int(offset)

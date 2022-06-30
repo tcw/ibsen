@@ -1,16 +1,25 @@
 package access
 
 import (
+	"fmt"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/pkgerrors"
 	"github.com/stretchr/testify/assert"
-	"math/rand"
+	"strconv"
+	"sync"
 	"testing"
-	"time"
 )
+
+func init() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMicro
+	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+}
 
 func TestTopic_Write(t *testing.T) {
 	afs := memAfs()
 	topic := NewLogTopic(afs, "tmp", "topic1", 1024*1024, true)
-	err := topic.Write(createInputEntries(10, 100))
+	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
 	lastOffset, _, err := BlockInfo(afs, "tmp/topic1/00000000000000000000.log")
 	assert.Nil(t, err)
@@ -20,7 +29,7 @@ func TestTopic_Write(t *testing.T) {
 func TestTopic_Load(t *testing.T) {
 	afs := memAfs()
 	topic := NewLogTopic(afs, "tmp", "topic1", 2000, false)
-	err := topic.Write(createInputEntries(10, 100))
+	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
 	err = topic.Load()
 	assert.Nil(t, err)
@@ -28,24 +37,53 @@ func TestTopic_Load(t *testing.T) {
 	assert.Len(t, topic.LogBlockList, 1)
 }
 
-func TestTopic_Read(t *testing.T) {
-
+func TestTopic_Read_one_batch(t *testing.T) {
+	afs := memAfs()
+	topic := NewLogTopic(afs, "tmp", "topic1", 2000, false)
+	err := topic.Write(createInputEntries(10))
+	assert.Nil(t, err)
+	err = topic.Load()
+	assert.Nil(t, err)
+	logChan := make(chan *[]LogEntry)
+	var wg sync.WaitGroup
+	go func() {
+		err := topic.Read(logChan, &wg, 0, 100)
+		assert.Nil(t, err)
+		wg.Done()
+	}()
+	wg.Wait()
+	logEntry := <-logChan
+	for i, l := range *logEntry {
+		assert.Equal(t, uint64(i), l.Offset)
+		assert.Equal(t, "dummy"+strconv.Itoa(i), string(l.Entry))
+	}
 }
 
-func createInputEntries(numberOfEntries int, entryByteSize int) *[][]byte {
+func TestTopic_UpdateIndex(t *testing.T) {
+	afs := memAfs()
+	topic := NewLogTopic(afs, "tmp", "topic1", 20000, false)
+	err := topic.Write(createInputEntries(100))
+	assert.Nil(t, err)
+	err = topic.Load()
+	assert.Nil(t, err)
+	err = topic.Write(createInputEntries(100))
+	assert.Nil(t, err)
+	topic.indexWg.Wait()
+	updatedIndex, err := topic.UpdateIndex()
+	assert.Nil(t, err)
+	assert.True(t, updatedIndex)
+	head, hasHead := topic.indexBlockHead()
+	assert.True(t, hasHead)
+	index, err := topic.getIndexFromIndexBlock(head)
+	assert.Nil(t, err)
+	assert.Equal(t, Offset(190), index.Head().Offset)
+	fmt.Println("Done")
+}
+
+func createInputEntries(numberOfEntries int) *[][]byte {
 	var tmpBytes = make([][]byte, 0)
 	for i := 0; i < numberOfEntries; i++ {
-		tmpBytes = append(tmpBytes, createTestValues(entryByteSize))
+		tmpBytes = append(tmpBytes, []byte("dummy"+strconv.Itoa(i)))
 	}
 	return &tmpBytes
-}
-
-func createTestValues(entrySizeBytes int) []byte {
-	rand.Seed(time.Now().UnixNano())
-	var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzæøåABCDEFGHIJKLMNOPQRSTUVWXYZÆØÅ1234567890")
-	b := make([]rune, entrySizeBytes)
-	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
-	}
-	return []byte(string(b))
 }

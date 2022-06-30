@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMicro
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 	zerolog.TimestampFieldName = "t"
 	zerolog.LevelFieldName = "l"
