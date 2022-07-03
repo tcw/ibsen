@@ -73,6 +73,7 @@ func TestTopic_UpdateIndex(t *testing.T) {
 	assert.Nil(t, err)
 	assert.True(t, updatedIndex)
 	head, hasHead := topic.indexBlockHead()
+	topic.indexBlockHead()
 	assert.True(t, hasHead)
 	index, err := topic.getIndexFromIndexBlock(head)
 	assert.Nil(t, err)

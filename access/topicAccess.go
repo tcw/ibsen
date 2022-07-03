@@ -114,10 +114,10 @@ func (t *Topic) UpdateIndex() (bool, error) {
 				t.IndexPosition = &pos
 			} else {
 				pos, err := t.indexBlock(block, 0)
-				t.addNewIndexBlock(block)
 				if err != nil {
 					return true, errore.WrapWithContext(err)
 				}
+				t.addNewIndexBlock(block)
 				t.IndexPosition = &pos
 			}
 		}
@@ -160,7 +160,7 @@ func (t *Topic) Load() error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	t.IndexPosition = &position
+	t.IndexPosition = position
 	if e := log.Debug(); e.Enabled() {
 		e.Str("topic", t.TopicName).
 			Int("logBlocks", len(logBlocks)).
@@ -316,22 +316,22 @@ func (t *Topic) indexBlockFileName(block IndexBlock) (string, error) {
 	return t.RootPath + Sep + t.TopicName + Sep + fmt.Sprintf("%020d.idx", block), nil
 }
 
-func (t *Topic) findLastIndexLogBlockPosition() (LogBlockPosition, bool, error) {
+func (t *Topic) findLastIndexLogBlockPosition() (*LogBlockPosition, bool, error) {
 	indexBlockHead, hasHead := t.indexBlockHead()
 	if !hasHead {
-		return LogBlockPosition{}, false, nil
+		return nil, false, nil
 	}
 	indexBlockFileName, err := t.indexBlockFileName(indexBlockHead)
 	if err != nil {
-		return LogBlockPosition{}, false, errore.WrapWithContext(err)
+		return nil, false, errore.WrapWithContext(err)
 	}
 	indexAsBytes, err := t.Afs.ReadFile(indexBlockFileName)
 	if err != nil {
-		return LogBlockPosition{}, false, errore.WrapWithContext(err)
+		return nil, false, errore.WrapWithContext(err)
 	}
 	index, err := MarshallIndex(indexAsBytes)
 	indexOffsetHead := index.Head()
-	return LogBlockPosition{
+	return &LogBlockPosition{
 		Block:      LogBlock(indexBlockHead),
 		ByteOffset: indexOffsetHead.ByteOffset,
 	}, true, nil
