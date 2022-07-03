@@ -1,7 +1,6 @@
 package access
 
 import (
-	"fmt"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/pkgerrors"
 	"github.com/stretchr/testify/assert"
@@ -59,7 +58,33 @@ func TestTopic_Read_one_batch(t *testing.T) {
 	}
 }
 
-func TestTopic_UpdateIndex(t *testing.T) {
+func TestTopic_Read_multiple_batches(t *testing.T) {
+	afs := memAfs()
+	topic := NewLogTopic(afs, "tmp", "topic1", 2000, false)
+	err := topic.Write(createInputEntries(1000))
+	assert.Nil(t, err)
+	err = topic.Write(createInputEntries(1000))
+	assert.Nil(t, err)
+	err = topic.Write(createInputEntries(1000))
+	assert.Nil(t, err)
+	err = topic.Load()
+	assert.Nil(t, err)
+	logChan := make(chan *[]LogEntry)
+	var wg sync.WaitGroup
+	go func() {
+		err := topic.Read(logChan, &wg, 0, 100)
+		assert.Nil(t, err)
+		wg.Done()
+	}()
+	wg.Wait()
+	logEntry := <-logChan
+	for i, l := range *logEntry {
+		assert.Equal(t, uint64(i), l.Offset)
+		assert.Equal(t, "dummy"+strconv.Itoa(i), string(l.Entry))
+	}
+}
+
+func TestTopic_UpdateIndex_sigle_block(t *testing.T) {
 	afs := memAfs()
 	topic := NewLogTopic(afs, "tmp", "topic1", 20000, false)
 	err := topic.Write(createInputEntries(100))
@@ -78,7 +103,29 @@ func TestTopic_UpdateIndex(t *testing.T) {
 	index, err := topic.getIndexFromIndexBlock(head)
 	assert.Nil(t, err)
 	assert.Equal(t, Offset(190), index.Head().Offset)
-	fmt.Println("Done")
+}
+
+func TestTopic_UpdateIndex_multiple_blocks(t *testing.T) {
+	afs := memAfs()
+	topic := NewLogTopic(afs, "tmp", "topic1", 2000, false)
+	err := topic.Write(createInputEntries(1000))
+	assert.Nil(t, err)
+	err = topic.Load()
+	assert.Nil(t, err)
+	err = topic.Write(createInputEntries(1000))
+	assert.Nil(t, err)
+	err = topic.Write(createInputEntries(1000))
+	assert.Nil(t, err)
+	topic.indexWg.Wait()
+	updatedIndex, err := topic.UpdateIndex()
+	assert.Nil(t, err)
+	assert.True(t, updatedIndex)
+	head, hasHead := topic.indexBlockHead()
+	topic.indexBlockHead()
+	assert.True(t, hasHead)
+	index, err := topic.getIndexFromIndexBlock(head)
+	assert.Nil(t, err)
+	assert.Equal(t, Offset(2990), index.Head().Offset)
 }
 
 func createInputEntries(numberOfEntries int) *[][]byte {
