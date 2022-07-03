@@ -1,0 +1,44 @@
+package test
+
+import (
+	"fmt"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/api/grpcApi"
+	"github.com/tcw/ibsen/manager"
+	"net"
+	"time"
+)
+
+const rootPath = "/tmp/data"
+
+var afs *afero.Afero
+var ibsenServer *grpcApi.IbsenGrpcServer
+var ibsenTestTarge = fmt.Sprintf("%s:%d", "localhost", 50002)
+
+func init() {
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+}
+
+func startGrpcServer() {
+	var fs = afero.NewMemMapFs()
+	afs = &afero.Afero{Fs: fs}
+	err := afs.Mkdir(rootPath, 0600)
+	if err != nil {
+		log.Fatal().Err(err)
+	}
+	topicsManager, err := manager.NewLogTopicsManager(afs, false, 30*time.Second, 30*time.Second, rootPath, 1)
+	if err != nil {
+		log.Fatal().Err(err)
+	}
+	ibsenServer = grpcApi.NewUnsecureIbsenGrpcServer(&topicsManager)
+	lis, err := net.Listen("tcp", ibsenTestTarge)
+	if err != nil {
+		log.Fatal().Err(err)
+	}
+	err = ibsenServer.StartGRPC(lis)
+	if err != nil {
+		log.Fatal().Err(err)
+	}
+}
