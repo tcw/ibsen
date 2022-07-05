@@ -8,7 +8,7 @@ import (
 
 func TestName(t *testing.T) {
 	go startGrpcServer()
-	simulation, err := newSimulation(10, 10, 100000, time.Second*1)
+	simulation, err := newSimulation(10, 10, 100000, time.Second*3)
 	assert.Nil(t, err)
 	simulation.start(t)
 }

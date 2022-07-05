@@ -8,6 +8,7 @@ import (
 	"github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/manager"
 	"net"
+	"os"
 	"time"
 )
 
@@ -19,6 +20,8 @@ var ibsenTestTarge = fmt.Sprintf("%s:%d", "localhost", 50002)
 
 func init() {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 }
 
 func startGrpcServer() {

@@ -55,6 +55,7 @@ type Simulation struct {
 	testTime       time.Duration
 	started        time.Time
 	wg             *sync.WaitGroup
+	cancel         chan bool
 	users          []*User
 	writeDataLimit int
 	dataWritten    int
@@ -69,6 +70,7 @@ func newSimulation(topics int, users int, dataLimit int, testTime time.Duration)
 	return Simulation{
 		testTime:       testTime,
 		wg:             &sync.WaitGroup{},
+		cancel:         make(chan bool, users),
 		users:          allUsers,
 		writeDataLimit: dataLimit,
 		dataWritten:    0,
@@ -78,10 +80,9 @@ func newSimulation(topics int, users int, dataLimit int, testTime time.Duration)
 func (s *Simulation) start(t *testing.T) {
 	users := s.users
 	for _, user := range users {
-		user.start(t)
+		user.run(t, s.wg, s.cancel)
 	}
 	start := time.Now()
-	s.wg.Add(1)
 	for {
 		if time.Until(start.Add(s.testTime)) <= 0 {
 			log.Info().Msg("Stopping simulator")
@@ -93,19 +94,14 @@ func (s *Simulation) start(t *testing.T) {
 }
 
 func (s *Simulation) stop() {
-	users := s.users
-	for _, user := range users {
-		user.stop()
+	for i := 0; i < len(s.users); i++ {
+		s.cancel <- true
 	}
-	for _, user := range users {
-		user.wg.Wait()
-	}
-	s.wg.Done()
+	s.wg.Wait()
 }
 
 type User struct {
-	cancel        chan bool
-	wg            *sync.WaitGroup
+	name          string
 	offsets       map[string]access.Offset
 	topics        GlobalTopics
 	ibsenClient   IbsenClient
@@ -114,34 +110,29 @@ type User struct {
 	entries       RandomizedSizeInterval
 }
 
-func (u *User) stop() {
-	log.Info().Msg("sending cancel to user")
-	u.cancel <- true
-}
-
-func (u *User) start(t *testing.T) {
-	go func(user *User) {
-		user.wg.Add(1)
+func (u *User) run(t *testing.T, wg *sync.WaitGroup, cancel chan bool) {
+	go func(wg *sync.WaitGroup, cancel chan bool) {
+		wg.Add(1)
 		for {
 			select {
-			case <-user.cancel:
+			case <-cancel:
 				log.Info().Msg("cancel received for user")
-				user.wg.Done()
+				wg.Done()
 				return
 			default:
-				time.Sleep(user.writeCallFreq.value())
-				user.runSimulation(t)
+				time.Sleep(u.writeCallFreq.value())
+				u.runSimulation(t)
 			}
 		}
-	}(u)
+	}(wg, cancel)
 }
 
 func (u *User) runSimulation(t *testing.T) {
-	//if rand.Intn(10) > 5 {
-	u.write(t)
-	//} else {
-	u.read(t)
-	//}
+	if rand.Intn(10) > 5 {
+		u.write(t)
+	} else {
+		u.read(t)
+	}
 }
 
 func (u *User) write(t *testing.T) {
@@ -150,7 +141,7 @@ func (u *User) write(t *testing.T) {
 	randTopic := u.topics.randTopic()
 	entries := createInputEntries(randTopic, numberOfEntries, 100)
 	_, err := u.ibsenClient.Client.Write(ctx, &entries)
-	log.Info().Msg("wrote: " + strconv.Itoa(numberOfEntries))
+	log.Info().Int("wrote", numberOfEntries).Str("topic", randTopic).Msg("Wrote to log")
 	assert.Nil(t, err)
 }
 
@@ -186,7 +177,11 @@ func (u *User) read(t *testing.T) {
 				lastOffset = int64(entry.Offset)
 				continue
 			}
-			assert.Equal(t, lastOffset+1, int64(entry.Offset))
+			if lastOffset+1 != int64(entry.Offset) {
+				log.Error()
+			}
+			assert.Equal(t, lastOffset+1, int64(entry.Offset), "user:", u.name, "current offset:", offset, "topic:", topic, "offset map:", u.offsets)
+
 			lastOffset = int64(entry.Offset)
 		}
 	}
@@ -210,10 +205,9 @@ func createUsers(users int, globalTopics GlobalTopics) ([]*User, error) {
 			return nil, err
 		}
 		genUsers = append(genUsers, &User{
+			name:        "user_" + strconv.Itoa(i),
 			ibsenClient: client,
 			offsets:     make(map[string]access.Offset),
-			wg:          &sync.WaitGroup{},
-			cancel:      make(chan bool),
 			topics:      globalTopics,
 			writeCallFreq: RandomizedTimeInterval{
 				min: time.Millisecond * 10,
