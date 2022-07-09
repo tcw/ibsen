@@ -12,7 +12,7 @@ import (
 )
 
 func TestTopicList(t *testing.T) {
-	go startGrpcServer()
+	go startGrpcServer(true, "/tmp/data")
 	err := write("test1", 10, 10)
 	assert.Nil(t, err)
 	err = write("test2", 10, 10)
@@ -33,7 +33,7 @@ func TestTopicList(t *testing.T) {
 }
 
 func TestReadWriteLargeObject(t *testing.T) {
-	go startGrpcServer()
+	go startGrpcServer(true, "/tmp/data")
 	numberOfEntries := 1
 	objectBytes, err := writeLarge("test", numberOfEntries, 500_000)
 	if err != nil {
@@ -50,7 +50,7 @@ func TestReadWriteLargeObject(t *testing.T) {
 }
 
 func TestReadWriteVerification(t *testing.T) {
-	go startGrpcServer()
+	go startGrpcServer(true, "/tmp/data")
 	numberOfEntries := 10000
 	err := write("test", numberOfEntries, 100)
 	assert.Nil(t, err)
@@ -63,7 +63,7 @@ func TestReadWriteVerification(t *testing.T) {
 }
 
 func TestReadWriteWithOffsetVerification(t *testing.T) {
-	go startGrpcServer()
+	go startGrpcServer(true, "/tmp/data")
 	writeEntries := 1000
 	err := write("test", writeEntries, 100)
 	assert.Nil(t, err)

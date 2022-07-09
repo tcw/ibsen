@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-const rootPath = "/tmp/data"
-
 var afs *afero.Afero
 var ibsenServer *grpcApi.IbsenGrpcServer
 var ibsenTestTarge = fmt.Sprintf("%s:%d", "localhost", 50002)
@@ -24,14 +22,17 @@ func init() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 }
 
-func startGrpcServer() {
+func startGrpcServer(inMemory bool, rootPath string) {
 	var fs = afero.NewMemMapFs()
+	if !inMemory {
+		fs = afero.NewOsFs()
+	}
 	afs = &afero.Afero{Fs: fs}
 	err := afs.Mkdir(rootPath, 0600)
 	if err != nil {
 		log.Fatal().Err(err)
 	}
-	topicsManager, err := manager.NewLogTopicsManager(afs, false, 30*time.Second, 30*time.Second, rootPath, 1)
+	topicsManager, err := manager.NewLogTopicsManager(afs, false, 30*time.Second, 30*time.Second, rootPath, 10)
 	if err != nil {
 		log.Fatal().Err(err)
 	}

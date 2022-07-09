@@ -2,6 +2,7 @@ package test
 
 import (
 	"context"
+	"fmt"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/access"
@@ -52,28 +53,31 @@ func (g GlobalTopics) randTopic() string {
 }
 
 type Simulation struct {
-	testTime       time.Duration
-	started        time.Time
-	wg             *sync.WaitGroup
-	cancel         chan bool
-	users          []*User
-	writeDataLimit int
-	dataWritten    int
+	testTime time.Duration
+	started  time.Time
+	wg       *sync.WaitGroup
+	cancel   chan bool
+	users    []*User
 }
 
-func newSimulation(topics int, users int, dataLimit int, testTime time.Duration) (Simulation, error) {
+func newSimulation(topics int, users int, dataLimitInMB int, testTime time.Duration) (Simulation, error) {
 	globalTopics := GlobalTopics{topics: createTopics(topics)}
-	allUsers, err := createUsers(users, globalTopics)
+	userDataLimit := dataLimitInMB * 1024 * 1024 / users
+	log.Info().
+		Int("topics", topics).
+		Int("users", users).
+		Dur("test time", testTime).
+		Int("data limit pr user", userDataLimit).
+		Msg("new simulator")
+	allUsers, err := newUsers(users, globalTopics, userDataLimit)
 	if err != nil {
 		return Simulation{}, err
 	}
 	return Simulation{
-		testTime:       testTime,
-		wg:             &sync.WaitGroup{},
-		cancel:         make(chan bool, users),
-		users:          allUsers,
-		writeDataLimit: dataLimit,
-		dataWritten:    0,
+		testTime: testTime,
+		wg:       &sync.WaitGroup{},
+		cancel:   make(chan bool, users),
+		users:    allUsers,
 	}, nil
 }
 
@@ -101,13 +105,15 @@ func (s *Simulation) stop() {
 }
 
 type User struct {
-	name          string
-	offsets       map[string]access.Offset
-	topics        GlobalTopics
-	ibsenClient   IbsenClient
-	writeCallFreq RandomizedTimeInterval
-	readCallFreq  RandomizedTimeInterval
-	entries       RandomizedSizeInterval
+	name           string
+	offsets        map[string]access.Offset
+	topics         GlobalTopics
+	ibsenClient    IbsenClient
+	writeCallFreq  RandomizedTimeInterval
+	readCallFreq   RandomizedTimeInterval
+	entries        RandomizedSizeInterval
+	dataWriteLimit int
+	dataWritten    int
 }
 
 func (u *User) run(t *testing.T, wg *sync.WaitGroup, cancel chan bool) {
@@ -116,7 +122,7 @@ func (u *User) run(t *testing.T, wg *sync.WaitGroup, cancel chan bool) {
 		for {
 			select {
 			case <-cancel:
-				log.Info().Msg("cancel received for user")
+				log.Info().Msg(fmt.Sprintf("cancel received for %s, wrote %d bytes", u.name, u.dataWritten))
 				wg.Done()
 				return
 			default:
@@ -128,7 +134,7 @@ func (u *User) run(t *testing.T, wg *sync.WaitGroup, cancel chan bool) {
 }
 
 func (u *User) runSimulation(t *testing.T) {
-	if rand.Intn(10) > 5 {
+	if rand.Intn(10) > 4 && u.dataWriteLimit > u.dataWritten {
 		u.write(t)
 	} else {
 		u.read(t)
@@ -136,17 +142,20 @@ func (u *User) runSimulation(t *testing.T) {
 }
 
 func (u *User) write(t *testing.T) {
-	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, _ := context.WithTimeout(context.Background(), 30*time.Minute)
 	numberOfEntries := u.entries.value()
 	randTopic := u.topics.randTopic()
-	entries := createInputEntries(randTopic, numberOfEntries, 100)
+	entryByteSize := 100
+	entries := createInputEntries(randTopic, numberOfEntries, entryByteSize)
 	_, err := u.ibsenClient.Client.Write(ctx, &entries)
-	log.Info().Int("wrote", numberOfEntries).Str("topic", randTopic).Msg("Wrote to log")
+	written := u.dataWritten + (numberOfEntries * entryByteSize)
+	u.dataWritten = written
+	//log.Info().Int("wrote", numberOfEntries).Str("topic", randTopic).Msg("read/write")
 	assert.Nil(t, err)
 }
 
 func (u *User) read(t *testing.T) {
-	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, _ := context.WithTimeout(context.Background(), 30*time.Minute)
 	topic := u.topics.randTopic()
 	var offset uint64 = 0
 	if val, ok := u.offsets[topic]; ok {
@@ -161,7 +170,7 @@ func (u *User) read(t *testing.T) {
 	assert.Nil(t, err)
 
 	var lastOffset int64 = -1
-	entriesRead := 0
+	entriesRead := int(u.offsets[topic])
 	for {
 		in, err := entryStream.Recv()
 		if err == io.EOF {
@@ -178,50 +187,66 @@ func (u *User) read(t *testing.T) {
 				continue
 			}
 			if lastOffset+1 != int64(entry.Offset) {
-				log.Error()
+				log.Warn().
+					Str("user", u.name).
+					Str("topic", topic).
+					Uint64("start offset", offset).
+					Uint64("current offset", entry.Offset).
+					Int64("last offset", lastOffset).
+					Msg("offset out of order")
+				t.Fail()
 			}
-			assert.Equal(t, lastOffset+1, int64(entry.Offset), "user:", u.name, "current offset:", offset, "topic:", topic, "offset map:", u.offsets)
-
 			lastOffset = int64(entry.Offset)
 		}
 	}
-	u.offsets[topic] = access.Offset(lastOffset)
-	log.Info().Int("read", entriesRead).Str("topic", topic).Uint64("offset", offset).Msg("Read from log")
+	if lastOffset >= 0 {
+		u.offsets[topic] = access.Offset(lastOffset)
+	}
+	//log.Info().Int("read", entriesRead).Str("topic", topic).Uint64("offset", offset).Msg("read/write")
 }
 
 func createTopics(topics int) []string {
 	var genTopics []string
 	for i := 0; i < topics; i++ {
-		genTopics = append(genTopics, "topic"+strconv.Itoa(i))
+		genTopics = append(genTopics, "topic_"+strconv.Itoa(i))
 	}
 	return genTopics
 }
 
-func createUsers(users int, globalTopics GlobalTopics) ([]*User, error) {
+func newUsers(users int, globalTopics GlobalTopics, dataLimit int) ([]*User, error) {
 	var genUsers []*User
 	for i := 0; i < users; i++ {
-		client, err := newIbsenClient(ibsenTestTarge)
+		user, err := newUser("user_"+strconv.Itoa(i), globalTopics, dataLimit)
 		if err != nil {
 			return nil, err
 		}
-		genUsers = append(genUsers, &User{
-			name:        "user_" + strconv.Itoa(i),
-			ibsenClient: client,
-			offsets:     make(map[string]access.Offset),
-			topics:      globalTopics,
-			writeCallFreq: RandomizedTimeInterval{
-				min: time.Millisecond * 10,
-				max: time.Millisecond * 100,
-			},
-			readCallFreq: RandomizedTimeInterval{
-				min: time.Millisecond * 10,
-				max: time.Millisecond * 100,
-			},
-			entries: RandomizedSizeInterval{
-				min: 1,
-				max: 1000,
-			},
-		})
+		genUsers = append(genUsers, user)
 	}
 	return genUsers, nil
+}
+
+func newUser(username string, globalTopics GlobalTopics, datalimit int) (*User, error) {
+	client, err := newIbsenClient(ibsenTestTarge)
+	if err != nil {
+		return nil, err
+	}
+	return &User{
+		name:           username,
+		ibsenClient:    client,
+		dataWriteLimit: datalimit,
+		offsets:        make(map[string]access.Offset),
+		topics:         globalTopics,
+		writeCallFreq: RandomizedTimeInterval{
+			min: time.Millisecond * 10,
+			max: time.Millisecond * 100,
+		},
+		readCallFreq: RandomizedTimeInterval{
+			min: time.Millisecond * 10,
+			max: time.Millisecond * 100,
+		},
+		entries: RandomizedSizeInterval{
+			min: 1,
+			max: 1000,
+		},
+	}, nil
 }
