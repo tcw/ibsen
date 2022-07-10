@@ -48,7 +48,7 @@ func (ic *IbsenClient) Read(topic string, offset uint64, batchSize uint32) error
 		BatchSize:        batchSize,
 	})
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return err
 	}
 
 	stdout := os.Stdout
@@ -59,14 +59,14 @@ func (ic *IbsenClient) Read(topic string, offset uint64, batchSize uint32) error
 			return nil
 		}
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 		entries := in.Entries
 		for _, entry := range entries {
 			line := fmt.Sprintf("%d\t%s\n", entry.Offset, string(entry.Content))
 			_, err = stdout.Write([]byte(line))
 			if err != nil {
-				return errore.WrapWithContext(err)
+				return err
 			}
 		}
 	}
@@ -85,7 +85,7 @@ func (ic *IbsenClient) Write(topic string, fileName ...string) (string, error) {
 		reader = file
 		if err != nil {
 			ioErr := file.Close()
-			return "", errore.WrapWithContext(errore.WrapWithError(ioErr, err))
+			return "", errore.WrapWithError(ioErr, err)
 		}
 	}
 
@@ -100,7 +100,7 @@ func (ic *IbsenClient) Write(topic string, fileName ...string) (string, error) {
 	var entriesWritten = 0
 	for inputScanner.Scan() {
 		if err := inputScanner.Err(); err != nil {
-			return "", errore.WrapWithContext(err)
+			return "", err
 		}
 		text := inputScanner.Text()
 		if text == "" {
@@ -116,7 +116,7 @@ func (ic *IbsenClient) Write(topic string, fileName ...string) (string, error) {
 			}
 			_, err := ic.Client.Write(ic.Ctx, &mes)
 			if err != nil {
-				return "", errore.WrapWithContext(err)
+				return "", err
 			}
 			entriesWritten = entriesWritten + len(mes.Entries)
 			batchSize = 0
@@ -130,7 +130,7 @@ func (ic *IbsenClient) Write(topic string, fileName ...string) (string, error) {
 		}
 		_, err := ic.Client.Write(ic.Ctx, &mes)
 		if err != nil {
-			return "", errore.WrapWithContext(err)
+			return "", err
 		}
 		entriesWritten = entriesWritten + len(tmpBytes)
 	}

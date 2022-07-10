@@ -45,7 +45,7 @@ func MarshallIndex(soi []byte) (Index, error) {
 func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, oneEntryForEvery uint32) ([]byte, int64, error) {
 	exists, err := afs.Exists(logFileName)
 	if err != nil {
-		return nil, 0, errore.WrapWithContext(err)
+		return nil, 0, err
 	}
 	if !exists {
 		return nil, 0, errors.New("NoFile")
@@ -53,7 +53,7 @@ func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, 
 
 	file, err := OpenFileForRead(afs, logFileName)
 	if err != nil {
-		return nil, 0, errore.WrapWithContext(err)
+		return nil, 0, err
 	}
 	var index []byte
 	var byteOffset int64 = 0
@@ -64,7 +64,7 @@ func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, 
 			if ioErr != nil {
 				return nil, 0, errore.WrapWithError(ioErr, err)
 			}
-			return nil, byteOffset, errore.WrapWithContext(err)
+			return nil, byteOffset, err
 		}
 	}
 	isFirst := true
@@ -85,7 +85,7 @@ func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, 
 			if ioErr != nil {
 				return nil, 0, errore.WrapWithError(ioErr, err)
 			}
-			return nil, byteOffset, errore.WrapWithContext(err)
+			return nil, byteOffset, err
 		}
 		byteSize, err := io.ReadFull(reader, bytes)
 		if err != nil {
@@ -93,7 +93,7 @@ func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, 
 			if ioErr != nil {
 				return nil, 0, errore.WrapWithError(ioErr, err)
 			}
-			return nil, byteOffset, errore.WrapWithContext(err)
+			return nil, byteOffset, err
 		}
 		size := littleEndianToUint32(bytes)
 		entry := make([]byte, size)
@@ -103,7 +103,7 @@ func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, 
 			if ioErr != nil {
 				return nil, 0, errore.WrapWithError(ioErr, err)
 			}
-			return nil, byteOffset, errore.WrapWithContext(err)
+			return nil, byteOffset, err
 		}
 		offsetSize, err := io.ReadFull(reader, bytes)
 		if err != nil {
@@ -111,7 +111,7 @@ func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, 
 			if ioErr != nil {
 				return nil, 0, errore.WrapWithError(ioErr, err)
 			}
-			return nil, byteOffset, errore.WrapWithContext(err)
+			return nil, byteOffset, err
 		}
 		offset := littleEndianToUint64(bytes)
 		if !isFirst && offset%uint64(oneEntryForEvery) == 0 {

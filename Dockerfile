@@ -1,4 +1,4 @@
-FROM golang:latest AS builder
+FROM golang:1.18.3-buster AS builder
 COPY . /build
 WORKDIR /build
 ENV CGO_ENABLED=0 GO_LDFLAGS="-extldflags='-static'"

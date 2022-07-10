@@ -54,12 +54,12 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		log.Info().Msg("running in-memory only mode")
 		err := ibs.Afs.Mkdir(ibs.RootPath, 0600)
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 	} else {
 		exists, err := ibs.Afs.Exists(ibs.RootPath)
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 		if !exists {
 			return errore.NewWithContext("path [%s] does not exist, will not start unless existing path is specified", ibs.RootPath)
@@ -84,11 +84,11 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 
 	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, ibs.Readonly, time.Minute*10, time.Second*5, ibs.RootPath, ibs.MaxBlockSize)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return err
 	}
 	err = ibs.startGRPCServer(listener, &topicsManager)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return err
 	}
 	return nil
 }
@@ -99,7 +99,7 @@ func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager manager.LogMan
 	fmt.Print(ibsenFiglet)
 	err := ibsenGrpcServer.StartGRPC(lis)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return err
 	}
 	return nil
 }

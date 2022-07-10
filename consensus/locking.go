@@ -4,7 +4,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/errore"
 	"io"
 	"os"
 	"time"
@@ -145,7 +144,7 @@ func (fl FileLock) reclaimer() {
 func (fl FileLock) getFileModificationTime() (time.Time, error) {
 	stat, err := fl.afero.Stat(fl.lockFile)
 	if err != nil {
-		return time.Time{}, errore.WrapWithContext(err)
+		return time.Time{}, err
 	}
 	return stat.ModTime(), nil
 }

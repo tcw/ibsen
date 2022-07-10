@@ -5,25 +5,30 @@
 ### GO
 
 ```shell script
-go get -u github.com/tcw/ibsen
+go get github.com/tcw/ibsen@latest
 ```
 
 ### Docker
 
 #### Create image
 
-```shell script
+```shell
 ./release.sh
 ```
 
-#### Run Ibsen server as docker container
 
-```shell script
+
+#### With Golang
+
+
+#### With Docker
+
+```shell
 docker run --name ibsen_solveig -p 50001:50001 ibsen
 ```
 
 In memory only
-```shell script
+```shell
 docker run --name ibsen_solvei -e IBSEN_IN_MEMORY_ONLY='true' -p 50001:50001 ibsen
 ```
 
@@ -39,25 +44,25 @@ clients are under development
 
 #### GO
 
-```shell script
+```shell
 protoc --proto_path=api/grpcApi ibsen.proto --go_out=plugins=grpc:./
 ```
 
 #### Java
 
-```shell script
+```shell
 protoc --proto_path=api/grpc/JavaApi --java_out=api/grpc/JavaApi ibsen.proto
 ```
 
 ### Profiling
 
 ```shell script
-ibsen server <path> -z cpu.pprof -y mem.pprof
+ibsen server -d <path> -z cpu.pprof -y mem.pprof
 go tool pprof cpu.pprof
 > weblist ibsen
-> pdf
+> evince
 go tool pprof mem.pprof
-> pdf
+> evince
 ```
 
 ## gRPC logging
@@ -79,13 +84,23 @@ openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out c
 ## Todo
 
 - better command completion
-- topic aliasing
 - improved error recovery/analysis
 - block compression (Zstandard,snappy) ?
 
 ## Benchmarks
 
+create data tmp directory
+
+```shell
+
+```
+
+Start server
+```shell
+ibsen server -d "/tmp/ibsen/data"
+```
+
 To free pagecache in linux:
-```shell script
+```shell
 echo 1 > /proc/sys/vm/drop_caches 
 ```

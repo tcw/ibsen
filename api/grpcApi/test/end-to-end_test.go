@@ -6,7 +6,6 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/api/grpcApi"
-	"github.com/tcw/ibsen/errore"
 	"io"
 	"testing"
 	"time"
@@ -28,7 +27,7 @@ func TestTopicList(t *testing.T) {
 
 	topicList, err := list()
 	if err != nil {
-		t.Error(errore.WrapWithContext(err))
+		t.Error(err)
 	}
 	assert.Equal(t, 5, len(topicList.GetTopics()), "should be equal")
 	ibsenServer.Shutdown()
@@ -49,7 +48,7 @@ func TestReadWriteLargeObject(t *testing.T) {
 	}
 	entries, err := read("test", 0, uint32(numberOfEntries))
 	if err != nil {
-		t.Error(errore.WrapWithContext(err))
+		t.Error(err)
 	}
 	assert.Equal(t, numberOfEntries, len(entries), "should be equal")
 	actualObjectSize := len(entries[0].Content)
@@ -65,7 +64,7 @@ func TestReadWriteVerification(t *testing.T) {
 	assert.Nil(t, err)
 	entries, err := read("test", 0, 1000)
 	if err != nil {
-		t.Error(errore.WrapWithContext(err))
+		t.Error(err)
 	}
 	assert.Equal(t, numberOfEntries, len(entries), "should be equal")
 	ibsenServer.Shutdown()
@@ -82,7 +81,7 @@ func TestReadWriteWithOffsetVerification(t *testing.T) {
 		expected := writeEntries - int(offset)
 		entries, err := read("test", offset, 10)
 		if err != nil {
-			t.Error(errore.WrapWithContext(err))
+			t.Error(err)
 		}
 		assert.Equal(t, expected, len(entries), "should be equal")
 	}
@@ -92,7 +91,7 @@ func TestReadWriteWithOffsetVerification(t *testing.T) {
 func list() (*grpcApi.TopicList, error) {
 	client, err := newIbsenClient(ibsenTestTarge)
 	if err != nil {
-		return nil, errore.WrapWithContext(err)
+		return nil, err
 	}
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
 	if ctx.Err() == context.Canceled {
@@ -103,7 +102,7 @@ func list() (*grpcApi.TopicList, error) {
 func writeLarge(topic string, numberOfEntries int, entryKb int) (int, error) {
 	client, err := newIbsenClient(ibsenTestTarge)
 	if err != nil {
-		return 0, errore.WrapWithContext(err)
+		return 0, err
 	}
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
 	if ctx.Err() == context.Canceled {
@@ -117,13 +116,13 @@ func writeLarge(topic string, numberOfEntries int, entryKb int) (int, error) {
 func write(topic string, numberOfEntries int, entryByteSize int) error {
 	client, err := newIbsenClient(ibsenTestTarge)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return err
 	}
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
 	entries := createInputEntries(topic, numberOfEntries, entryByteSize)
 	_, err = client.Client.Write(ctx, &entries)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return err
 	}
 	return nil
 }
@@ -131,7 +130,7 @@ func write(topic string, numberOfEntries int, entryByteSize int) error {
 func read(topic string, offset uint64, batchSize uint32) ([]*grpcApi.Entry, error) {
 	client, err := newIbsenClient(ibsenTestTarge)
 	if err != nil {
-		return nil, errore.WrapWithContext(err)
+		return nil, err
 	}
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
 	if ctx.Err() == context.Canceled {
@@ -144,7 +143,7 @@ func read(topic string, offset uint64, batchSize uint32) ([]*grpcApi.Entry, erro
 		BatchSize:        batchSize,
 	})
 	if err != nil {
-		return nil, errore.WrapWithContext(err)
+		return nil, err
 	}
 	var entries []*grpcApi.Entry
 	for {
@@ -153,7 +152,7 @@ func read(topic string, offset uint64, batchSize uint32) ([]*grpcApi.Entry, erro
 			return entries, nil
 		}
 		if err != nil {
-			return nil, errore.WrapWithContext(err)
+			return nil, err
 		}
 		entries = append(entries, in.Entries...)
 	}

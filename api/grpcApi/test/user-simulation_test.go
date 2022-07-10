@@ -17,14 +17,14 @@ func TestName(t *testing.T) {
 	var fs = afero.NewMemMapFs()
 	//var fs = afero.NewOsFs()
 	afs = &afero.Afero{Fs: fs}
-	file, err := startCpuPprof()
-	assert.Nil(t, err)
+	//file, err := startCpuPprof()
+	//assert.Nil(t, err)
 	go startGrpcServer(afs, "/tmp/data")
 	simulation, err := newSimulation(afs, 1, 100, 10, time.Second*3)
 	assert.Nil(t, err)
 	simulation.start(t)
-	stopCpuPprof(err, file)
-	memProfile()
+	//stopCpuPprof(err, file)
+	//memProfile()
 }
 
 func stopCpuPprof(err error, file *os.File) {

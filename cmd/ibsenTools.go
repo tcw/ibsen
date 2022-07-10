@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
-	"github.com/tcw/ibsen/errore"
 	"math"
 	"sync"
 )
@@ -17,11 +16,11 @@ func ReadLogFile(fileName string, batchSize uint32) error {
 	go sendBatchMessage(logChan, &wg)
 	file, err := access.OpenFileForRead(afs, fileName)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return err
 	}
 	err = access.ReadFile(file, logChan, &wg, batchSize, 0, math.MaxUint64, 0)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return err
 	}
 	return nil
 }

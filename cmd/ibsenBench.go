@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/api/grpcApi"
-	"github.com/tcw/ibsen/errore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"io"
@@ -25,7 +24,7 @@ func newIbsenBench(target string) (IbsenBench, error) {
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32),
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
-		err := errore.WrapWithContext(err)
+		err := err
 		log.Fatal().Err(err)
 	}
 
@@ -69,11 +68,11 @@ func (b *IbsenBench) BenchmarkConcurrent(topic string, writeEntryByteSize int, w
 func (b *IbsenBench) Benchmark(topic string, writeEntryByteSize int, writeEntriesInEachBatch int, writeBatches int, readBatchSize int) (string, error) {
 	writeReport, err := b.benchWrite(topic, writeEntryByteSize, writeEntriesInEachBatch, writeBatches)
 	if err != nil {
-		return "", errore.WrapWithContext(err)
+		return "", err
 	}
 	readReport, err := b.benchRead(topic, uint32(readBatchSize))
 	if err != nil {
-		return "", errore.WrapWithContext(err)
+		return "", err
 	}
 	return fmt.Sprintf("%s\n%s", writeReport, readReport), nil
 }
@@ -94,7 +93,7 @@ func (b *IbsenBench) benchRead(topic string, batchSize uint32) (string, error) {
 		BatchSize:        batchSize,
 	})
 	if err != nil {
-		return "", errore.WrapWithContext(err)
+		return "", err
 	}
 	entriesRead := 0
 	start := time.Now()
@@ -105,7 +104,7 @@ func (b *IbsenBench) benchRead(topic string, batchSize uint32) (string, error) {
 			return fmt.Sprintf("Read\t%d in %s [batchSize:%d]", entriesRead, used, batchSize), nil
 		}
 		if err != nil {
-			return "", errore.WrapWithContext(err)
+			return "", err
 		}
 		entries := in.Entries
 		entriesRead = entriesRead + len(entries)
@@ -127,7 +126,7 @@ func (b *IbsenBench) benchWrite(topic string, entryByteSize int, entriesInEachBa
 	for i := 0; i < batches; i++ {
 		_, err := b.Client.Write(b.Ctx, &inputEntries)
 		if err != nil {
-			return "", errore.WrapWithContext(err)
+			return "", err
 		}
 		entriesWritten = entriesWritten + len(inputEntries.Entries)
 	}

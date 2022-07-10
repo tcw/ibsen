@@ -5,7 +5,6 @@ import (
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/access"
-	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/manager"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -60,7 +59,7 @@ func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener) error {
 		creds, err := credentials.NewServerTLSFromFile(absCert, absKey)
 		opts = append(opts, grpc.Creds(creds))
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 	}
 	grpcServer := grpc.NewServer(opts...)

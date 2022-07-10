@@ -44,7 +44,7 @@ func NewLogTopicsManager(afs *afero.Afero, readonly bool, timeToLive time.Durati
 	maxBlockSize := maxBlockSizeMB * 1024 * 1024
 	topics, err := access.ListAllTopics(afs, rootPath)
 	if err != nil {
-		return LogTopicsManager{}, errore.WrapWithContext(err)
+		return LogTopicsManager{}, err
 	}
 	topicMap := make(map[TopicName]access.TopicAccess)
 	for _, topic := range topics {
@@ -75,7 +75,7 @@ func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr)
 	if !exists {
 		err := access.CreateTopic(l.Afs, l.RootPath, string(topicName))
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 		topic = access.NewLogTopic(l.Afs, l.RootPath, string(topicName), l.MaxBlockSizeMB, true)
 		l.Topics[topicName] = topic
@@ -83,7 +83,7 @@ func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr)
 	if !topic.IsLoaded() {
 		err := topic.Load()
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 	}
 	return topic.Write(entries)
@@ -97,14 +97,14 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 	if !topic.IsLoaded() {
 		err := topic.Load()
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 	}
 	var err error
 	readTTL := time.Now().Add(l.TTL)
 	err = topic.Read(params.LogChan, params.Wg, params.From, params.BatchSize)
 	if err != nil {
-		return errore.WrapWithContext(err)
+		return err
 	}
 	if params.StopOnCompletion {
 		return nil
@@ -112,7 +112,7 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 	for time.Until(readTTL) > 0 {
 		err = l.Topics[params.TopicName].Read(params.LogChan, params.Wg, params.From, params.BatchSize)
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 		time.Sleep(l.CheckForNewEvery)
 	}

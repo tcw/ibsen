@@ -30,7 +30,7 @@ var crc32q = crc32.MakeTable(crc32.Castagnoli)
 func openFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	f, err := afs.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
-		return nil, errore.WrapWithContext(err)
+		return nil, err
 	}
 	return f, nil
 }
@@ -45,7 +45,7 @@ func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	}
 	f, err := afs.OpenFile(fileName, os.O_RDONLY, 0400)
 	if err != nil {
-		return nil, errore.WrapWithContext(err)
+		return nil, err
 	}
 	return f, nil
 }
@@ -57,7 +57,7 @@ func CreateTopic(afs *afero.Afero, rootPath string, topic string) error {
 func ListAllFilesInTopic(afs *afero.Afero, rootPath string, topic string) ([]os.FileInfo, error) {
 	dir, err := OpenFileForRead(afs, rootPath+Sep+topic)
 	if err != nil {
-		return nil, errore.WrapWithContext(err)
+		return nil, err
 	}
 	err = dir.Close()
 	if err != nil {
@@ -69,7 +69,7 @@ func ListAllFilesInTopic(afs *afero.Afero, rootPath string, topic string) ([]os.
 func LoadTopicBlocks(afs *afero.Afero, rootPath string, topic string) ([]LogBlock, []IndexBlock, error) {
 	filesInTopic, err := ListAllFilesInTopic(afs, rootPath, topic)
 	if err != nil {
-		return nil, nil, errore.WrapWithContext(err)
+		return nil, nil, err
 	}
 	var indexBlocks []IndexBlock
 	var logBlocks []LogBlock
@@ -81,7 +81,7 @@ func LoadTopicBlocks(afs *afero.Afero, rootPath string, topic string) ([]LogBloc
 		fileExtension := filepath.Ext(info.Name())
 		parseUint, err := strconv.ParseUint(nameExt[0], 10, 64)
 		if err != nil {
-			return nil, nil, errore.WrapWithContext(err)
+			return nil, nil, err
 		}
 		if fileExtension == ".log" {
 			logBlocks = append(logBlocks, LogBlock(parseUint))
@@ -99,7 +99,7 @@ func ListAllTopics(afs *afero.Afero, dir string) ([]string, error) {
 	var filenames []string
 	file, err := OpenFileForRead(afs, dir)
 	if err != nil {
-		return nil, errore.WrapWithContext(err)
+		return nil, err
 	}
 	defer file.Close()
 	names, err := file.Readdirnames(0)
@@ -126,7 +126,7 @@ func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, sta
 	if startAtByteOffset > 0 {
 		_, err = file.Seek(startAtByteOffset, io.SeekStart)
 		if err != nil {
-			return 0, scanCount, errore.WrapWithContext(err)
+			return 0, scanCount, err
 		}
 		lastOffset, err := offsetLookBack(file)
 		if err != nil {
@@ -152,21 +152,21 @@ func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, sta
 			return 0, scanCount, err
 		}
 		if err != nil {
-			return 0, scanCount, errore.WrapWithContext(err)
+			return 0, scanCount, err
 		}
 		sizeBytes, err := io.ReadFull(reader, bytes)
 		if err != nil {
-			return 0, scanCount, errore.WrapWithContext(err)
+			return 0, scanCount, err
 		}
 		entrySize := littleEndianToUint64(bytes)
 		entryBytes := make([]byte, entrySize)
 		_, err = io.ReadFull(reader, entryBytes)
 		if err != nil {
-			return 0, scanCount, errore.WrapWithContext(err)
+			return 0, scanCount, err
 		}
 		offsetBytes, err := io.ReadFull(reader, bytes)
 		if err != nil {
-			return 0, scanCount, errore.WrapWithContext(err)
+			return 0, scanCount, err
 		}
 		offsetInFile = int64(littleEndianToUint64(bytes))
 		byteOffset = byteOffset + int64(offsetBytes) + int64(checksumBytes) + int64(sizeBytes) + int64(entrySize)
@@ -177,12 +177,12 @@ func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, sta
 func offsetLookBack(file afero.File) (Offset, error) {
 	_, err := file.Seek(-8, io.SeekCurrent)
 	if err != nil {
-		return 0, errore.WrapWithContext(err)
+		return 0, err
 	}
 	bytes := make([]byte, 8)
 	_, err = io.ReadFull(file, bytes)
 	if err != nil {
-		return 0, errore.WrapWithContext(err)
+		return 0, err
 	}
 	return Offset(littleEndianToUint64(bytes)), nil
 }
@@ -190,17 +190,17 @@ func offsetLookBack(file afero.File) (Offset, error) {
 func BlockInfo(afs *afero.Afero, blockFileName string) (Offset, int64, error) {
 	file, err := OpenFileForRead(afs, blockFileName)
 	if err != nil {
-		return 0, 0, errore.WrapWithContext(err)
+		return 0, 0, err
 	}
 	seek, err := file.Seek(-8, io.SeekEnd)
 	if err != nil {
-		return 0, 0, errore.WrapWithContext(err)
+		return 0, 0, err
 	}
 	fileSize := seek + 8
 	bytes := make([]byte, 8)
 	_, err = io.ReadFull(file, bytes)
 	if err != nil {
-		return 0, 0, errore.WrapWithContext(err)
+		return 0, 0, err
 	}
 	offset := int64(littleEndianToUint64(bytes))
 	return Offset(offset), fileSize, nil
@@ -212,7 +212,7 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 	if byteOffset > 0 {
 		_, err := file.Seek(byteOffset, io.SeekStart)
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 		lastOffset, err := offsetLookBack(file)
 		if err != nil {
@@ -254,14 +254,14 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 			return nil
 		}
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 		checksumValue := littleEndianToUint32(bytes)
 
 		// Entry size
 		_, err = io.ReadFull(reader, bytes)
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 
 		size := littleEndianToUint64(bytes)
@@ -271,13 +271,13 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 
 		_, err = io.ReadFull(reader, entry)
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 
 		// offset
 		_, err = io.ReadFull(reader, bytes)
 		if err != nil {
-			return errore.WrapWithContext(err)
+			return err
 		}
 
 		offset := int64(littleEndianToUint64(bytes))
