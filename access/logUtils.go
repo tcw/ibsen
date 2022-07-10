@@ -3,6 +3,7 @@ package access
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
@@ -205,20 +206,35 @@ func BlockInfo(afs *afero.Afero, blockFileName string) (Offset, int64, error) {
 	return Offset(offset), fileSize, nil
 }
 
-func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, batchSize uint32, byteOffset int64, endOffset Offset) error {
+func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, batchSize uint32, byteOffset int64, endOffset Offset, from Offset) error {
+	var currentOffset Offset = 0
+	var assertionOffset = from
 	if byteOffset > 0 {
 		_, err := file.Seek(byteOffset, io.SeekStart)
 		if err != nil {
 			return errore.WrapWithContext(err)
 		}
+		lastOffset, err := offsetLookBack(file)
+		if err != nil {
+			return err
+		}
+		currentOffset = lastOffset + 1
+		assertionOffset = currentOffset
 	}
 	reader := bufio.NewReader(file)
 	bytes := make([]byte, 8)
 	checksum := make([]byte, 4)
 	logEntries := make([]LogEntry, batchSize)
-	var currentOffset Offset = 0
 	slicePointer := 0
 	for {
+		if currentOffset == endOffset {
+			if logEntries != nil && slicePointer > 0 {
+				wg.Add(1)
+				sendingEntries := logEntries[:slicePointer]
+				logChan <- &sendingEntries
+			}
+			return nil
+		}
 		if slicePointer != 0 && uint32(slicePointer)%batchSize == 0 {
 			wg.Add(1)
 			sendingEntries := logEntries[:slicePointer]
@@ -266,22 +282,17 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 
 		offset := int64(littleEndianToUint64(bytes))
 		currentOffset = Offset(offset)
-
+		if currentOffset != assertionOffset {
+			return errors.New("read order assertion failed")
+		}
 		logEntries[slicePointer] = LogEntry{
 			Offset:   uint64(offset),
 			Crc:      checksumValue,
 			ByteSize: int(size),
 			Entry:    entry,
 		}
+		assertionOffset = assertionOffset + 1
 		slicePointer = slicePointer + 1
-		if currentOffset == endOffset {
-			if logEntries != nil && slicePointer > 0 {
-				wg.Add(1)
-				sendingEntries := logEntries[:slicePointer]
-				logChan <- &sendingEntries
-			}
-			return nil
-		}
 	}
 }
 

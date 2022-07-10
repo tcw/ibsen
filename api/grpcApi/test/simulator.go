@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/rs/zerolog/log"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/api/grpcApi"
@@ -60,16 +61,16 @@ type Simulation struct {
 	users    []*User
 }
 
-func newSimulation(topics int, users int, dataLimitInMB int, testTime time.Duration) (Simulation, error) {
+func newSimulation(afero *afero.Afero, topics int, users int, dataLimitInMB int, testTime time.Duration) (Simulation, error) {
 	globalTopics := GlobalTopics{topics: createTopics(topics)}
 	userDataLimit := dataLimitInMB * 1024 * 1024 / users
 	log.Info().
 		Int("topics", topics).
 		Int("users", users).
-		Dur("test time", testTime).
-		Int("data limit pr user", userDataLimit).
-		Msg("new simulator")
-	allUsers, err := newUsers(users, globalTopics, userDataLimit)
+		Dur("test_time", testTime).
+		Int("data_limit_pr_user", userDataLimit).
+		Msg("new_simulator")
+	allUsers, err := newUsers(afs, users, globalTopics, userDataLimit)
 	if err != nil {
 		return Simulation{}, err
 	}
@@ -108,6 +109,7 @@ type User struct {
 	name           string
 	offsets        map[string]access.Offset
 	topics         GlobalTopics
+	afs            *afero.Afero
 	ibsenClient    IbsenClient
 	writeCallFreq  RandomizedTimeInterval
 	readCallFreq   RandomizedTimeInterval
@@ -190,10 +192,10 @@ func (u *User) read(t *testing.T) {
 				log.Warn().
 					Str("user", u.name).
 					Str("topic", topic).
-					Uint64("start offset", offset).
-					Uint64("current offset", entry.Offset).
-					Int64("last offset", lastOffset).
-					Msg("offset out of order")
+					Uint64("start_offset", offset).
+					Uint64("current_offset", entry.Offset).
+					Int64("last_offset", lastOffset).
+					Msg("offset_out_of_order")
 				t.Fail()
 			}
 			lastOffset = int64(entry.Offset)
@@ -213,10 +215,10 @@ func createTopics(topics int) []string {
 	return genTopics
 }
 
-func newUsers(users int, globalTopics GlobalTopics, dataLimit int) ([]*User, error) {
+func newUsers(afs *afero.Afero, users int, globalTopics GlobalTopics, dataLimit int) ([]*User, error) {
 	var genUsers []*User
 	for i := 0; i < users; i++ {
-		user, err := newUser("user_"+strconv.Itoa(i), globalTopics, dataLimit)
+		user, err := newUser("user_"+strconv.Itoa(i), globalTopics, dataLimit, afs)
 		if err != nil {
 			return nil, err
 		}
@@ -225,13 +227,14 @@ func newUsers(users int, globalTopics GlobalTopics, dataLimit int) ([]*User, err
 	return genUsers, nil
 }
 
-func newUser(username string, globalTopics GlobalTopics, datalimit int) (*User, error) {
+func newUser(username string, globalTopics GlobalTopics, datalimit int, afs *afero.Afero) (*User, error) {
 	client, err := newIbsenClient(ibsenTestTarge)
 	if err != nil {
 		return nil, err
 	}
 	return &User{
 		name:           username,
+		afs:            afs,
 		ibsenClient:    client,
 		dataWriteLimit: datalimit,
 		offsets:        make(map[string]access.Offset),

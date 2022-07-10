@@ -3,6 +3,7 @@ package test
 import (
 	"context"
 	"github.com/golang/protobuf/ptypes/empty"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/errore"
@@ -12,7 +13,8 @@ import (
 )
 
 func TestTopicList(t *testing.T) {
-	go startGrpcServer(true, "/tmp/data")
+	afs := newMemMapFs()
+	go startGrpcServer(afs, "/tmp/data")
 	err := write("test1", 10, 10)
 	assert.Nil(t, err)
 	err = write("test2", 10, 10)
@@ -32,8 +34,14 @@ func TestTopicList(t *testing.T) {
 	ibsenServer.Shutdown()
 }
 
+func newMemMapFs() *afero.Afero {
+	var fs = afero.NewMemMapFs()
+	return &afero.Afero{Fs: fs}
+}
+
 func TestReadWriteLargeObject(t *testing.T) {
-	go startGrpcServer(true, "/tmp/data")
+	afs := newMemMapFs()
+	go startGrpcServer(afs, "/tmp/data")
 	numberOfEntries := 1
 	objectBytes, err := writeLarge("test", numberOfEntries, 500_000)
 	if err != nil {
@@ -50,7 +58,8 @@ func TestReadWriteLargeObject(t *testing.T) {
 }
 
 func TestReadWriteVerification(t *testing.T) {
-	go startGrpcServer(true, "/tmp/data")
+	afs := newMemMapFs()
+	go startGrpcServer(afs, "/tmp/data")
 	numberOfEntries := 10000
 	err := write("test", numberOfEntries, 100)
 	assert.Nil(t, err)
@@ -63,7 +72,8 @@ func TestReadWriteVerification(t *testing.T) {
 }
 
 func TestReadWriteWithOffsetVerification(t *testing.T) {
-	go startGrpcServer(true, "/tmp/data")
+	afs := newMemMapFs()
+	go startGrpcServer(afs, "/tmp/data")
 	writeEntries := 1000
 	err := write("test", writeEntries, 100)
 	assert.Nil(t, err)

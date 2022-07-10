@@ -19,7 +19,7 @@ func ReadLogFile(fileName string, batchSize uint32) error {
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}
-	err = access.ReadFile(file, logChan, &wg, batchSize, 0, math.MaxUint64)
+	err = access.ReadFile(file, logChan, &wg, batchSize, 0, math.MaxUint64, 0)
 	if err != nil {
 		return errore.WrapWithContext(err)
 	}

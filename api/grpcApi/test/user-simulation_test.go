@@ -3,6 +3,7 @@ package test
 import (
 	"fmt"
 	"github.com/rs/zerolog/log"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/errore"
 	"os"
@@ -13,14 +14,17 @@ import (
 )
 
 func TestName(t *testing.T) {
-	//file, err := startCpuPprof()
-	//assert.Nil(t, err)
-	go startGrpcServer(true, "/tmp/data")
-	simulation, err := newSimulation(10, 10, 10, time.Second*3)
+	var fs = afero.NewMemMapFs()
+	//var fs = afero.NewOsFs()
+	afs = &afero.Afero{Fs: fs}
+	file, err := startCpuPprof()
+	assert.Nil(t, err)
+	go startGrpcServer(afs, "/tmp/data")
+	simulation, err := newSimulation(afs, 1, 100, 10, time.Second*3)
 	assert.Nil(t, err)
 	simulation.start(t)
-	//stopCpuPprof(err, file)
-	//memProfile()
+	stopCpuPprof(err, file)
+	memProfile()
 }
 
 func stopCpuPprof(err error, file *os.File) {

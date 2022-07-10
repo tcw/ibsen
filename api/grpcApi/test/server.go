@@ -22,12 +22,7 @@ func init() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 }
 
-func startGrpcServer(inMemory bool, rootPath string) {
-	var fs = afero.NewMemMapFs()
-	if !inMemory {
-		fs = afero.NewOsFs()
-	}
-	afs = &afero.Afero{Fs: fs}
+func startGrpcServer(afs *afero.Afero, rootPath string) {
 	err := afs.Mkdir(rootPath, 0600)
 	if err != nil {
 		log.Fatal().Err(err)

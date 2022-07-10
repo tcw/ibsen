@@ -85,11 +85,9 @@ func (t *Topic) UpdateIndex() (bool, error) {
 
 	t.updateLock.Lock()
 	t.indexWg.Add(1)
-	log.Debug().Msg("locked index update")
 	defer func() {
 		t.updateLock.Unlock()
 		t.indexWg.Done()
-		log.Debug().Msg("unlocked index update")
 	}()
 
 	notIndexed, err := t.findLogBlocksNotIndexed()
@@ -193,12 +191,26 @@ func (t *Topic) Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, 
 			Msg("index scan count")
 	}
 	fileName, err := t.logBlockFileName(block)
+	if err != nil {
+		return err
+	}
 	endOffset, hasEnd := t.endBoundaryForReadOffset()
 	if !hasEnd {
 		return nil
 	}
 	file, err := OpenFileForRead(t.Afs, fileName)
-	err = ReadFile(file, logChan, wg, batchSize, byteOffset, endOffset)
+	if err != nil {
+		return err
+	}
+	err = ReadFile(file, logChan, wg, batchSize, byteOffset, endOffset, 0)
+	if err != nil {
+		file.Close()
+		return err
+	}
+	err = file.Close()
+	if err != nil {
+		return err
+	}
 	wasFound, i := t.findBlockArrayIndex(block)
 	if wasFound {
 		if t.logSize()-1 == i {
@@ -206,9 +218,16 @@ func (t *Topic) Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, 
 		}
 		for _, b := range t.LogBlockList[i+1:] {
 			fileName, err = t.logBlockFileName(b)
-			file, err = OpenFileForRead(t.Afs, fileName)
+			file, err = OpenFileForRead(t.Afs, fileName) // todo defer close
+			if err != nil {
+				return err
+			}
 			endOffset, _ = t.endBoundaryForReadOffset()
-			err = ReadFile(file, logChan, wg, batchSize, 0, endOffset)
+			err = ReadFile(file, logChan, wg, batchSize, 0, endOffset, from)
+			if err != nil {
+				file.Close()
+				return err
+			}
 		}
 	}
 	return nil
