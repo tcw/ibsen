@@ -53,41 +53,41 @@ func (nfl NoFileLock) ReleaseLock() bool {
 func (fl FileLock) AcquireLock() bool {
 	exists, err := fl.afero.Exists(fl.lockFile)
 	if err != nil {
-		log.Printf("failed while checking if file %s exists", fl.lockFile)
+		log.Err(err).Msgf("failed while checking if file %s exists", fl.lockFile)
 		return false
 	}
 	if exists {
 		fileLock, err := fl.afero.OpenFile(fl.lockFile, os.O_RDONLY, 0550)
 		if err != nil {
-			log.Printf("failed while opening lock file %s", fl.lockFile)
+			log.Err(err).Msgf("failed while opening lock file %s", fl.lockFile)
 			return false
 		}
 		byteUUID, err := io.ReadAll(fileLock)
 		if err != nil {
 			ioErr := fileLock.Close()
 			if ioErr != nil {
-				log.Printf("failed while closing lock file %s", fl.lockFile)
+				log.Err(err).Msgf("failed while closing lock file %s", fl.lockFile)
 				return false
 			}
-			log.Printf("failed while reading lock file %s", fl.lockFile)
+			log.Err(err).Msgf("failed while reading lock file %s", fl.lockFile)
 			return false
 		}
 		ioErr := fileLock.Close()
 		if ioErr != nil {
-			log.Printf("failed while closing lock file %s", fl.lockFile)
+			log.Err(err).Msgf("failed while closing lock file %s", fl.lockFile)
 			return false
 		}
 		lockUUID := string(byteUUID)
 		if lockUUID != fl.uniqueId {
 			modificationTime, err := fl.getFileModificationTime()
 			if err != nil {
-				log.Printf("unable to get modification time for file %s", fl.lockFile)
+				log.Err(err).Msgf("unable to get modification time for file %s", fl.lockFile)
 				return false
 			}
 			if modificationTime.Add(fl.leaseTime).Before(time.Now()) {
 				fileLockAdder, err := fl.afero.OpenFile(fl.lockFile, os.O_WRONLY|os.O_TRUNC, 0660)
 				if err != nil {
-					log.Printf("failed while opening lock file %s", fl.lockFile)
+					log.Err(err).Msgf("failed while opening lock file %s", fl.lockFile)
 					return false
 				}
 				_, err = fileLockAdder.Write([]byte(fl.uniqueId))
@@ -100,23 +100,23 @@ func (fl FileLock) AcquireLock() bool {
 	} else {
 		fileLockNew, err := fl.afero.OpenFile(fl.lockFile, os.O_RDWR|os.O_CREATE, 0660)
 		if err != nil {
-			log.Printf("failed while claiming lock file %s", fl.lockFile)
+			log.Err(err).Msgf("failed while claiming lock file %s", fl.lockFile)
 			return false
 		}
 		_, err = fileLockNew.Write([]byte(fl.uniqueId))
 		if err != nil {
 			ioErr := fileLockNew.Close()
 			if ioErr != nil {
-				log.Printf("failed while closing lock file %s", fl.lockFile)
+				log.Err(err).Msgf("failed while closing lock file %s", fl.lockFile)
 				return false
 			}
-			log.Printf("failed while writing to claim lock file %s", fl.lockFile)
+			log.Err(err).Msgf("failed while writing to claim lock file %s", fl.lockFile)
 			return false
 		}
 		go fl.reclaimer()
 		ioErr := fileLockNew.Close()
 		if ioErr != nil {
-			log.Printf("failed while closing lock file %s", fl.lockFile)
+			log.Err(err).Msgf("failed while closing lock file %s", fl.lockFile)
 			return false
 		}
 		return true
@@ -152,9 +152,9 @@ func (fl FileLock) getFileModificationTime() (time.Time, error) {
 func (fl FileLock) ReleaseLock() bool {
 	err := fl.afero.Remove(fl.lockFile)
 	if err != nil {
-		log.Printf("failed to remove lock file [%s]", fl.lockFile)
+		log.Err(err).Msgf("failed to remove lock file [%s]", fl.lockFile)
 		return false
 	}
-	log.Printf("Removed lockfile with id [%s]\n", fl.uniqueId)
+	log.Err(err).Msgf("Removed lockfile with id [%s]\n", fl.uniqueId)
 	return true
 }

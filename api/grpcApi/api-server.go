@@ -6,6 +6,8 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/manager"
+	"github.com/tcw/ibsen/telemetry"
+	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -15,7 +17,11 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 )
+
+var tracer = otel.Tracer("ibsen-server")
 
 type server struct {
 	manager manager.LogManager
@@ -48,11 +54,16 @@ func NewIbsenGrpcServer(manager manager.LogManager, key string, cert string) *Ib
 }
 
 func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener) error {
+	provider := telemetry.InitProvider()
+	defer provider()
 	var opts []grpc.ServerOption
 	opts = []grpc.ServerOption{
 		grpc.ConnectionTimeout(time.Hour * 1),
 		grpc.MaxRecvMsgSize(math.MaxInt32),
-		grpc.MaxSendMsgSize(math.MaxInt32)}
+		grpc.MaxSendMsgSize(math.MaxInt32),
+		grpc.UnaryInterceptor(otelgrpc.UnaryServerInterceptor()),
+		grpc.StreamInterceptor(otelgrpc.StreamServerInterceptor()),
+	}
 	if igs.UseTls {
 		absCert := testdata.Path(igs.CertFile)
 		absKey := testdata.Path(igs.KeyFile)

@@ -23,13 +23,14 @@ go get github.com/tcw/ibsen@latest
 
 #### With Docker
 
+Build
 ```shell
-docker run --name ibsen_solveig -p 50001:50001 ibsen
+docker build -t ibsen .
 ```
 
-In memory only
+Run
 ```shell
-docker run --name ibsen_solvei -e IBSEN_IN_MEMORY_ONLY='true' -p 50001:50001 ibsen
+docker run --name ibsen_solveig -p 50001:50001 ibsen
 ```
 
 ## Usage
@@ -104,3 +105,7 @@ To free pagecache in linux:
 ```shell
 echo 1 > /proc/sys/vm/drop_caches 
 ```
+
+## OpenTelemetry
+
+docker run -v collector-gateway.yaml:/etc/otelcol/config.yaml otel/opentelemetry-collector:0.54.0
