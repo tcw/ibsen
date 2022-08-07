@@ -53,9 +53,10 @@ func NewIbsenGrpcServer(manager manager.LogManager, key string, cert string) *Ib
 	}
 }
 
-func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener) error {
-	provider := telemetry.InitProvider()
-	defer provider()
+func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener, wg *sync.WaitGroup, OTELExporterAddr string) error {
+	if OTELExporterAddr != "" {
+		go telemetry.ConnectToOTELExporter(wg, OTELExporterAddr)
+	}
 	var opts []grpc.ServerOption
 	opts = []grpc.ServerOption{
 		grpc.ConnectionTimeout(time.Hour * 1),

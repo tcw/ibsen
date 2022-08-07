@@ -27,6 +27,7 @@ var (
 	benchEntiesInEachBatch int
 	benchWriteBaches       int
 	benchReadBatches       int
+	OTELExporterAddr       string
 	concurrent             int
 	cpuProfile             string
 	memProfile             string
@@ -77,14 +78,15 @@ var (
 			writeLock := absolutePath + string(os.PathSeparator) + ".writeLock"
 			lock := consensus.NewFileLock(afs, writeLock, time.Second*10, time.Second*5)
 			ibsenServer := api.IbsenServer{
-				Readonly:     readOnly,
-				Lock:         lock,
-				InMemory:     inMemory,
-				Afs:          afs,
-				RootPath:     absolutePath,
-				MaxBlockSize: maxBlockSizeMB,
-				CpuProfile:   cpuProfile,
-				MemProfile:   memProfile,
+				Readonly:         readOnly,
+				Lock:             lock,
+				InMemory:         inMemory,
+				Afs:              afs,
+				RootPath:         absolutePath,
+				MaxBlockSize:     maxBlockSizeMB,
+				OTELExporterAddr: OTELExporterAddr,
+				CpuProfile:       cpuProfile,
+				MemProfile:       memProfile,
 			}
 			lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 			if err != nil {
@@ -285,6 +287,7 @@ func init() {
 
 	rootCmd.PersistentFlags().IntVarP(&port, "port", "p", port, "config file (default is current directory)")
 	rootCmd.PersistentFlags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
+	rootCmd.PersistentFlags().StringVarP(&OTELExporterAddr, "OTELExporter", "e", "", "config file (0.0.0.0:4317)")
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "v", false, "set logging to debug level")
 	rootCmd.PersistentFlags().BoolVarP(&trace, "trace", "t", false, "set logging to trace level")
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
@@ -294,7 +297,7 @@ func init() {
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")
 
-	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "bwe", "e", 100, "Entry byte size in bench")
+	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "bwe", "a", 100, "Entry byte size in bench")
 	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatch, "ben", "b", 1000, "Entries in each batch in bench")
 	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "r", 1000, "Read in batches of")
 	cmdClientBench.Flags().IntVarP(&benchWriteBaches, "bwb", "w", 1000, "Write in batches of")

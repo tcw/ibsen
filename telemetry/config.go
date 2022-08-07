@@ -17,24 +17,35 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
 	"google.golang.org/grpc"
-	"os"
+	"sync"
 	"time"
 )
 
-func InitProvider() func() {
+func ConnectToOTELExporter(wg *sync.WaitGroup, OTELExporterAddr string) {
+	for {
+		provider, err := initProvider(OTELExporterAddr)
+		if err != nil {
+			time.Sleep(time.Second * 10)
+			continue
+		}
+		wg.Wait()
+		provider()
+		break
+	}
+}
+
+func initProvider(OTELExporterAddr string) (func(), error) {
 	ctx := context.Background()
 
-	otelAgentAddr, ok := os.LookupEnv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if !ok {
-		otelAgentAddr = "0.0.0.0:4317"
-	}
-
+	log.Info().Msgf("Connecting to OTEL exporter %s ...", OTELExporterAddr)
 	metricClient := otlpmetricgrpc.NewClient(
 		otlpmetricgrpc.WithInsecure(),
-		otlpmetricgrpc.WithEndpoint(otelAgentAddr))
+		otlpmetricgrpc.WithEndpoint(OTELExporterAddr),
+	)
 	metricExp, err := otlpmetric.New(ctx, metricClient)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to create the collector metric exporter")
+		return nil, err
 	}
 
 	pusher := controller.New(
@@ -50,20 +61,22 @@ func InitProvider() func() {
 	err = pusher.Start(ctx)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to start metric pusher")
+		return nil, err
 	}
 
 	traceClient := otlptracegrpc.NewClient(
 		otlptracegrpc.WithInsecure(),
-		otlptracegrpc.WithEndpoint(otelAgentAddr),
+		otlptracegrpc.WithEndpoint(OTELExporterAddr),
 		otlptracegrpc.WithDialOption(grpc.WithBlock()))
 	traceExp, err := otlptrace.New(ctx, traceClient)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to create the collector trace exporter")
+		return nil, err
 	}
 
 	res, err := resource.New(ctx,
-		resource.WithFromEnv(),
-		resource.WithProcess(),
+		//resource.WithFromEnv(),
+		//resource.WithProcess(),
 		resource.WithTelemetrySDK(),
 		resource.WithHost(),
 		resource.WithAttributes(
@@ -72,6 +85,7 @@ func InitProvider() func() {
 	)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to create the resource")
+		return nil, err
 	}
 
 	bsp := sdktrace.NewBatchSpanProcessor(traceExp)
@@ -85,6 +99,7 @@ func InitProvider() func() {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 	otel.SetTracerProvider(tracerProvider)
 
+	log.Info().Msgf("Connection to OTEL exporter %s established", OTELExporterAddr)
 	return func() {
 		cxt, cancel := context.WithTimeout(ctx, time.Second)
 		defer cancel()
@@ -95,5 +110,5 @@ func InitProvider() func() {
 		if err := pusher.Stop(cxt); err != nil {
 			otel.Handle(err)
 		}
-	}
+	}, nil
 }

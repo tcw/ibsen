@@ -80,7 +80,7 @@ func (b *IbsenBench) Benchmark(topic string, writeEntryByteSize int, writeEntrie
 func (b *IbsenBench) benchReadWaitGroup(topic string, batchSize uint32, wg *sync.WaitGroup) {
 	_, err := b.benchRead(topic, batchSize)
 	if err != nil {
-		log.Fatal().Err(err)
+		log.Fatal().Err(err).Msg("concurrent bench read failed")
 	}
 	wg.Done()
 }
@@ -114,7 +114,7 @@ func (b *IbsenBench) benchRead(topic string, batchSize uint32) (string, error) {
 func (b *IbsenBench) benchWriteWaitGroup(topic string, entryByteSize int, entriesInEachBatch int, batches int, wg *sync.WaitGroup) {
 	_, err := b.benchWrite(topic, entryByteSize, entriesInEachBatch, batches)
 	if err != nil {
-		log.Fatal().Err(err)
+		log.Fatal().Err(err).Msg("concurrent bench write failed")
 	}
 	wg.Done()
 }

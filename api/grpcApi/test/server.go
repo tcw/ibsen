@@ -36,7 +36,7 @@ func startGrpcServer(afs *afero.Afero, rootPath string) {
 	if err != nil {
 		log.Fatal().Err(err)
 	}
-	err = ibsenServer.StartGRPC(lis)
+	err = ibsenServer.StartGRPC(lis, nil)
 	if err != nil {
 		log.Fatal().Err(err)
 	}

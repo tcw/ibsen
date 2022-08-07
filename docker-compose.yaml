@@ -7,7 +7,7 @@ services:
       - "16686:16686"
       - "14268"
       - "14250"
-  # Collector
+#  # Collector
   collector-gateway:
     image: otel/opentelemetry-collector:0.29.0
     volumes:
@@ -16,11 +16,13 @@ services:
     ports:
       - "1888:1888"   # pprof extension
       - "13133:13133" # health_check extension
-      - "4317:4317"        # OTLP gRPC receiver
+      - "4317:4317"   # OTLP gRPC receiver
       - "55670:55679" # zpages extension
     depends_on:
       - jaeger-all-in-one
-#  ibsen:
-#    build: .
-#    ports:
-#      - "50001:50001"
+
+  ibsen:
+    build: .
+    ports:
+      - "50001:50001"
+#    entrypoint: ["sh", "-c", "sleep 2073600"]

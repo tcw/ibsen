@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/pprof"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -32,16 +33,17 @@ var ibsenFiglet = `
 `
 
 type IbsenServer struct {
-	Readonly       bool
-	Lock           consensus.Lock
-	InMemory       bool
-	Afs            *afero.Afero
-	TTL            time.Duration
-	RootPath       string
-	MaxBlockSize   int
-	CpuProfile     string
-	MemProfile     string
-	cpuProfileFile *os.File
+	Readonly         bool
+	Lock             consensus.Lock
+	InMemory         bool
+	Afs              *afero.Afero
+	TTL              time.Duration
+	RootPath         string
+	MaxBlockSize     int
+	OTELExporterAddr string
+	CpuProfile       string
+	MemProfile       string
+	cpuProfileFile   *os.File
 }
 
 func (ibs *IbsenServer) Start(listener net.Listener) error {
@@ -97,7 +99,10 @@ func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager manager.LogMan
 	ibsenGrpcServer = grpcApi.NewUnsecureIbsenGrpcServer(manager)
 	log.Info().Msg(fmt.Sprintf("Started ibsen server on: [%s]", lis.Addr().String()))
 	fmt.Print(ibsenFiglet)
-	err := ibsenGrpcServer.StartGRPC(lis)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	err := ibsenGrpcServer.StartGRPC(lis, &wg, ibs.OTELExporterAddr)
+	wg.Done()
 	if err != nil {
 		return err
 	}
