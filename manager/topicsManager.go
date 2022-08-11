@@ -75,7 +75,7 @@ func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr)
 	if !exists {
 		err := access.CreateTopic(l.Afs, l.RootPath, string(topicName))
 		if err != nil {
-			return err
+			return errore.Wrap(err)
 		}
 		topic = access.NewLogTopic(l.Afs, l.RootPath, string(topicName), l.MaxBlockSizeMB, true)
 		l.Topics[topicName] = topic
@@ -83,7 +83,7 @@ func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr)
 	if !topic.IsLoaded() {
 		err := topic.Load()
 		if err != nil {
-			return err
+			return errore.Wrap(err)
 		}
 	}
 	return topic.Write(entries)
@@ -92,29 +92,32 @@ func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr)
 func (l *LogTopicsManager) Read(params ReadParams) error {
 	topic, exists := l.Topics[params.TopicName]
 	if !exists {
-		return errore.NewWithContext("Topic %s does not exits", params.TopicName)
+		return errore.NewF("Topic %s does not exits", params.TopicName)
 	}
 	if !topic.IsLoaded() {
 		err := topic.Load()
 		if err != nil {
-			return err
+			return errore.Wrap(err)
 		}
 	}
 	var err error
 	readTTL := time.Now().Add(l.TTL)
-	err = topic.Read(params.LogChan, params.Wg, params.From, params.BatchSize)
+	_, err = topic.Read(params.LogChan, params.Wg, params.From, params.BatchSize)
 	if err != nil {
-		return err
+		return errore.Wrap(err)
 	}
 	if params.StopOnCompletion {
 		return nil
 	}
 	for time.Until(readTTL) > 0 {
-		err = l.Topics[params.TopicName].Read(params.LogChan, params.Wg, params.From, params.BatchSize)
+		entriesRead, err := topic.Read(params.LogChan, params.Wg, params.From, params.BatchSize)
 		if err != nil {
-			return err
+			return errore.Wrap(err)
 		}
 		time.Sleep(l.CheckForNewEvery)
+		if entriesRead > 0 {
+			readTTL = time.Now().Add(l.TTL)
+		}
 	}
 	return nil
 }

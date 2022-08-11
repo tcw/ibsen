@@ -18,14 +18,14 @@ func ReadLogFile(fileName string, batchSize uint32) error {
 	if err != nil {
 		return err
 	}
-	err = access.ReadFile(file, logChan, &wg, batchSize, 0, math.MaxUint64, 0)
+	_, err = access.ReadFile(file, logChan, &wg, batchSize, 0, math.MaxUint64, 0)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-//Todo: implement
+// Todo: implement
 func ReadLogIndexFile(fileName string) error {
 	fmt.Println(fileName)
 	return nil

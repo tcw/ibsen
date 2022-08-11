@@ -68,7 +68,7 @@ func TestCreateByteEntry(t *testing.T) {
 	logChan := make(chan *[]LogEntry)
 	var wg sync.WaitGroup
 	go func() {
-		err = ReadFile(file, logChan, &wg, 10, 0, 100, 0)
+		_, err = ReadFile(file, logChan, &wg, 10, 0, 100, 0)
 		assert.Nil(t, err)
 		wg.Done()
 	}()

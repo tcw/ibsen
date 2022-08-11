@@ -85,7 +85,7 @@ func (ic *IbsenClient) Write(topic string, fileName ...string) (string, error) {
 		reader = file
 		if err != nil {
 			ioErr := file.Close()
-			return "", errore.WrapWithError(ioErr, err)
+			return "", errore.WrapError(ioErr, err)
 		}
 	}
 

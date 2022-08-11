@@ -5,6 +5,7 @@ import (
 	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/access"
+	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/manager"
 	"github.com/tcw/ibsen/telemetry"
 	"go.opentelemetry.io/otel"
@@ -108,8 +109,8 @@ func convertTopics(topics []manager.TopicName) []string {
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
 	err := s.manager.Write(manager.TopicName(entries.Topic), &entries.Entries)
 	if err != nil {
-		log.Err(err)
-		return nil, status.Error(codes.Unknown, "Error writing batch")
+		log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("write api failed")
+		return nil, status.Error(codes.Unknown, "error writing batch")
 	}
 	return &WriteStatus{
 		Wrote: int64(0), //todo
@@ -130,8 +131,8 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	})
 
 	if err != nil {
-		log.Err(err)
-		return status.Error(codes.Unknown, "Error reading streaming")
+		log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("read api failed")
+		return status.Error(codes.Unknown, "error reading streaming")
 	}
 	wg.Wait()
 	return nil

@@ -61,10 +61,10 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	} else {
 		exists, err := ibs.Afs.Exists(ibs.RootPath)
 		if err != nil {
-			return err
+			return errore.Wrap(err)
 		}
 		if !exists {
-			return errore.NewWithContext("path [%s] does not exist, will not start unless existing path is specified", ibs.RootPath)
+			return errore.NewF("path [%s] does not exist, will not start unless existing path is specified", ibs.RootPath)
 		}
 		log.Info().Msg(fmt.Sprintf("Waiting for single writer lock on file [%s]...", ibs.RootPath))
 		if !ibs.Readonly && !ibs.Lock.AcquireLock() {
@@ -86,11 +86,11 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 
 	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, ibs.Readonly, time.Minute*10, time.Second*5, ibs.RootPath, ibs.MaxBlockSize)
 	if err != nil {
-		return err
+		return errore.Wrap(err)
 	}
 	err = ibs.startGRPCServer(listener, &topicsManager)
 	if err != nil {
-		return err
+		return errore.Wrap(err)
 	}
 	return nil
 }
@@ -104,7 +104,7 @@ func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager manager.LogMan
 	err := ibsenGrpcServer.StartGRPC(lis, &wg, ibs.OTELExporterAddr)
 	wg.Done()
 	if err != nil {
-		return err
+		return errore.Wrap(err)
 	}
 	return nil
 }
@@ -126,7 +126,7 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 		if err := pprof.WriteHeapProfile(f); err != nil {
 			ioErr := f.Close()
 			if ioErr != nil {
-				log.Fatal().Err(errore.WrapWithError(ioErr, err))
+				log.Fatal().Err(errore.WrapError(ioErr, err))
 			}
 			log.Fatal().Err(err)
 		}

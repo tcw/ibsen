@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/api/grpcApi"
@@ -16,16 +15,42 @@ import (
 	"time"
 )
 
-// User
-// Topics
-// Read/Write
-// Frequency
-// Test time
-// Max data to write
+type SimulationParams struct {
+	topics       int
+	users        int
+	dataLimit    int
+	testDuration time.Duration
+	useDelay     bool
+	writeDelay   RandomizedTimeInterval
+	entries      RandomizedSizeInterval
+}
+
+type Simulation struct {
+	params  SimulationParams
+	started time.Time
+	wg      *sync.WaitGroup
+	cancel  chan bool
+	users   []*User
+}
+
+type User struct {
+	name           string
+	offsets        map[string]access.Offset
+	topics         GlobalTopics
+	ibsenClient    IbsenClient
+	params         SimulationParams
+	dataWriteLimit int
+	dataWritten    int
+}
 
 type RandomizedTimeInterval struct {
 	max time.Duration
 	min time.Duration
+}
+
+type RandomizedSizeInterval struct {
+	max int
+	min int
 }
 
 func (t RandomizedTimeInterval) value() time.Duration {
@@ -34,11 +59,6 @@ func (t RandomizedTimeInterval) value() time.Duration {
 	}
 	interval := rand.Intn(int(t.max)-int(t.min)) + int(t.min)
 	return time.Duration(interval)
-}
-
-type RandomizedSizeInterval struct {
-	max int
-	min int
 }
 
 func (s RandomizedSizeInterval) value() int {
@@ -53,32 +73,23 @@ func (g GlobalTopics) randTopic() string {
 	return g.topics[rand.Intn(len(g.topics))]
 }
 
-type Simulation struct {
-	testTime time.Duration
-	started  time.Time
-	wg       *sync.WaitGroup
-	cancel   chan bool
-	users    []*User
-}
+func newSimulation(params SimulationParams) (Simulation, error) {
+	globalTopics := GlobalTopics{topics: createTopics(params.topics)}
 
-func newSimulation(afero *afero.Afero, topics int, users int, dataLimitInMB int, testTime time.Duration) (Simulation, error) {
-	globalTopics := GlobalTopics{topics: createTopics(topics)}
-	userDataLimit := dataLimitInMB * 1024 * 1024 / users
 	log.Info().
-		Int("topics", topics).
-		Int("users", users).
-		Dur("test_time", testTime).
-		Int("data_limit_pr_user", userDataLimit).
+		Int("topics", params.topics).
+		Int("users", params.users).
+		Dur("test_time", params.testDuration).
 		Msg("new_simulator")
-	allUsers, err := newUsers(afs, users, globalTopics, userDataLimit)
+	allUsers, err := newUsers(params.users, globalTopics, params)
 	if err != nil {
 		return Simulation{}, err
 	}
 	return Simulation{
-		testTime: testTime,
-		wg:       &sync.WaitGroup{},
-		cancel:   make(chan bool, users),
-		users:    allUsers,
+		params: params,
+		wg:     &sync.WaitGroup{},
+		cancel: make(chan bool, params.users),
+		users:  allUsers,
 	}, nil
 }
 
@@ -89,7 +100,7 @@ func (s *Simulation) start(t *testing.T) {
 	}
 	start := time.Now()
 	for {
-		if time.Until(start.Add(s.testTime)) <= 0 {
+		if time.Until(start.Add(s.params.testDuration)) <= 0 {
 			log.Info().Msg("Stopping simulator")
 			s.stop()
 			break
@@ -105,22 +116,13 @@ func (s *Simulation) stop() {
 	s.wg.Wait()
 }
 
-type User struct {
-	name           string
-	offsets        map[string]access.Offset
-	topics         GlobalTopics
-	afs            *afero.Afero
-	ibsenClient    IbsenClient
-	writeCallFreq  RandomizedTimeInterval
-	readCallFreq   RandomizedTimeInterval
-	entries        RandomizedSizeInterval
-	dataWriteLimit int
-	dataWritten    int
-}
-
 func (u *User) run(t *testing.T, wg *sync.WaitGroup, cancel chan bool) {
 	go func(wg *sync.WaitGroup, cancel chan bool) {
 		wg.Add(1)
+		topics := u.topics.topics
+		for _, topic := range topics {
+			go u.read(t, topic)
+		}
 		for {
 			select {
 			case <-cancel:
@@ -128,24 +130,18 @@ func (u *User) run(t *testing.T, wg *sync.WaitGroup, cancel chan bool) {
 				wg.Done()
 				return
 			default:
-				time.Sleep(u.writeCallFreq.value())
-				u.runSimulation(t)
+				if u.dataWriteLimit > u.dataWritten {
+					time.Sleep(u.params.writeDelay.value())
+					u.write(t)
+				}
 			}
 		}
 	}(wg, cancel)
 }
 
-func (u *User) runSimulation(t *testing.T) {
-	if rand.Intn(10) > 4 && u.dataWriteLimit > u.dataWritten {
-		u.write(t)
-	} else {
-		u.read(t)
-	}
-}
-
 func (u *User) write(t *testing.T) {
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Minute)
-	numberOfEntries := u.entries.value()
+	numberOfEntries := u.params.entries.value()
 	randTopic := u.topics.randTopic()
 	entryByteSize := 100
 	entries := createInputEntries(randTopic, numberOfEntries, entryByteSize)
@@ -153,21 +149,22 @@ func (u *User) write(t *testing.T) {
 	written := u.dataWritten + (numberOfEntries * entryByteSize)
 	u.dataWritten = written
 	//log.Info().Int("wrote", numberOfEntries).Str("topic", randTopic).Msg("read/write")
-	assert.Nil(t, err)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Simulated write failed")
+	}
 }
 
-func (u *User) read(t *testing.T) {
+func (u *User) read(t *testing.T, topic string) {
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Minute)
-	topic := u.topics.randTopic()
 	var offset uint64 = 0
 	if val, ok := u.offsets[topic]; ok {
 		offset = uint64(val)
 	}
 	entryStream, err := u.ibsenClient.Client.Read(ctx, &grpcApi.ReadParams{
-		StopOnCompletion: true,
+		StopOnCompletion: false,
 		Topic:            topic,
 		Offset:           offset,
-		BatchSize:        uint32(u.entries.value()),
+		BatchSize:        uint32(u.params.entries.value()),
 	})
 	assert.Nil(t, err)
 
@@ -215,10 +212,10 @@ func createTopics(topics int) []string {
 	return genTopics
 }
 
-func newUsers(afs *afero.Afero, users int, globalTopics GlobalTopics, dataLimit int) ([]*User, error) {
+func newUsers(users int, globalTopics GlobalTopics, params SimulationParams) ([]*User, error) {
 	var genUsers []*User
 	for i := 0; i < users; i++ {
-		user, err := newUser("user_"+strconv.Itoa(i), globalTopics, dataLimit, afs)
+		user, err := newUser("user_"+strconv.Itoa(i), globalTopics, params)
 		if err != nil {
 			return nil, err
 		}
@@ -227,29 +224,17 @@ func newUsers(afs *afero.Afero, users int, globalTopics GlobalTopics, dataLimit 
 	return genUsers, nil
 }
 
-func newUser(username string, globalTopics GlobalTopics, datalimit int, afs *afero.Afero) (*User, error) {
+func newUser(username string, globalTopics GlobalTopics, params SimulationParams) (*User, error) {
 	client, err := newIbsenClient(ibsenTestTarge)
 	if err != nil {
 		return nil, err
 	}
 	return &User{
 		name:           username,
-		afs:            afs,
 		ibsenClient:    client,
-		dataWriteLimit: datalimit,
 		offsets:        make(map[string]access.Offset),
+		dataWriteLimit: params.dataLimit / params.users,
 		topics:         globalTopics,
-		writeCallFreq: RandomizedTimeInterval{
-			min: time.Millisecond * 10,
-			max: time.Millisecond * 100,
-		},
-		readCallFreq: RandomizedTimeInterval{
-			min: time.Millisecond * 10,
-			max: time.Millisecond * 100,
-		},
-		entries: RandomizedSizeInterval{
-			min: 1,
-			max: 1000,
-		},
+		params:         params,
 	}, nil
 }

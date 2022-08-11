@@ -9,6 +9,7 @@ import (
 	"github.com/tcw/ibsen/manager"
 	"net"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -36,8 +37,11 @@ func startGrpcServer(afs *afero.Afero, rootPath string) {
 	if err != nil {
 		log.Fatal().Err(err)
 	}
-	err = ibsenServer.StartGRPC(lis, nil)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	err = ibsenServer.StartGRPC(lis, &wg, "")
 	if err != nil {
-		log.Fatal().Err(err)
+		log.Fatal().Err(err).Msg("Test server failed")
 	}
+	wg.Done()
 }

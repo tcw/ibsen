@@ -2,7 +2,6 @@ package access
 
 import (
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/pkgerrors"
 	"github.com/stretchr/testify/assert"
 	"strconv"
 	"sync"
@@ -11,7 +10,6 @@ import (
 
 func init() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMicro
-	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 }
 
@@ -46,7 +44,7 @@ func TestTopic_Read_one_batch(t *testing.T) {
 	logChan := make(chan *[]LogEntry)
 	var wg sync.WaitGroup
 	go func() {
-		err := topic.Read(logChan, &wg, 0, 100)
+		_, err := topic.Read(logChan, &wg, 0, 100)
 		assert.Nil(t, err)
 		wg.Done()
 	}()
@@ -72,7 +70,7 @@ func TestTopic_Read_multiple_batches(t *testing.T) {
 	logChan := make(chan *[]LogEntry)
 	var wg sync.WaitGroup
 	go func() {
-		err := topic.Read(logChan, &wg, 0, 100)
+		_, err := topic.Read(logChan, &wg, 0, 100)
 		assert.Nil(t, err)
 		wg.Done()
 	}()

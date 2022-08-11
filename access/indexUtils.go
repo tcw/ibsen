@@ -2,7 +2,6 @@ package access
 
 import (
 	"bufio"
-	"errors"
 	"github.com/golang/protobuf/proto"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
@@ -11,8 +10,9 @@ import (
 
 func MarshallIndex(soi []byte) (Index, error) {
 	if len(soi) == 0 {
-		return Index{}, errors.New("NoBytesInIndex")
+		return Index{}, errore.New("NoBytesInIndex")
 	}
+
 	var numberPart []byte
 	var offset uint64
 	isOffset := true
@@ -24,7 +24,7 @@ func MarshallIndex(soi []byte) (Index, error) {
 		if !isLittleEndianMSBSet(byteValue) {
 			value, n := proto.DecodeVarint(numberPart)
 			if n < 0 {
-				return Index{}, errore.NewWithContext("Vararg returned negative numberPart, indicating a parsing error")
+				return Index{}, errore.NewF("Vararg returned negative numberPart, indicating a parsing error")
 			}
 			if isOffset {
 				offset = value
@@ -45,15 +45,15 @@ func MarshallIndex(soi []byte) (Index, error) {
 func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, oneEntryForEvery uint32) ([]byte, int64, error) {
 	exists, err := afs.Exists(logFileName)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, errore.Wrap(err)
 	}
 	if !exists {
-		return nil, 0, errors.New("NoFile")
+		return nil, 0, errore.New("NoFile")
 	}
 
 	file, err := OpenFileForRead(afs, logFileName)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, errore.Wrap(err)
 	}
 	var index []byte
 	var byteOffset int64 = 0
@@ -62,9 +62,9 @@ func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, 
 		if err != nil {
 			ioErr := file.Close()
 			if ioErr != nil {
-				return nil, 0, errore.WrapWithError(ioErr, err)
+				return nil, 0, errore.WrapError(ioErr, err)
 			}
-			return nil, byteOffset, err
+			return nil, byteOffset, errore.Wrap(err)
 		}
 	}
 	isFirst := true
@@ -76,24 +76,24 @@ func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, 
 		if err == io.EOF {
 			ioErr := file.Close()
 			if ioErr != nil {
-				return nil, 0, errore.WrapWithError(ioErr, err)
+				return nil, 0, errore.WrapError(ioErr, err)
 			}
 			return index, byteOffset, nil
 		}
 		if err != nil {
 			ioErr := file.Close()
 			if ioErr != nil {
-				return nil, 0, errore.WrapWithError(ioErr, err)
+				return nil, 0, errore.WrapError(ioErr, err)
 			}
-			return nil, byteOffset, err
+			return nil, byteOffset, errore.Wrap(err)
 		}
 		byteSize, err := io.ReadFull(reader, bytes)
 		if err != nil {
 			ioErr := file.Close()
 			if ioErr != nil {
-				return nil, 0, errore.WrapWithError(ioErr, err)
+				return nil, 0, errore.WrapError(ioErr, err)
 			}
-			return nil, byteOffset, err
+			return nil, byteOffset, errore.Wrap(err)
 		}
 		size := littleEndianToUint32(bytes)
 		entry := make([]byte, size)
@@ -101,17 +101,17 @@ func CreateIndex(afs *afero.Afero, logFileName string, logfileByteOffset int64, 
 		if err != nil {
 			ioErr := file.Close()
 			if ioErr != nil {
-				return nil, 0, errore.WrapWithError(ioErr, err)
+				return nil, 0, errore.WrapError(ioErr, err)
 			}
-			return nil, byteOffset, err
+			return nil, byteOffset, errore.Wrap(err)
 		}
 		offsetSize, err := io.ReadFull(reader, bytes)
 		if err != nil {
 			ioErr := file.Close()
 			if ioErr != nil {
-				return nil, 0, errore.WrapWithError(ioErr, err)
+				return nil, 0, errore.WrapError(ioErr, err)
 			}
-			return nil, byteOffset, err
+			return nil, byteOffset, errore.Wrap(err)
 		}
 		offset := littleEndianToUint64(bytes)
 		if !isFirst && offset%uint64(oneEntryForEvery) == 0 {

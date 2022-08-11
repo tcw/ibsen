@@ -14,13 +14,31 @@ import (
 )
 
 func TestName(t *testing.T) {
-	var fs = afero.NewMemMapFs()
-	//var fs = afero.NewOsFs()
+	//var fs = afero.NewMemMapFs()
+	var fs = afero.NewOsFs()
 	afs = &afero.Afero{Fs: fs}
 	//file, err := startCpuPprof()
 	//assert.Nil(t, err)
-	go startGrpcServer(afs, "/tmp/data")
-	simulation, err := newSimulation(afs, 1, 100, 10, time.Second*3)
+	//go startGrpcServer(afs, "/tmp/data")
+
+	go startGrpcServer(afs, "/home/tom/Ibsen/data")
+
+	params := SimulationParams{
+		topics:       1,
+		users:        1,
+		dataLimit:    100 * 1024 * 1024,
+		testDuration: time.Second * 5,
+		writeDelay: RandomizedTimeInterval{
+			min: time.Millisecond * 10,
+			max: time.Millisecond * 100,
+		},
+		entries: RandomizedSizeInterval{
+			min: 1,
+			max: 1000,
+		},
+	}
+
+	simulation, err := newSimulation(params)
 	assert.Nil(t, err)
 	simulation.start(t)
 	//stopCpuPprof(err, file)
@@ -55,7 +73,7 @@ func memProfile() {
 	if err := pprof.WriteHeapProfile(f); err != nil {
 		ioErr := f.Close()
 		if ioErr != nil {
-			log.Fatal().Err(errore.WrapWithError(ioErr, err))
+			log.Fatal().Err(errore.WrapError(ioErr, err))
 		}
 		log.Fatal().Err(err)
 	}
