@@ -28,7 +28,14 @@ func startGrpcServer(afs *afero.Afero, rootPath string) {
 	if err != nil {
 		log.Fatal().Err(err)
 	}
-	topicsManager, err := manager.NewLogTopicsManager(afs, false, 30*time.Second, 30*time.Second, rootPath, 10)
+	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
+		ReadOnly:         false,
+		Afs:              afs,
+		TTL:              5 * time.Second,
+		CheckForNewEvery: 100 * time.Millisecond,
+		MaxBlockSize:     10,
+		RootPath:         rootPath,
+	})
 	if err != nil {
 		log.Fatal().Err(err)
 	}

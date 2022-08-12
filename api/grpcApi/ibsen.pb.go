@@ -430,7 +430,7 @@ func (*UnimplementedIbsenServer) Write(ctx context.Context, req *InputEntries) (
 	return nil, status.Errorf(codes.Unimplemented, "method Write not implemented")
 }
 func (*UnimplementedIbsenServer) Read(req *ReadParams, srv Ibsen_ReadServer) error {
-	return status.Errorf(codes.Unimplemented, "method Read not implemented")
+	return status.Errorf(codes.Unimplemented, "method ReadLog not implemented")
 }
 func (*UnimplementedIbsenServer) List(ctx context.Context, req *empty.Empty) (*TopicList, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method List not implemented")

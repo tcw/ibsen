@@ -15,7 +15,13 @@ func init() {
 
 func TestTopic_Write(t *testing.T) {
 	afs := memAfs()
-	topic := NewLogTopic(afs, "tmp", "topic1", 1024*1024, true)
+	topic := NewLogTopic(TopicParams{
+		Afs:          afs,
+		RootPath:     "tmp",
+		TopicName:    "topic1",
+		MaxBlockSize: 1024 * 1024,
+		Loaded:       true,
+	})
 	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
 	lastOffset, _, err := BlockInfo(afs, "tmp/topic1/00000000000000000000.log")
@@ -25,7 +31,14 @@ func TestTopic_Write(t *testing.T) {
 
 func TestTopic_Load(t *testing.T) {
 	afs := memAfs()
-	topic := NewLogTopic(afs, "tmp", "topic1", 2000, false)
+	//topic := NewLogTopic(afs, "tmp", "topic1", 2000, false)
+	topic := NewLogTopic(TopicParams{
+		Afs:          afs,
+		RootPath:     "tmp",
+		TopicName:    "topic1",
+		MaxBlockSize: 2000,
+		Loaded:       false,
+	})
 	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
 	err = topic.Load()
@@ -36,7 +49,13 @@ func TestTopic_Load(t *testing.T) {
 
 func TestTopic_Read_one_batch(t *testing.T) {
 	afs := memAfs()
-	topic := NewLogTopic(afs, "tmp", "topic1", 2000, false)
+	topic := NewLogTopic(TopicParams{
+		Afs:          afs,
+		RootPath:     "tmp",
+		TopicName:    "topic1",
+		MaxBlockSize: 2000,
+		Loaded:       false,
+	})
 	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
 	err = topic.Load()
@@ -44,7 +63,12 @@ func TestTopic_Read_one_batch(t *testing.T) {
 	logChan := make(chan *[]LogEntry)
 	var wg sync.WaitGroup
 	go func() {
-		_, err := topic.Read(logChan, &wg, 0, 100)
+		_, err := topic.ReadLog(ReadLogParams{
+			LogChan:   logChan,
+			Wg:        &wg,
+			From:      0,
+			BatchSize: 100,
+		})
 		assert.Nil(t, err)
 		wg.Done()
 	}()
@@ -58,7 +82,13 @@ func TestTopic_Read_one_batch(t *testing.T) {
 
 func TestTopic_Read_multiple_batches(t *testing.T) {
 	afs := memAfs()
-	topic := NewLogTopic(afs, "tmp", "topic1", 2000, false)
+	topic := NewLogTopic(TopicParams{
+		Afs:          afs,
+		RootPath:     "tmp",
+		TopicName:    "topic1",
+		MaxBlockSize: 2000,
+		Loaded:       false,
+	})
 	err := topic.Write(createInputEntries(1000))
 	assert.Nil(t, err)
 	err = topic.Write(createInputEntries(1000))
@@ -70,7 +100,12 @@ func TestTopic_Read_multiple_batches(t *testing.T) {
 	logChan := make(chan *[]LogEntry)
 	var wg sync.WaitGroup
 	go func() {
-		_, err := topic.Read(logChan, &wg, 0, 100)
+		_, err := topic.ReadLog(ReadLogParams{
+			LogChan:   logChan,
+			Wg:        &wg,
+			From:      0,
+			BatchSize: 100,
+		})
 		assert.Nil(t, err)
 		wg.Done()
 	}()
@@ -84,7 +119,13 @@ func TestTopic_Read_multiple_batches(t *testing.T) {
 
 func TestTopic_UpdateIndex_sigle_block(t *testing.T) {
 	afs := memAfs()
-	topic := NewLogTopic(afs, "tmp", "topic1", 20000, false)
+	topic := NewLogTopic(TopicParams{
+		Afs:          afs,
+		RootPath:     "tmp",
+		TopicName:    "topic1",
+		MaxBlockSize: 20000,
+		Loaded:       false,
+	})
 	err := topic.Write(createInputEntries(100))
 	assert.Nil(t, err)
 	err = topic.Load()
@@ -105,7 +146,13 @@ func TestTopic_UpdateIndex_sigle_block(t *testing.T) {
 
 func TestTopic_UpdateIndex_multiple_blocks(t *testing.T) {
 	afs := memAfs()
-	topic := NewLogTopic(afs, "tmp", "topic1", 2000, false)
+	topic := NewLogTopic(TopicParams{
+		Afs:          afs,
+		RootPath:     "tmp",
+		TopicName:    "topic1",
+		MaxBlockSize: 2000,
+		Loaded:       false,
+	})
 	err := topic.Write(createInputEntries(1000))
 	assert.Nil(t, err)
 	err = topic.Load()

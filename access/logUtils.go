@@ -3,7 +3,9 @@ package access
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/utils"
@@ -108,6 +110,8 @@ func ListAllTopics(afs *afero.Afero, dir string) ([]string, error) {
 	return filenames, nil
 }
 
+var NoByteOffsetFound error = errors.New("no byte offset found")
+
 func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, startAtByteOffset int64, offset Offset) (int64, int, error) {
 	scanCount := 0
 	if offset == 0 {
@@ -129,7 +133,7 @@ func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, sta
 			return 0, 0, errore.Wrap(err)
 		}
 		if lastOffset+1 == offset {
-			return startAtByteOffset, 0, errore.Wrap(err)
+			return startAtByteOffset, 0, nil
 		}
 	}
 
@@ -145,7 +149,7 @@ func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, sta
 		}
 		checksumBytes, err := io.ReadFull(reader, checksum)
 		if err == io.EOF {
-			return 0, scanCount, errore.Wrap(err)
+			return 0, scanCount, NoByteOffsetFound
 		}
 		if err != nil {
 			return 0, scanCount, errore.Wrap(err)
@@ -202,62 +206,100 @@ func BlockInfo(afs *afero.Afero, blockFileName string) (Offset, int64, error) {
 	return Offset(offset), fileSize, nil
 }
 
-func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, batchSize uint32, byteOffset int64, endOffset Offset) (uint64, error) {
-	var expectedOffset Offset = 0
+type ReadFileParams struct {
+	File            afero.File
+	LogChan         chan *[]LogEntry
+	Wg              *sync.WaitGroup
+	BatchSize       uint32
+	StartByteOffset int64
+	EndOffset       Offset
+}
+
+type ReadResult struct {
+	LastLogOffset Offset
+	EntriesRead   uint64
+}
+
+func (r *ReadResult) Update(result ReadResult) {
+	r.LastLogOffset = result.LastLogOffset
+	r.EntriesRead = r.EntriesRead + result.EntriesRead
+}
+
+func (r *ReadResult) NextOffset() Offset {
+	return r.LastLogOffset + 1
+}
+
+var EmptyReadResult = ReadResult{
+	LastLogOffset: 0,
+	EntriesRead:   0,
+}
+
+func ReadFile(params ReadFileParams) (ReadResult, error) {
+	var currentOffset Offset = 0
 	var offsetFromLogg Offset = 0
 	var entriesRead uint64 = 0
-	if byteOffset > 0 {
-		_, err := file.Seek(byteOffset, io.SeekStart)
+	log.Debug().
+		Str("filename", params.File.Name()).
+		Int64("byteOffset", params.StartByteOffset).
+		Msg("read file")
+	if params.StartByteOffset > 0 {
+		_, err := params.File.Seek(params.StartByteOffset, io.SeekStart)
 		if err != nil {
-			return entriesRead, errore.Wrap(err)
+			return ReadResult{}, errore.Wrap(err)
 		}
-		offsetFromLogg, err = offsetLookBack(file)
+		offsetFromLogg, err = offsetLookBack(params.File)
 		if err != nil {
-			return entriesRead, errore.Wrap(err)
+			return ReadResult{}, errore.Wrap(err)
 		}
-		expectedOffset = offsetFromLogg + 1
+		currentOffset = offsetFromLogg + 1
 	}
-	reader := bufio.NewReader(file)
+	reader := bufio.NewReader(params.File)
 	bytes := make([]byte, 8)
 	checksum := make([]byte, 4)
-	logEntries := make([]LogEntry, batchSize)
+	logEntries := make([]LogEntry, params.BatchSize)
 	slicePointer := 0
 	for {
-		if expectedOffset == endOffset {
+		if currentOffset == params.EndOffset {
 			if logEntries != nil && slicePointer > 0 {
-				wg.Add(1)
+				params.Wg.Add(1)
 				sendingEntries := logEntries[:slicePointer]
-				logChan <- &sendingEntries
+				params.LogChan <- &sendingEntries
 			}
-			return entriesRead, nil
+			return ReadResult{
+				LastLogOffset: offsetFromLogg,
+				EntriesRead:   entriesRead,
+			}, nil
 		}
-		if slicePointer != 0 && uint32(slicePointer)%batchSize == 0 {
-			wg.Add(1)
+		if slicePointer != 0 && uint32(slicePointer)%params.BatchSize == 0 {
+			params.Wg.Add(1)
 			sendingEntries := logEntries[:slicePointer]
 			logEntryCopy := make([]LogEntry, slicePointer)
 			copy(logEntryCopy, sendingEntries)
-			logChan <- &logEntryCopy
+			params.LogChan <- &logEntryCopy
 			slicePointer = 0
 		}
 		// Checksum
 		_, err := io.ReadFull(reader, checksum)
 		if err == io.EOF {
 			if logEntries != nil && slicePointer > 0 {
-				wg.Add(1)
+				params.Wg.Add(1)
 				sendingEntries := logEntries[:slicePointer]
-				logChan <- &sendingEntries
+				params.LogChan <- &sendingEntries
 			}
-			return 0, nil
+			return ReadResult{
+				LastLogOffset: offsetFromLogg,
+				EntriesRead:   entriesRead,
+			}, nil
 		}
 		if err != nil {
-			return entriesRead, nil
+			return ReadResult{}, errore.Wrap(err)
 		}
 		checksumValue := littleEndianToUint32(bytes)
 
 		// Entry size
 		_, err = io.ReadFull(reader, bytes)
 		if err != nil {
-			return entriesRead, nil
+			return ReadResult{}, errore.Wrap(err)
 		}
 
 		size := littleEndianToUint64(bytes)
@@ -267,22 +309,22 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 
 		_, err = io.ReadFull(reader, entry)
 		if err != nil {
-			return entriesRead, nil
+			return ReadResult{}, errore.Wrap(err)
 		}
 
 		// offset
 		_, err = io.ReadFull(reader, bytes)
 		if err != nil {
-			return entriesRead, nil
+			return ReadResult{}, errore.Wrap(err)
 		}
 
 		offset := int64(littleEndianToUint64(bytes))
 		offsetFromLogg = Offset(offset)
-		if expectedOffset == 0 {
-			expectedOffset = offsetFromLogg
+		if currentOffset == 0 {
+			currentOffset = offsetFromLogg
 		}
-		if expectedOffset != offsetFromLogg {
-			return entriesRead, errore.NewF("read order assertion failed, expected [%d] actual [%d]", expectedOffset, offsetFromLogg)
+		if currentOffset != offsetFromLogg {
+			return ReadResult{}, errore.NewF("read order assertion failed, expected [%d] actual [%d]", currentOffset, offsetFromLogg)
 		}
 		logEntries[slicePointer] = LogEntry{
 			Offset:   uint64(offset),
@@ -291,7 +333,7 @@ func ReadFile(file afero.File, logChan chan *[]LogEntry, wg *sync.WaitGroup, bat
 			Entry:    entry,
 		}
 		entriesRead = entriesRead + 1
-		expectedOffset = expectedOffset + 1
+		currentOffset = currentOffset + 1
 		slicePointer = slicePointer + 1
 	}
 }

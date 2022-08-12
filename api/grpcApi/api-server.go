@@ -121,15 +121,18 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	logChan := make(chan *[]access.LogEntry)
 	var wg sync.WaitGroup
 	go sendBatchMessage(logChan, &wg, readServer)
+	topicName := manager.TopicName(params.Topic)
 	err := s.manager.Read(manager.ReadParams{
-		TopicName:        manager.TopicName(params.Topic),
-		From:             access.Offset(params.Offset),
-		BatchSize:        params.BatchSize,
-		LogChan:          logChan,
-		Wg:               &wg,
-		StopOnCompletion: params.StopOnCompletion,
+		TopicName:          topicName,
+		From:               access.Offset(params.Offset),
+		BatchSize:          params.BatchSize,
+		LogChan:            logChan,
+		Wg:                 &wg,
+		ReturnOnCompletion: params.StopOnCompletion,
 	})
-
+	if err == manager.TopicNotFound {
+		return status.Errorf(codes.NotFound, "Topic %s not found", topicName)
+	}
 	if err != nil {
 		log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("read api failed")
 		return status.Error(codes.Unknown, "error reading streaming")

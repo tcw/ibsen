@@ -75,7 +75,6 @@ func (g GlobalTopics) randTopic() string {
 
 func newSimulation(params SimulationParams) (Simulation, error) {
 	globalTopics := GlobalTopics{topics: createTopics(params.topics)}
-
 	log.Info().
 		Int("topics", params.topics).
 		Int("users", params.users).
@@ -120,9 +119,8 @@ func (u *User) run(t *testing.T, wg *sync.WaitGroup, cancel chan bool) {
 	go func(wg *sync.WaitGroup, cancel chan bool) {
 		wg.Add(1)
 		topics := u.topics.topics
-		for _, topic := range topics {
-			go u.read(t, topic)
-		}
+		readersStarted := false
+
 		for {
 			select {
 			case <-cancel:
@@ -133,6 +131,12 @@ func (u *User) run(t *testing.T, wg *sync.WaitGroup, cancel chan bool) {
 				if u.dataWriteLimit > u.dataWritten {
 					time.Sleep(u.params.writeDelay.value())
 					u.write(t)
+				}
+				if !readersStarted {
+					for _, topic := range topics {
+						go u.read(t, topic)
+					}
+					readersStarted = true
 				}
 			}
 		}
@@ -148,9 +152,9 @@ func (u *User) write(t *testing.T) {
 	_, err := u.ibsenClient.Client.Write(ctx, &entries)
 	written := u.dataWritten + (numberOfEntries * entryByteSize)
 	u.dataWritten = written
-	//log.Info().Int("wrote", numberOfEntries).Str("topic", randTopic).Msg("read/write")
 	if err != nil {
 		log.Fatal().Err(err).Msg("Simulated write failed")
+
 	}
 }
 
@@ -179,6 +183,9 @@ func (u *User) read(t *testing.T, topic string) {
 			break
 		}
 		entries := in.Entries
+		log.Debug().Uint64("firstEntry", in.Entries[0].Offset).
+			Uint64("lastEntry", in.Entries[len(in.Entries)-1].Offset).
+			Msg("simulator read")
 		for _, entry := range entries {
 			entriesRead = entriesRead + 1
 			if lastOffset == -1 {

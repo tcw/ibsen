@@ -83,7 +83,7 @@ var (
 				InMemory:         inMemory,
 				Afs:              afs,
 				RootPath:         absolutePath,
-				MaxBlockSize:     maxBlockSizeMB,
+				MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
 				OTELExporterAddr: OTELExporterAddr,
 				CpuProfile:       cpuProfile,
 				MemProfile:       memProfile,
@@ -299,7 +299,7 @@ func init() {
 
 	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "bwe", "a", 100, "Entry byte size in bench")
 	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatch, "ben", "b", 1000, "Entries in each batch in bench")
-	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "r", 1000, "Read in batches of")
+	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "r", 1000, "ReadLog in batches of")
 	cmdClientBench.Flags().IntVarP(&benchWriteBaches, "bwb", "w", 1000, "Write in batches of")
 	cmdClientBench.Flags().IntVarP(&concurrent, "concurrent", "c", 1, "Concurrency number")
 

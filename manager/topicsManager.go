@@ -14,12 +14,12 @@ import (
 type TopicName string
 
 type ReadParams struct {
-	TopicName        TopicName
-	LogChan          chan *[]access.LogEntry
-	Wg               *sync.WaitGroup
-	From             access.Offset
-	BatchSize        uint32
-	StopOnCompletion bool
+	TopicName          TopicName
+	LogChan            chan *[]access.LogEntry
+	Wg                 *sync.WaitGroup
+	From               access.Offset
+	BatchSize          uint32
+	ReturnOnCompletion bool
 }
 
 type LogManager interface {
@@ -30,36 +30,40 @@ type LogManager interface {
 
 var _ LogManager = &LogTopicsManager{}
 
-type LogTopicsManager struct {
+type LogTopicManagerParams struct {
 	ReadOnly         bool
 	Afs              *afero.Afero
 	TTL              time.Duration
 	CheckForNewEvery time.Duration
-	MaxBlockSizeMB   int
+	MaxBlockSize     int
 	RootPath         string
-	Topics           map[TopicName]access.TopicAccess
 }
 
-func NewLogTopicsManager(afs *afero.Afero, readonly bool, timeToLive time.Duration, checkForNewEvery time.Duration, rootPath string, maxBlockSizeMB int) (LogTopicsManager, error) {
-	maxBlockSize := maxBlockSizeMB * 1024 * 1024
-	topics, err := access.ListAllTopics(afs, rootPath)
+type LogTopicsManager struct {
+	Params LogTopicManagerParams
+	Topics map[TopicName]access.TopicAccess
+}
+
+func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error) {
+	topics, err := access.ListAllTopics(params.Afs, params.RootPath)
 	if err != nil {
 		return LogTopicsManager{}, err
 	}
 	topicMap := make(map[TopicName]access.TopicAccess)
 	for _, topic := range topics {
 		var iTopic access.TopicAccess
-		iTopic = access.NewLogTopic(afs, rootPath, topic, maxBlockSize, false)
+		iTopic = access.NewLogTopic(access.TopicParams{
+			Afs:          params.Afs,
+			RootPath:     params.RootPath,
+			TopicName:    topic,
+			MaxBlockSize: params.MaxBlockSize,
+			Loaded:       false,
+		})
 		topicMap[TopicName(topic)] = iTopic
 	}
 	return LogTopicsManager{
-		ReadOnly:         readonly,
-		Afs:              afs,
-		TTL:              timeToLive,
-		CheckForNewEvery: checkForNewEvery,
-		MaxBlockSizeMB:   maxBlockSize,
-		RootPath:         rootPath,
-		Topics:           topicMap,
+		Params: params,
+		Topics: topicMap,
 	}, nil
 }
 
@@ -68,16 +72,22 @@ func (l *LogTopicsManager) List() []TopicName {
 }
 
 func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr) error {
-	if l.ReadOnly {
+	if l.Params.ReadOnly {
 		return errors.New("ibsen is in read only mode and will not accept any writes")
 	}
 	topic, exists := l.Topics[topicName]
 	if !exists {
-		err := access.CreateTopic(l.Afs, l.RootPath, string(topicName))
+		err := access.CreateTopic(l.Params.Afs, l.Params.RootPath, string(topicName))
 		if err != nil {
 			return errore.Wrap(err)
 		}
-		topic = access.NewLogTopic(l.Afs, l.RootPath, string(topicName), l.MaxBlockSizeMB, true)
+		topic = access.NewLogTopic(access.TopicParams{
+			Afs:          l.Params.Afs,
+			RootPath:     l.Params.RootPath,
+			TopicName:    string(topicName),
+			MaxBlockSize: l.Params.MaxBlockSize,
+			Loaded:       true,
+		})
 		l.Topics[topicName] = topic
 	}
 	if !topic.IsLoaded() {
@@ -89,10 +99,12 @@ func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr)
 	return topic.Write(entries)
 }
 
+var TopicNotFound error = errors.New("topic not found")
+
 func (l *LogTopicsManager) Read(params ReadParams) error {
 	topic, exists := l.Topics[params.TopicName]
 	if !exists {
-		return errore.NewF("Topic %s does not exits", params.TopicName)
+		return TopicNotFound
 	}
 	if !topic.IsLoaded() {
 		err := topic.Load()
@@ -100,24 +112,36 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 			return errore.Wrap(err)
 		}
 	}
-	var err error
-	readTTL := time.Now().Add(l.TTL)
-	_, err = topic.Read(params.LogChan, params.Wg, params.From, params.BatchSize)
-	if err != nil {
-		return errore.Wrap(err)
-	}
-	if params.StopOnCompletion {
-		return nil
-	}
+	readTTL := time.Now().Add(l.Params.TTL)
+	readFrom := params.From
 	for time.Until(readTTL) > 0 {
-		entriesRead, err := topic.Read(params.LogChan, params.Wg, params.From, params.BatchSize)
+		log.Debug().
+			Uint64("from", uint64(readFrom)).
+			Msg("read manager")
+		readResult, err := topic.ReadLog(access.ReadLogParams{
+			LogChan:   params.LogChan,
+			Wg:        params.Wg,
+			From:      readFrom,
+			BatchSize: params.BatchSize,
+		})
+		log.Debug().Uint64("lastOffset", uint64(readResult.LastLogOffset)).
+			Uint64("entries", readResult.EntriesRead).
+			Msg("read manager result")
+		if err == access.NoEntriesFound {
+			time.Sleep(l.Params.CheckForNewEvery)
+			continue
+		}
 		if err != nil {
 			return errore.Wrap(err)
 		}
-		time.Sleep(l.CheckForNewEvery)
-		if entriesRead > 0 {
-			readTTL = time.Now().Add(l.TTL)
+		if params.ReturnOnCompletion {
+			return nil
 		}
+		if readResult.EntriesRead > 0 {
+			readTTL = time.Now().Add(l.Params.TTL)
+			readFrom = readResult.NextOffset()
+		}
+		time.Sleep(l.Params.CheckForNewEvery)
 	}
 	return nil
 }

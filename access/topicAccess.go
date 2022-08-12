@@ -24,7 +24,7 @@ type TopicAccess interface {
 	UpdateIndex() (bool, error)
 	Load() error
 	IsLoaded() bool
-	Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, fromOffset Offset, batchSize uint32) (uint64, error)
+	ReadLog(params ReadLogParams) (ReadResult, error)
 	Write(entries EntriesPtr) error
 }
 
@@ -58,21 +58,29 @@ type Topic struct {
 	Loaded         bool
 }
 
-func NewLogTopic(afs *afero.Afero, rootPath string, topicName string, maxBlockSize int, loaded bool) *Topic {
+type TopicParams struct {
+	Afs          *afero.Afero
+	RootPath     string
+	TopicName    string
+	MaxBlockSize int
+	Loaded       bool
+}
+
+func NewLogTopic(params TopicParams) *Topic {
 	return &Topic{
-		Afs:            afs,
-		RootPath:       rootPath,
-		TopicName:      topicName,
+		Afs:            params.Afs,
+		RootPath:       params.RootPath,
+		TopicName:      params.TopicName,
 		writeLock:      sync.Mutex{},
 		updateLock:     sync.Mutex{},
 		indexWg:        &sync.WaitGroup{},
 		NextOffset:     0,
 		HeadBlockSize:  0,
-		MaxBlockSize:   maxBlockSize,
+		MaxBlockSize:   params.MaxBlockSize,
 		LogBlockList:   []LogBlock{},
 		IndexBlockList: []IndexBlock{},
 		IndexPosition:  nil,
-		Loaded:         loaded,
+		Loaded:         params.Loaded,
 	}
 }
 
@@ -171,74 +179,115 @@ func (t *Topic) Load() error {
 	return nil
 }
 
-func (t *Topic) Read(logChan chan *[]LogEntry, wg *sync.WaitGroup, from Offset, batchSize uint32) (uint64, error) {
-	var entriesRead uint64 = 0
-	if t.logBlockIsEmpty() {
-		return entriesRead, nil
+var NoEntriesFound = errors.New("no entries found")
+
+type ReadLogParams struct {
+	LogChan   chan *[]LogEntry
+	Wg        *sync.WaitGroup
+	From      Offset
+	BatchSize uint32
+}
+
+// ReadLog
+// Reads a log from and including the ReadLogParams.From offset until end of log.
+func (t *Topic) ReadLog(params ReadLogParams) (ReadResult, error) {
+	endOffset, exists := t.findEndOffset(params.From)
+	if !exists {
+		return ReadResult{}, NoEntriesFound
 	}
-	endOffset, hasEnd := t.endBoundaryForReadOffset()
-	if !hasEnd {
-		return entriesRead, nil
-	}
-	if from >= endOffset {
-		return entriesRead, nil
-	}
-	block, found := t.logBlockContaining(from)
+	block, found := t.logBlockContaining(params.From)
 	if !found {
-		return entriesRead, errors.New("offset out of bounds")
+		return ReadResult{}, errors.New("offset out of bounds")
 	}
-	byteOffset, scanCount, err := t.findByteOffsetInIndex(from)
+	byteOffset, scanCount, err := t.findByteOffsetInIndex(params.From)
+	if err == NoByteOffsetFound {
+		return ReadResult{}, NoEntriesFound
+	}
 	if err != nil {
-		return entriesRead, errore.Wrap(err)
+		return ReadResult{}, errore.Wrap(err)
 	}
-	t.debugLog(from, byteOffset, scanCount)
+	t.debugLogIndexLookup(params.From, byteOffset, scanCount)
 	fileName, err := t.logBlockFileName(block)
 	if err != nil {
-		return entriesRead, errore.Wrap(err)
+		return ReadResult{}, errore.Wrap(err)
 	}
-
 	file, err := OpenFileForRead(t.Afs, fileName)
 	if err != nil {
-		return entriesRead, errore.Wrap(err)
+		return ReadResult{}, errore.Wrap(err)
 	}
-	entriesRead, err = ReadFile(file, logChan, wg, batchSize, byteOffset, endOffset)
+	defer file.Close()
+	var totalReadResult ReadResult
+	readResult, err := ReadFile(ReadFileParams{
+		File:            file,
+		LogChan:         params.LogChan,
+		Wg:              params.Wg,
+		BatchSize:       params.BatchSize,
+		StartByteOffset: byteOffset,
+		EndOffset:       endOffset,
+	})
 	if err != nil {
-		file.Close()
-		return entriesRead, errore.Wrap(err)
+		return ReadResult{}, errore.Wrap(err)
 	}
-	err = file.Close()
-	if err != nil {
-		return entriesRead, errore.Wrap(err)
-	}
+	totalReadResult = readResult
 	wasFound, i := t.findBlockArrayIndex(block)
 	if wasFound {
 		if t.logSize()-1 == i {
-			return entriesRead, nil
+			log.Debug().
+				Uint64("lastReadOffset", uint64(totalReadResult.LastLogOffset)).
+				Uint64("entriesRead", totalReadResult.EntriesRead).
+				Msg("Read log - result")
+			return totalReadResult, nil
 		}
 		for _, b := range t.LogBlockList[i+1:] {
 			fileName, err = t.logBlockFileName(b)
-			file, err = OpenFileForRead(t.Afs, fileName) // todo defer close
+			file, err = OpenFileForRead(t.Afs, fileName)
 			if err != nil {
-				return entriesRead, errore.Wrap(err)
+				return ReadResult{}, errore.Wrap(err)
 			}
+			defer file.Close()
 			endOffset, _ = t.endBoundaryForReadOffset()
-			entriesRead, err = ReadFile(file, logChan, wg, batchSize, 0, endOffset)
+			readResult, err = ReadFile(ReadFileParams{
+				File:            file,
+				LogChan:         params.LogChan,
+				Wg:              params.Wg,
+				BatchSize:       params.BatchSize,
+				StartByteOffset: 0,
+				EndOffset:       endOffset,
+			})
 			if err != nil {
-				file.Close()
-				return entriesRead, errore.Wrap(err)
+				return ReadResult{}, errore.Wrap(err)
 			}
+			totalReadResult.Update(readResult)
 		}
 	}
-	return entriesRead, nil
+	log.Debug().
+		Uint64("lastReadOffset", uint64(totalReadResult.LastLogOffset)).
+		Uint64("entriesRead", totalReadResult.EntriesRead).
+		Msg("Read log - result")
+	return totalReadResult, nil
 }
 
-func (t *Topic) debugLog(from Offset, byteOffset int64, scanCount int) {
+func (t *Topic) findEndOffset(from Offset) (Offset, bool) {
+	if t.logBlockIsEmpty() {
+		return 0, false
+	}
+	endOffset, hasEnd := t.endBoundaryForReadOffset()
+	if !hasEnd {
+		return 0, false
+	}
+	if from >= endOffset {
+		return 0, false
+	}
+	return endOffset, true
+}
+
+func (t *Topic) debugLogIndexLookup(from Offset, byteOffset int64, scanCount int) {
 	if e := log.Debug(); e.Enabled() {
 		e.Str("topic", t.TopicName).
-			Uint64("offset", uint64(from)).
-			Int64("byteOffset", byteOffset).
+			Uint64("fromOffset", uint64(from)).
+			Int64("FoundByteOffset", byteOffset).
 			Int("scanned", scanCount).
-			Msg("index scan count")
+			Msg("read log - index scan count")
 	}
 }
 
@@ -305,7 +354,7 @@ func (t *Topic) Write(entries EntriesPtr) error {
 		if err != nil {
 			log.Warn().Err(err)
 		}
-		log.Debug().Msg(fmt.Sprintf("index update executed: %t", wasExecuted))
+		log.Trace().Msg(fmt.Sprintf("index update executed: %t", wasExecuted))
 	}()
 	ioErr := file.Close()
 	if ioErr != nil {
@@ -424,6 +473,9 @@ func (t *Topic) findByteOffsetInIndex(offset Offset) (int64, int, error) {
 	logBlock, logBlockFound := t.logBlockContaining(offset)
 	if !logBlockFound {
 		return 0, 0, errors.New("no log block containing offset found")
+	}
+	if uint64(logBlock) == uint64(offset) {
+		return 0, 0, nil
 	}
 	logBlockFileName, err := t.logBlockFileName(logBlock)
 	if err != nil {

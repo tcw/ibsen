@@ -84,7 +84,14 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		log.Info().Msg(fmt.Sprintf("Started profiling, creating file %s", ibs.CpuProfile))
 	}
 
-	topicsManager, err := manager.NewLogTopicsManager(ibs.Afs, ibs.Readonly, time.Minute*10, time.Second*5, ibs.RootPath, ibs.MaxBlockSize)
+	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
+		ReadOnly:         ibs.Readonly,
+		Afs:              ibs.Afs,
+		TTL:              ibs.TTL,
+		CheckForNewEvery: time.Second * 2,
+		MaxBlockSize:     ibs.MaxBlockSize,
+		RootPath:         ibs.RootPath,
+	})
 	if err != nil {
 		return errore.Wrap(err)
 	}
