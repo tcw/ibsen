@@ -23,13 +23,13 @@ func TestName(t *testing.T) {
 	//go startGrpcServer(afs, "/home/tom/Ibsen/data")
 
 	params := SimulationParams{
-		topics:       3,
-		users:        3,
-		dataLimit:    100 * 1024 * 1024,
-		testDuration: time.Second * 2,
+		topics:       50,
+		users:        100,
+		dataLimit:    10 * 1024 * 1024,
+		testDuration: time.Second * 10,
 		writeDelay: RandomizedTimeInterval{
-			min: time.Millisecond * 10,
-			max: time.Millisecond * 100,
+			min: time.Millisecond * 100,
+			max: time.Millisecond * 500,
 		},
 		entries: RandomizedSizeInterval{
 			min: 1,

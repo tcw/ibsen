@@ -23,7 +23,6 @@ type LogBlockPosition struct {
 type TopicAccess interface {
 	UpdateIndex() (bool, error)
 	Load() error
-	IsLoaded() bool
 	ReadLog(params ReadLogParams) (ReadResult, error)
 	Write(entries EntriesPtr) error
 }
@@ -45,8 +44,6 @@ type Topic struct {
 	Afs            *afero.Afero
 	RootPath       string
 	TopicName      string
-	writeLock      sync.Mutex
-	updateLock     sync.Mutex
 	indexMutex     int32
 	indexWg        *sync.WaitGroup
 	MaxBlockSize   int
@@ -55,7 +52,6 @@ type Topic struct {
 	LogBlockList   []LogBlock
 	IndexBlockList []IndexBlock
 	IndexPosition  *LogBlockPosition
-	Loaded         bool
 }
 
 type TopicParams struct {
@@ -63,7 +59,6 @@ type TopicParams struct {
 	RootPath     string
 	TopicName    string
 	MaxBlockSize int
-	Loaded       bool
 }
 
 func NewLogTopic(params TopicParams) *Topic {
@@ -71,8 +66,6 @@ func NewLogTopic(params TopicParams) *Topic {
 		Afs:            params.Afs,
 		RootPath:       params.RootPath,
 		TopicName:      params.TopicName,
-		writeLock:      sync.Mutex{},
-		updateLock:     sync.Mutex{},
 		indexWg:        &sync.WaitGroup{},
 		NextOffset:     0,
 		HeadBlockSize:  0,
@@ -80,7 +73,6 @@ func NewLogTopic(params TopicParams) *Topic {
 		LogBlockList:   []LogBlock{},
 		IndexBlockList: []IndexBlock{},
 		IndexPosition:  nil,
-		Loaded:         params.Loaded,
 	}
 }
 
@@ -91,10 +83,8 @@ func (t *Topic) UpdateIndex() (bool, error) {
 	}
 	defer atomic.CompareAndSwapInt32(&t.indexMutex, 1, 0)
 
-	t.updateLock.Lock()
 	t.indexWg.Add(1)
 	defer func() {
-		t.updateLock.Unlock()
 		t.indexWg.Done()
 	}()
 
@@ -131,16 +121,7 @@ func (t *Topic) UpdateIndex() (bool, error) {
 	return true, nil
 }
 
-func (t *Topic) IsLoaded() bool {
-	return t.Loaded
-}
-
 func (t *Topic) Load() error {
-	t.updateLock.Lock()
-	defer t.updateLock.Unlock()
-	if t.Loaded {
-		return nil
-	}
 	logBlocks, indexBlocks, err := LoadTopicBlocks(t.Afs, t.RootPath, t.TopicName)
 
 	if err != nil {
@@ -175,7 +156,6 @@ func (t *Topic) Load() error {
 			Int("headBlockSize", t.HeadBlockSize).
 			Msg("loaded topic")
 	}
-	t.Loaded = true
 	return nil
 }
 
@@ -215,7 +195,7 @@ func (t *Topic) ReadLog(params ReadLogParams) (ReadResult, error) {
 	if err != nil {
 		return ReadResult{}, errore.Wrap(err)
 	}
-	defer file.Close()
+
 	var totalReadResult ReadResult
 	readResult, err := ReadFile(ReadFileParams{
 		File:            file,
@@ -226,8 +206,10 @@ func (t *Topic) ReadLog(params ReadLogParams) (ReadResult, error) {
 		EndOffset:       endOffset,
 	})
 	if err != nil {
+		closeFile(file)
 		return ReadResult{}, errore.Wrap(err)
 	}
+	closeFile(file)
 	totalReadResult = readResult
 	wasFound, i := t.findBlockArrayIndex(block)
 	if wasFound {
@@ -241,10 +223,14 @@ func (t *Topic) ReadLog(params ReadLogParams) (ReadResult, error) {
 		for _, b := range t.LogBlockList[i+1:] {
 			fileName, err = t.logBlockFileName(b)
 			file, err = OpenFileForRead(t.Afs, fileName)
+			if errors.Is(err, FileNotFound) {
+				closeFile(file)
+				break
+			}
 			if err != nil {
+				closeFile(file)
 				return ReadResult{}, errore.Wrap(err)
 			}
-			defer file.Close()
 			endOffset, _ = t.endBoundaryForReadOffset()
 			readResult, err = ReadFile(ReadFileParams{
 				File:            file,
@@ -255,8 +241,10 @@ func (t *Topic) ReadLog(params ReadLogParams) (ReadResult, error) {
 				EndOffset:       endOffset,
 			})
 			if err != nil {
+				closeFile(file)
 				return ReadResult{}, errore.Wrap(err)
 			}
+			closeFile(file)
 			totalReadResult.Update(readResult)
 		}
 	}
@@ -265,6 +253,16 @@ func (t *Topic) ReadLog(params ReadLogParams) (ReadResult, error) {
 		Uint64("entriesRead", totalReadResult.EntriesRead).
 		Msg("Read log - result")
 	return totalReadResult, nil
+}
+
+func closeFile(file afero.File) {
+	if file == nil {
+		return
+	}
+	err := file.Close()
+	if err != nil {
+		log.Warn().Str("fileName", file.Name()).Msg("unable to close file")
+	}
 }
 
 func (t *Topic) findEndOffset(from Offset) (Offset, bool) {
@@ -292,9 +290,6 @@ func (t *Topic) debugLogIndexLookup(from Offset, byteOffset int64, scanCount int
 }
 
 func (t *Topic) Write(entries EntriesPtr) error {
-	t.writeLock.Lock()
-	defer t.writeLock.Unlock()
-
 	if t.logBlockIsEmpty() {
 		t.addNewLogBlock()
 	}

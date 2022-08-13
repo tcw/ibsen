@@ -100,7 +100,7 @@ func (s *Simulation) start(t *testing.T) {
 	start := time.Now()
 	for {
 		if time.Until(start.Add(s.params.testDuration)) <= 0 {
-			log.Info().Msg("Stopping simulator")
+			log.Info().Msg("---------------Stopping simulator!!!!-------------------")
 			s.stop()
 			break
 		}
@@ -161,9 +161,6 @@ func (u *User) write(t *testing.T) {
 func (u *User) read(t *testing.T, topic string) {
 	ctx, _ := context.WithTimeout(context.Background(), 30*time.Minute)
 	var offset uint64 = 0
-	if val, ok := u.offsets[topic]; ok {
-		offset = uint64(val)
-	}
 	entryStream, err := u.ibsenClient.Client.Read(ctx, &grpcApi.ReadParams{
 		StopOnCompletion: false,
 		Topic:            topic,
@@ -172,8 +169,8 @@ func (u *User) read(t *testing.T, topic string) {
 	})
 	assert.Nil(t, err)
 
-	var lastOffset int64 = -1
-	entriesRead := int(u.offsets[topic])
+	var expectedOffset int64 = 0
+	entriesRead := 0
 	for {
 		in, err := entryStream.Recv()
 		if err == io.EOF {
@@ -183,32 +180,26 @@ func (u *User) read(t *testing.T, topic string) {
 			break
 		}
 		entries := in.Entries
-		log.Debug().Uint64("firstEntry", in.Entries[0].Offset).
-			Uint64("lastEntry", in.Entries[len(in.Entries)-1].Offset).
-			Msg("simulator read")
+		//log.Debug().Uint64("firstEntry", in.Entries[0].Offset).
+		//	Uint64("lastEntry", in.Entries[len(in.Entries)-1].Offset).
+		//	Msg("simulator read")
+		//log.Info().Msgf("Entries %d", len(entries))
 		for _, entry := range entries {
 			entriesRead = entriesRead + 1
-			if lastOffset == -1 {
-				lastOffset = int64(entry.Offset)
-				continue
-			}
-			if lastOffset+1 != int64(entry.Offset) {
+			if expectedOffset != int64(entry.Offset) {
 				log.Warn().
 					Str("user", u.name).
 					Str("topic", topic).
+					Int("entriesRead", entriesRead).
 					Uint64("start_offset", offset).
 					Uint64("current_offset", entry.Offset).
-					Int64("last_offset", lastOffset).
+					Int64("last_offset", expectedOffset).
 					Msg("offset_out_of_order")
 				t.Fail()
 			}
-			lastOffset = int64(entry.Offset)
+			expectedOffset = int64(entry.Offset) + 1
 		}
 	}
-	if lastOffset >= 0 {
-		u.offsets[topic] = access.Offset(lastOffset)
-	}
-	//log.Info().Int("read", entriesRead).Str("topic", topic).Uint64("offset", offset).Msg("read/write")
 }
 
 func createTopics(topics int) []string {

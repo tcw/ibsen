@@ -15,7 +15,7 @@ func memAfs() *afero.Afero {
 
 func TestCreateTopic(t *testing.T) {
 	afs := memAfs()
-	err := CreateTopic(afs, "tmp", "topic1")
+	err := CreateTopicDirectory(afs, "tmp", "topic1")
 	assert.Nil(t, err)
 	exists, err := afs.Exists("tmp/topic1")
 	assert.Nil(t, err)
@@ -24,7 +24,7 @@ func TestCreateTopic(t *testing.T) {
 
 func TestListAllFilesInTopic(t *testing.T) {
 	afs := memAfs()
-	err := CreateTopic(afs, "tmp", "topic1")
+	err := CreateTopicDirectory(afs, "tmp", "topic1")
 	assert.Nil(t, err)
 	err = afs.WriteFile("tmp/topic1/001.log", []byte("dummy"), 0600)
 	assert.Nil(t, err)
@@ -45,9 +45,9 @@ func TestListAllFilesInTopic(t *testing.T) {
 
 func TestListAllTopics(t *testing.T) {
 	afs := memAfs()
-	err := CreateTopic(afs, "tmp", "topic1")
+	err := CreateTopicDirectory(afs, "tmp", "topic1")
 	assert.Nil(t, err)
-	err = CreateTopic(afs, "tmp", "topic2")
+	err = CreateTopicDirectory(afs, "tmp", "topic2")
 	assert.Nil(t, err)
 	err = afs.MkdirAll("tmp/.git", 0744)
 	assert.Nil(t, err)

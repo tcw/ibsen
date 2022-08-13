@@ -20,7 +20,6 @@ func TestTopic_Write(t *testing.T) {
 		RootPath:     "tmp",
 		TopicName:    "topic1",
 		MaxBlockSize: 1024 * 1024,
-		Loaded:       true,
 	})
 	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
@@ -37,7 +36,6 @@ func TestTopic_Load(t *testing.T) {
 		RootPath:     "tmp",
 		TopicName:    "topic1",
 		MaxBlockSize: 2000,
-		Loaded:       false,
 	})
 	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
@@ -54,7 +52,6 @@ func TestTopic_Read_one_batch(t *testing.T) {
 		RootPath:     "tmp",
 		TopicName:    "topic1",
 		MaxBlockSize: 2000,
-		Loaded:       false,
 	})
 	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
@@ -87,7 +84,6 @@ func TestTopic_Read_multiple_batches(t *testing.T) {
 		RootPath:     "tmp",
 		TopicName:    "topic1",
 		MaxBlockSize: 2000,
-		Loaded:       false,
 	})
 	err := topic.Write(createInputEntries(1000))
 	assert.Nil(t, err)
@@ -124,7 +120,6 @@ func TestTopic_UpdateIndex_sigle_block(t *testing.T) {
 		RootPath:     "tmp",
 		TopicName:    "topic1",
 		MaxBlockSize: 20000,
-		Loaded:       false,
 	})
 	err := topic.Write(createInputEntries(100))
 	assert.Nil(t, err)
@@ -151,7 +146,6 @@ func TestTopic_UpdateIndex_multiple_blocks(t *testing.T) {
 		RootPath:     "tmp",
 		TopicName:    "topic1",
 		MaxBlockSize: 2000,
-		Loaded:       false,
 	})
 	err := topic.Write(createInputEntries(1000))
 	assert.Nil(t, err)

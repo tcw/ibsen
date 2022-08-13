@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/errore"
@@ -36,13 +35,15 @@ func openFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
 	return f, nil
 }
 
+var FileNotFound = errors.New("file not found")
+
 func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	exists, err := afs.Exists(fileName)
 	if err != nil {
-		return nil, errore.NewF(fmt.Sprintf("Failes checking if file %s exist", fileName))
+		return nil, errore.NewF("Failes checking if file %s exist", fileName)
 	}
 	if !exists {
-		return nil, errore.NewF(fmt.Sprintf("File %s does not exist", fileName))
+		return nil, FileNotFound
 	}
 	f, err := afs.OpenFile(fileName, os.O_RDONLY, 0400)
 	if err != nil {
@@ -51,8 +52,32 @@ func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	return f, nil
 }
 
-func CreateTopic(afs *afero.Afero, rootPath string, topic string) error {
-	return afs.Mkdir(rootPath+Sep+topic, 0744)
+func TouchFile(afs *afero.Afero, fileName string) error {
+	_, err := os.Stat(fileName)
+	if os.IsNotExist(err) {
+		file, err := afs.Create(fileName)
+		if err != nil {
+			return errore.Wrap(err)
+		}
+		defer file.Close()
+	}
+	return nil
+}
+
+func CreateTopicDirectory(afs *afero.Afero, rootPath string, topic string) (bool, error) {
+	path := rootPath + Sep + topic
+	exists, err := afero.Exists(afs, path)
+	if err != nil {
+		return false, errore.Wrap(err)
+	}
+	if !exists {
+		err = afs.Mkdir(path, 0744)
+		if err != nil {
+			return false, errore.Wrap(err)
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 func ListAllFilesInTopic(afs *afero.Afero, rootPath string, topic string) ([]os.FileInfo, error) {
