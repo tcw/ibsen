@@ -25,23 +25,29 @@ import (
 var tracer = otel.Tracer("ibsen-server")
 
 type server struct {
-	manager manager.LogManager
+	manager          manager.LogManager
+	CheckForNewEvery time.Duration
+	TTL              time.Duration
 }
 
 type IbsenGrpcServer struct {
-	CertFile    string
-	KeyFile     string
-	UseTls      bool
-	IbsenServer *grpc.Server
-	Manager     manager.LogManager
+	CertFile         string
+	KeyFile          string
+	UseTls           bool
+	TTL              time.Duration
+	CheckForNewEvery time.Duration
+	IbsenServer      *grpc.Server
+	Manager          manager.LogManager
 }
 
-func NewUnsecureIbsenGrpcServer(manager manager.LogManager) *IbsenGrpcServer {
+func NewUnsecureIbsenGrpcServer(manager manager.LogManager, TTL time.Duration, checkForNewEvery time.Duration) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
-		CertFile: "",
-		KeyFile:  "",
-		UseTls:   false,
-		Manager:  manager,
+		CertFile:         "",
+		KeyFile:          "",
+		UseTls:           false,
+		Manager:          manager,
+		CheckForNewEvery: checkForNewEvery,
+		TTL:              TTL,
 	}
 }
 
@@ -80,7 +86,9 @@ func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener, wg *sync.WaitGroup,
 	igs.IbsenServer = grpcServer
 
 	RegisterIbsenServer(grpcServer, &server{
-		manager: igs.Manager,
+		manager:          igs.Manager,
+		TTL:              igs.TTL,
+		CheckForNewEvery: igs.CheckForNewEvery,
 	})
 	return grpcServer.Serve(listener)
 }
@@ -118,44 +126,67 @@ func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus,
 }
 
 func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
-	logChan := make(chan *[]access.LogEntry)
-	var wg sync.WaitGroup
-	go sendBatchMessage(logChan, &wg, readServer)
-	topicName := manager.TopicName(params.Topic)
-	err := s.manager.Read(manager.ReadParams{
-		TopicName:          topicName,
-		From:               access.Offset(params.Offset),
-		BatchSize:          params.BatchSize,
-		LogChan:            logChan,
-		Wg:                 &wg,
-		ReturnOnCompletion: params.StopOnCompletion,
-	})
-	if err == manager.TopicNotFound {
-		return status.Errorf(codes.NotFound, "Topic %s not found", topicName)
+	readTTL := time.Now().Add(s.TTL)
+	var nextOffset = access.Offset(params.Offset)
+	for time.Until(readTTL) > 0 {
+		logChan := make(chan *[]access.LogEntry)
+		terminate := make(chan bool)
+		lastOffset := make(chan access.Offset)
+		var wg sync.WaitGroup
+		go sendBatchMessage(logChan, &wg, readServer, terminate, lastOffset)
+		topicName := manager.TopicName(params.Topic)
+		err := s.manager.Read(manager.ReadParams{
+			TopicName:          topicName,
+			From:               nextOffset,
+			BatchSize:          params.BatchSize,
+			LogChan:            logChan,
+			Wg:                 &wg,
+			ReturnOnCompletion: params.StopOnCompletion,
+		})
+		if err == manager.TopicNotFound {
+			terminate <- true
+			return status.Errorf(codes.NotFound, "Topic %s not found", topicName)
+		}
+		if err == access.NoEntriesFound {
+			terminate <- true
+			time.Sleep(s.CheckForNewEvery)
+			continue
+		}
+		if err != nil {
+			terminate <- true
+			log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("read api failed")
+			return status.Error(codes.Unknown, "error reading streaming")
+		}
+		wg.Wait()
+		terminate <- true
+		nextOffset = <-lastOffset + 1
 	}
-	if err != nil {
-		log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("read api failed")
-		return status.Error(codes.Unknown, "error reading streaming")
-	}
-	wg.Wait()
 	return nil
 }
 
-func sendBatchMessage(logChan chan *[]access.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadServer) {
+func sendBatchMessage(logChan chan *[]access.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadServer, terminate chan bool, lastOffset chan access.Offset) {
+	var lastReadOffset = access.Offset(0)
 	for {
-		entryBatch := <-logChan
-		batch := *entryBatch
-		if len(batch) == 0 {
-			break
-		}
-		err := outStream.Send(&OutputEntries{
-			Entries: convert(entryBatch),
-		})
-		if err != nil {
-			log.Err(err)
+		select {
+		case <-terminate:
+			close(logChan)
+			lastOffset <- lastReadOffset
 			return
+		case entryBatch := <-logChan:
+			batch := *entryBatch
+			if len(batch) == 0 {
+				break
+			}
+			lastReadOffset = access.Offset(batch[len(batch)-1].Offset)
+			err := outStream.Send(&OutputEntries{
+				Entries: convert(entryBatch),
+			})
+			if err != nil {
+				log.Err(err)
+				return
+			}
+			wg.Done()
 		}
-		wg.Done()
 	}
 }
 

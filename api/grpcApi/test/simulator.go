@@ -15,6 +15,10 @@ import (
 	"time"
 )
 
+func init() {
+	rand.Seed(2)
+}
+
 type SimulationParams struct {
 	topics       int
 	users        int
@@ -154,7 +158,6 @@ func (u *User) write(t *testing.T) {
 	u.dataWritten = written
 	if err != nil {
 		log.Fatal().Err(err).Msg("Simulated write failed")
-
 	}
 }
 
@@ -171,6 +174,8 @@ func (u *User) read(t *testing.T, topic string) {
 
 	var expectedOffset int64 = 0
 	entriesRead := 0
+	bacthNumber := 1
+	var resultCollector = map[int][]uint64{}
 	for {
 		in, err := entryStream.Recv()
 		if err == io.EOF {
@@ -185,20 +190,22 @@ func (u *User) read(t *testing.T, topic string) {
 		//	Msg("simulator read")
 		//log.Info().Msgf("Entries %d", len(entries))
 		for _, entry := range entries {
+			resultCollector[bacthNumber] = append(resultCollector[bacthNumber], entry.Offset)
 			entriesRead = entriesRead + 1
 			if expectedOffset != int64(entry.Offset) {
-				log.Warn().
+				log.Info().Msgf("%v", resultCollector)
+				log.Fatal().
 					Str("user", u.name).
 					Str("topic", topic).
 					Int("entriesRead", entriesRead).
-					Uint64("start_offset", offset).
-					Uint64("current_offset", entry.Offset).
+					Uint64("last_read_offset", entry.Offset).
 					Int64("last_offset", expectedOffset).
 					Msg("offset_out_of_order")
 				t.Fail()
 			}
 			expectedOffset = int64(entry.Offset) + 1
 		}
+		bacthNumber = bacthNumber + 1
 	}
 }
 

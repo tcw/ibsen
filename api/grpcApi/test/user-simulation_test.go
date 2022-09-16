@@ -24,7 +24,7 @@ func TestName(t *testing.T) {
 
 	params := SimulationParams{
 		topics:       50,
-		users:        100,
+		users:        50,
 		dataLimit:    10 * 1024 * 1024,
 		testDuration: time.Second * 10,
 		writeDelay: RandomizedTimeInterval{

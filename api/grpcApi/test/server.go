@@ -28,18 +28,19 @@ func startGrpcServer(afs *afero.Afero, rootPath string) {
 	if err != nil {
 		log.Fatal().Err(err)
 	}
-	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
+	params := manager.LogTopicManagerParams{
 		ReadOnly:         false,
 		Afs:              afs,
 		TTL:              5 * time.Second,
 		CheckForNewEvery: 100 * time.Millisecond,
 		MaxBlockSize:     10,
 		RootPath:         rootPath,
-	})
+	}
+	topicsManager, err := manager.NewLogTopicsManager(params)
 	if err != nil {
 		log.Fatal().Err(err)
 	}
-	ibsenServer = grpcApi.NewUnsecureIbsenGrpcServer(&topicsManager)
+	ibsenServer = grpcApi.NewUnsecureIbsenGrpcServer(&topicsManager, params.TTL, params.CheckForNewEvery)
 	lis, err := net.Listen("tcp", ibsenTestTarge)
 	if err != nil {
 		log.Fatal().Err(err)

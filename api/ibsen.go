@@ -103,7 +103,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 }
 
 func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager manager.LogManager) error {
-	ibsenGrpcServer = grpcApi.NewUnsecureIbsenGrpcServer(manager)
+	ibsenGrpcServer = grpcApi.NewUnsecureIbsenGrpcServer(manager, ibs.TTL, time.Second*2)
 	log.Info().Msg(fmt.Sprintf("Started ibsen server on: [%s]", lis.Addr().String()))
 	fmt.Print(ibsenFiglet)
 	var wg sync.WaitGroup

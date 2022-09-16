@@ -56,7 +56,15 @@ func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error)
 }
 
 func (l *LogTopicsManager) List() []TopicName {
-	return nil //todo
+	topics, err := access.ListAllTopics(l.Params.Afs, l.Params.RootPath)
+	if err != nil {
+		log.Err(err).Msg("failed listing topics")
+	}
+	var topicNames []TopicName
+	for _, topic := range topics {
+		topicNames = append(topicNames, TopicName(topic))
+	}
+	return topicNames
 }
 
 func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr) error {
@@ -75,38 +83,13 @@ var TopicNotFound error = errors.New("topic not found")
 
 func (l *LogTopicsManager) Read(params ReadParams) error {
 	topic := l.getTopic(params.TopicName)
-	readTTL := time.Now().Add(l.Params.TTL)
 	readFrom := params.From
-	for time.Until(readTTL) > 0 {
-		log.Debug().
-			Uint64("from", uint64(readFrom)).
-			Msg("read manager")
-		readResult, err := topic.ReadLog(access.ReadLogParams{
-			LogChan:   params.LogChan,
-			Wg:        params.Wg,
-			From:      readFrom,
-			BatchSize: params.BatchSize,
-		})
-		log.Debug().Uint64("lastOffset", uint64(readResult.LastLogOffset)).
-			Uint64("entries", readResult.EntriesRead).
-			Msg("read manager result")
-		if err == access.NoEntriesFound {
-			time.Sleep(l.Params.CheckForNewEvery)
-			continue
-		}
-		if err != nil {
-			return errore.Wrap(err)
-		}
-		if params.ReturnOnCompletion {
-			return nil
-		}
-		if readResult.EntriesRead > 0 {
-			readTTL = time.Now().Add(l.Params.TTL)
-			readFrom = readResult.NextOffset()
-		}
-		time.Sleep(l.Params.CheckForNewEvery)
-	}
-	return nil
+	return topic.ReadLog(access.ReadLogParams{
+		LogChan:   params.LogChan,
+		Wg:        params.Wg,
+		From:      readFrom,
+		BatchSize: params.BatchSize,
+	})
 }
 
 func (l *LogTopicsManager) allTopics() map[string]*access.Topic {
