@@ -40,18 +40,18 @@ type LogTopicManagerParams struct {
 }
 
 type LogTopicsManager struct {
-	Params           LogTopicManagerParams
-	Topics           *sync.Map
-	TopicWriteLocker *sync.Map
-	LoadedTopics     *sync.Map
+	Params            LogTopicManagerParams
+	Topics            map[TopicName]*access.Topic
+	TopicWriteLocker  *sync.Map
+	TopicCreateLocker *sync.Map
 }
 
 func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error) {
 	return LogTopicsManager{
-		Params:           params,
-		Topics:           &sync.Map{},
-		TopicWriteLocker: &sync.Map{},
-		LoadedTopics:     &sync.Map{},
+		Params:            params,
+		Topics:            make(map[TopicName]*access.Topic),
+		TopicWriteLocker:  &sync.Map{},
+		TopicCreateLocker: &sync.Map{},
 	}, nil
 }
 
@@ -75,14 +75,14 @@ func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr)
 	var mutex = locker.(*sync.Mutex)
 	mutex.Lock()
 	defer mutex.Unlock()
-	topic := l.getTopic(topicName)
+	topic := l.loadOrCreateTopic(topicName)
 	return topic.Write(entries)
 }
 
 var TopicNotFound error = errors.New("topic not found")
 
 func (l *LogTopicsManager) Read(params ReadParams) error {
-	topic := l.getTopic(params.TopicName)
+	topic := l.loadOrCreateTopic(params.TopicName)
 	readFrom := params.From
 	return topic.ReadLog(access.ReadLogParams{
 		LogChan:   params.LogChan,
@@ -92,22 +92,16 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 	})
 }
 
-func (l *LogTopicsManager) allTopics() map[string]*access.Topic {
-	var topics map[string]*access.Topic
-	l.Topics.Range(func(key, value any) bool {
-		topics[key.(string)] = value.(*access.Topic)
-		return true
-	})
-	return topics
-}
-
-func (l *LogTopicsManager) getTopic(name TopicName) *access.Topic {
-	_, loaded := l.LoadedTopics.LoadOrStore(string(name), "dummy")
-	if !loaded {
-		l.Topics.Store(string(name), l.newTopic(name))
+func (l *LogTopicsManager) loadOrCreateTopic(name TopicName) *access.Topic {
+	locker, _ := l.TopicCreateLocker.LoadOrStore(string(name), &sync.Mutex{})
+	var mutex = locker.(*sync.Mutex)
+	mutex.Lock()
+	defer mutex.Unlock()
+	topicName := l.Topics[name]
+	if topicName == nil {
+		l.Topics[name] = l.newTopic(name)
 	}
-	value, _ := l.Topics.Load(string(name))
-	return value.(*access.Topic)
+	return l.Topics[name]
 }
 
 func (l *LogTopicsManager) newTopic(topicName TopicName) *access.Topic {
@@ -125,7 +119,6 @@ func (l *LogTopicsManager) newTopic(topicName TopicName) *access.Topic {
 		MaxBlockSize: l.Params.MaxBlockSize,
 	})
 	if !createdTopicDirectory {
-		log.Info().Str("topic", string(topicName)).Msg("loaded")
 		err = topic.Load()
 		if err != nil {
 			log.Fatal().Str("topic", string(topicName)).
@@ -133,6 +126,7 @@ func (l *LogTopicsManager) newTopic(topicName TopicName) *access.Topic {
 				Err(err).
 				Msg("unable to load topic")
 		}
+		log.Info().Str("topic", string(topicName)).Msg("loaded")
 	}
 	log.Info().Str("topic", string(topicName)).Msg("created")
 	return topic
@@ -140,7 +134,7 @@ func (l *LogTopicsManager) newTopic(topicName TopicName) *access.Topic {
 
 func (l *LogTopicsManager) indexScheduler() {
 	for {
-		for name, topic := range l.allTopics() {
+		for name, topic := range l.Topics {
 			_, err := topic.UpdateIndex()
 			if err != nil {
 				log.Err(err).Msg(fmt.Sprintf("index builder for topic %s has failed", name))
