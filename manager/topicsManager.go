@@ -14,12 +14,11 @@ import (
 type TopicName string
 
 type ReadParams struct {
-	TopicName          TopicName
-	LogChan            chan *[]access.LogEntry
-	Wg                 *sync.WaitGroup
-	From               access.Offset
-	BatchSize          uint32
-	ReturnOnCompletion bool
+	TopicName TopicName
+	LogChan   chan *[]access.LogEntry
+	Wg        *sync.WaitGroup
+	From      access.Offset
+	BatchSize uint32
 }
 
 type LogManager interface {

@@ -136,12 +136,11 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 		go sendBatchMessage(logChan, &wg, readServer, terminate, lastOffset)
 		topicName := manager.TopicName(params.Topic)
 		err := s.manager.Read(manager.ReadParams{
-			TopicName:          topicName,
-			From:               nextOffset,
-			BatchSize:          params.BatchSize,
-			LogChan:            logChan,
-			Wg:                 &wg,
-			ReturnOnCompletion: params.StopOnCompletion,
+			TopicName: topicName,
+			From:      nextOffset,
+			BatchSize: params.BatchSize,
+			LogChan:   logChan,
+			Wg:        &wg,
 		})
 		if err == manager.TopicNotFound {
 			terminate <- true
@@ -160,6 +159,10 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 		wg.Wait()
 		terminate <- true
 		nextOffset = <-lastOffset + 1
+		readTTL = time.Now().Add(s.TTL)
+		if params.StopOnCompletion {
+			return nil
+		}
 	}
 	return nil
 }

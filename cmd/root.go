@@ -83,6 +83,7 @@ var (
 				InMemory:         inMemory,
 				Afs:              afs,
 				RootPath:         absolutePath,
+				TTL:              30 * time.Second,
 				MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
 				OTELExporterAddr: OTELExporterAddr,
 				CpuProfile:       cpuProfile,
