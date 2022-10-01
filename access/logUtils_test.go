@@ -196,7 +196,7 @@ func TestLoadTopicBlocks(t *testing.T) {
 	_, err = file.Write(CreateByteEntry([]byte("dummy3"), 2))
 	assert.Nil(t, err)
 
-	index, _, err := CreateIndex(afs, logFileName, 0, 1)
+	index, _, err := FindIndexOffsetsFromLog(afs, logFileName, 0, 1)
 	assert.Nil(t, err)
 	err = afs.WriteFile(indexFileName, index, 0600)
 	assert.Nil(t, err)

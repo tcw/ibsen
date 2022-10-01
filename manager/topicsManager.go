@@ -39,19 +39,27 @@ type LogTopicManagerParams struct {
 }
 
 type LogTopicsManager struct {
-	Params            LogTopicManagerParams
-	Topics            map[TopicName]*access.Topic
-	TopicWriteLocker  *sync.Map
-	TopicCreateLocker *sync.Map
+	Params             LogTopicManagerParams
+	Topics             map[TopicName]*access.Topic
+	TopicWriteLocker   *sync.Map
+	TopicCreateLocker  *sync.Map
+	TerminationChannel chan bool
 }
 
 func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error) {
-	return LogTopicsManager{
-		Params:            params,
-		Topics:            make(map[TopicName]*access.Topic),
-		TopicWriteLocker:  &sync.Map{},
-		TopicCreateLocker: &sync.Map{},
-	}, nil
+	manager := LogTopicsManager{
+		Params:             params,
+		Topics:             make(map[TopicName]*access.Topic),
+		TopicWriteLocker:   &sync.Map{},
+		TopicCreateLocker:  &sync.Map{},
+		TerminationChannel: make(chan bool),
+	}
+	go manager.startIndexScheduler(manager.TerminationChannel)
+	return manager, nil
+}
+
+func (l *LogTopicsManager) ShutdownIndexer() {
+	l.TerminationChannel <- true
 }
 
 func (l *LogTopicsManager) List() []TopicName {
@@ -126,20 +134,27 @@ func (l *LogTopicsManager) newTopic(topicName TopicName) *access.Topic {
 				Msg("unable to load topic")
 		}
 		log.Info().Str("topic", string(topicName)).Msg("loaded")
+	} else {
+		log.Info().Str("topic", string(topicName)).Msg("created")
 	}
-	log.Info().Str("topic", string(topicName)).Msg("created")
 	return topic
 }
 
-func (l *LogTopicsManager) indexScheduler() {
+func (l *LogTopicsManager) startIndexScheduler(terminate chan bool) {
 	for {
-		for name, topic := range l.Topics {
-			_, err := topic.UpdateIndex()
-			if err != nil {
-				log.Err(err).Msg(fmt.Sprintf("index builder for topic %s has failed", name))
+		select {
+		case <-terminate:
+			close(terminate)
+			return
+		default:
+			time.Sleep(time.Second * 10)
+			for name, topic := range l.Topics {
+				_, err := topic.UpdateIndex()
+				if err != nil {
+					log.Err(err).Msg(fmt.Sprintf("index builder for topic %s has failed", name))
+				}
 			}
 		}
-		time.Sleep(time.Second * 10)
 	}
 }
 

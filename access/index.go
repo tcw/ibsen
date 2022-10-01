@@ -1,6 +1,7 @@
 package access
 
 import (
+	"encoding/binary"
 	"fmt"
 )
 
@@ -11,6 +12,22 @@ type IndexOffset struct {
 
 type Index struct {
 	IndexOffsets []IndexOffset
+}
+
+func CreateIndex(bytes []byte) Index {
+	batchSize := 16
+	index := Index{IndexOffsets: make([]IndexOffset, 0)}
+	for i := 0; i < len(bytes); i += batchSize {
+		end := i + batchSize
+		if end > len(bytes) {
+			return index
+		}
+		index.add(IndexOffset{
+			Offset:     Offset(binary.LittleEndian.Uint64(bytes[i : end-8])),
+			ByteOffset: int64(binary.LittleEndian.Uint64(bytes[i+8 : end])),
+		})
+	}
+	return index
 }
 
 func (idx Index) Size() int {
@@ -36,7 +53,7 @@ func (idx Index) ToString() string {
 	return indexToString
 }
 
-//Todo: this is linear search, should use range tree for large indices
+// Todo: this is linear search, should use range tree for large indices
 func (idx Index) findNearestByteOffset(offset Offset) IndexOffset {
 	for i := len(idx.IndexOffsets) - 1; i >= 0; i-- {
 		if offset >= idx.IndexOffsets[i].Offset {

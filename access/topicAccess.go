@@ -82,19 +82,22 @@ func (t *Topic) UpdateIndex() (bool, error) {
 		return false, nil
 	}
 	defer atomic.CompareAndSwapInt32(&t.indexMutex, 1, 0)
-
 	t.indexWg.Add(1)
 	defer func() {
 		t.indexWg.Done()
 	}()
 
-	notIndexed, err := t.findLogBlocksNotIndexed()
+	notIndexed, err := t.findLogBlocksNotCompletelyIndexed()
 	if err != nil {
 		return true, errore.Wrap(err)
 	}
 	for _, block := range notIndexed {
 		if t.IndexPosition == nil {
 			pos, err := t.indexBlock(block, 0)
+			log.Debug().Str("topic", t.TopicName).
+				Uint64("logBlock", uint64(pos.Block)).
+				Int64("byteOffset", 0).
+				Msg("index updated from start log")
 			if err != nil {
 				return true, errore.Wrap(err)
 			}
@@ -104,12 +107,20 @@ func (t *Topic) UpdateIndex() (bool, error) {
 			position := t.IndexPosition
 			if position.Block == block {
 				pos, err := t.indexBlock(block, position.ByteOffset)
+				log.Debug().Str("topic", t.TopicName).
+					Uint64("logBlock", uint64(pos.Block)).
+					Int64("byteOffset", position.ByteOffset).
+					Msg("index updated")
 				if err != nil {
 					return true, errore.Wrap(err)
 				}
 				t.IndexPosition = &pos
 			} else {
 				pos, err := t.indexBlock(block, 0)
+				log.Debug().Str("topic", t.TopicName).
+					Uint64("logBlock", uint64(pos.Block)).
+					Int64("byteOffset", 0).
+					Msg("index updated")
 				if err != nil {
 					return true, errore.Wrap(err)
 				}
@@ -389,7 +400,7 @@ func (t *Topic) findLastIndexLogBlockPosition() (*LogBlockPosition, bool, error)
 	if err != nil {
 		return nil, false, errore.Wrap(err)
 	}
-	index, err := MarshallIndex(indexAsBytes)
+	index := CreateIndex(indexAsBytes)
 	indexOffsetHead := index.Head()
 	return &LogBlockPosition{
 		Block:      LogBlock(indexBlockHead),
@@ -402,7 +413,7 @@ func (t *Topic) indexBlock(block LogBlock, byteOffset int64) (LogBlockPosition, 
 	if err != nil {
 		return LogBlockPosition{}, errore.Wrap(err)
 	}
-	indexAsBytes, newByteOffset, err := CreateIndex(t.Afs, logBlockFilename, byteOffset, 10)
+	indexAsBytes, newByteOffset, err := FindIndexOffsetsFromLog(t.Afs, logBlockFilename, byteOffset, 10)
 	if err != nil {
 		return LogBlockPosition{}, errore.Wrap(err)
 	}
@@ -437,7 +448,7 @@ func (t *Topic) findCurrentIndexLogBlockPosition() (LogBlockPosition, bool, erro
 	if err != nil {
 		return LogBlockPosition{}, false, errore.Wrap(err)
 	}
-	index, err := MarshallIndex(byteIndex)
+	index := CreateIndex(byteIndex)
 	if err != nil {
 		return LogBlockPosition{}, false, errore.Wrap(err)
 	}
@@ -505,7 +516,7 @@ func (t *Topic) getIndexFromIndexBlock(block IndexBlock) (Index, error) {
 	if err != nil {
 		return Index{}, errore.Wrap(err)
 	}
-	index, err := MarshallIndex(bytes)
+	index := CreateIndex(bytes)
 	if err != nil {
 		return Index{}, errore.Wrap(err)
 	}
@@ -565,11 +576,14 @@ func (t *Topic) indexSize() int {
 	return len(t.IndexBlockList)
 }
 
-func (t *Topic) findLogBlocksNotIndexed() ([]LogBlock, error) {
+func (t *Topic) findLogBlocksNotCompletelyIndexed() ([]LogBlock, error) {
 	if t.logSize() == 0 {
 		return nil, BlockNotFound
 	}
-	logStartPos := t.indexSize()
+	logStartPos := t.indexSize() - 1
+	if logStartPos < 0 {
+		logStartPos = 0
+	}
 	return t.LogBlockList[logStartPos:], nil
 }
 

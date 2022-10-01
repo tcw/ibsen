@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
 	"math"
@@ -29,12 +30,23 @@ func ReadLogFile(fileName string, batchSize uint32) error {
 	if err != nil {
 		return err
 	}
+	wg.Wait()
 	return nil
 }
 
-// Todo: implement
 func ReadLogIndexFile(fileName string) error {
-	fmt.Println(fileName)
+	var fs = afero.NewOsFs()
+	afs := &afero.Afero{Fs: fs}
+	file, err := afs.ReadFile(fileName)
+	if err != nil {
+		log.Fatal().Err(err).Str("file", fileName).Msg("reading file failed")
+	}
+	log.Info().Str("file", fileName).Msg("read index file")
+	index := access.CreateIndex(file)
+	if err != nil {
+		log.Fatal().Err(err).Str("file", fileName).Msg("marshalling file failed")
+	}
+	fmt.Println(index.ToString())
 	return nil
 }
 
@@ -43,7 +55,7 @@ func sendBatchMessage(logChan chan *[]access.LogEntry, wg *sync.WaitGroup) {
 		entryBatch := <-logChan
 		batch := *entryBatch
 		for _, entry := range batch {
-			fmt.Printf("%d\t%s", entry.Offset, string(entry.Entry))
+			fmt.Printf("%d\t%s\n", entry.Offset, string(entry.Entry))
 		}
 		wg.Done()
 	}

@@ -374,6 +374,14 @@ func CreateByteEntry(entry []byte, currentOffset Offset) []byte {
 	return utils.JoinSize(20+entrySize, check, byteSize, entry, offset)
 }
 
+func Uint64ArrayToBytes(uintArray []uint64) []byte {
+	var bytes []byte
+	for _, value := range uintArray {
+		bytes = append(bytes, uint64ToLittleEndian(value)...)
+	}
+	return bytes
+}
+
 func isLittleEndianMSBSet(byteValue byte) bool {
 	return (byteValue>>7)&1 == 1
 }
