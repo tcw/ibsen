@@ -88,8 +88,11 @@ func (t *Topic) UpdateIndex() (bool, error) {
 	}()
 
 	notIndexed, err := t.findLogBlocksNotCompletelyIndexed()
+	if err == BlockNotFound {
+		return false, nil
+	}
 	if err != nil {
-		return true, errore.Wrap(err)
+		return false, errore.Wrap(err)
 	}
 	for _, block := range notIndexed {
 		if t.IndexPosition == nil {
@@ -134,15 +137,17 @@ func (t *Topic) UpdateIndex() (bool, error) {
 
 func (t *Topic) Load() error {
 	logBlocks, indexBlocks, err := LoadTopicBlocks(t.Afs, t.RootPath, t.TopicName)
-
 	if err != nil {
 		return err
+	}
+	if len(logBlocks) == 0 {
+		return nil
 	}
 	t.IndexBlockList = indexBlocks
 	t.LogBlockList = logBlocks
 	head, hasBlockHead := t.logBlockHead()
 	if !hasBlockHead {
-		return errors.New("Topic " + t.TopicName + " has no block head")
+		return errore.New("Topic " + t.TopicName + " has no block head")
 	}
 	blockFileName, err := t.logBlockFileName(head)
 	if err != nil {

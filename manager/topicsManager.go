@@ -39,19 +39,19 @@ type LogTopicManagerParams struct {
 }
 
 type LogTopicsManager struct {
-	Params             LogTopicManagerParams
-	Topics             map[TopicName]*access.Topic
+	Params LogTopicManagerParams
+	//Topics             map[TopicName]*access.Topic
 	TopicWriteLocker   *sync.Map
-	TopicCreateLocker  *sync.Map
+	Topics             *sync.Map
 	TerminationChannel chan bool
 }
 
 func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error) {
 	manager := LogTopicsManager{
-		Params:             params,
-		Topics:             make(map[TopicName]*access.Topic),
+		Params: params,
+		//Topics:             make(map[TopicName]*access.Topic),
 		TopicWriteLocker:   &sync.Map{},
-		TopicCreateLocker:  &sync.Map{},
+		Topics:             &sync.Map{},
 		TerminationChannel: make(chan bool),
 	}
 	go manager.startIndexScheduler(manager.TerminationChannel)
@@ -78,18 +78,18 @@ func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr)
 	if l.Params.ReadOnly {
 		return errors.New("ibsen is in read only mode and will not accept any writes")
 	}
+	topic := l.getOrCreateTopic(topicName)
 	locker, _ := l.TopicWriteLocker.LoadOrStore(string(topicName), &sync.Mutex{})
 	var mutex = locker.(*sync.Mutex)
 	mutex.Lock()
 	defer mutex.Unlock()
-	topic := l.loadOrCreateTopic(topicName)
 	return topic.Write(entries)
 }
 
 var TopicNotFound error = errors.New("topic not found")
 
 func (l *LogTopicsManager) Read(params ReadParams) error {
-	topic := l.loadOrCreateTopic(params.TopicName)
+	topic := l.getOrCreateTopic(params.TopicName)
 	readFrom := params.From
 	return topic.ReadLog(access.ReadLogParams{
 		LogChan:   params.LogChan,
@@ -99,20 +99,17 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 	})
 }
 
-func (l *LogTopicsManager) loadOrCreateTopic(name TopicName) *access.Topic {
-	locker, _ := l.TopicCreateLocker.LoadOrStore(string(name), &sync.Mutex{})
-	var mutex = locker.(*sync.Mutex)
-	mutex.Lock()
-	defer mutex.Unlock()
-	topicName := l.Topics[name]
-	if topicName == nil {
-		l.Topics[name] = l.newTopic(name)
+func (l *LogTopicsManager) getOrCreateTopic(name TopicName) *access.Topic {
+	topic, ok := l.Topics.Load(string(name))
+	if !ok {
+		topic = l.loadOrCreateNewTopic(name)
+		topic, _ = l.Topics.LoadOrStore(string(name), topic)
 	}
-	return l.Topics[name]
+	return topic.(*access.Topic)
 }
 
-func (l *LogTopicsManager) newTopic(topicName TopicName) *access.Topic {
-	createdTopicDirectory, err := access.CreateTopicDirectory(l.Params.Afs, l.Params.RootPath, string(topicName))
+func (l *LogTopicsManager) loadOrCreateNewTopic(topicName TopicName) *access.Topic {
+	created, err := access.CreateTopicDirectory(l.Params.Afs, l.Params.RootPath, string(topicName))
 	if err != nil {
 		log.Fatal().Str("topic", string(topicName)).
 			Str("stack", errore.SprintStackTraceBd(err)).
@@ -125,7 +122,7 @@ func (l *LogTopicsManager) newTopic(topicName TopicName) *access.Topic {
 		TopicName:    string(topicName),
 		MaxBlockSize: l.Params.MaxBlockSize,
 	})
-	if !createdTopicDirectory {
+	if !created {
 		err = topic.Load()
 		if err != nil {
 			log.Fatal().Str("topic", string(topicName)).
@@ -133,9 +130,9 @@ func (l *LogTopicsManager) newTopic(topicName TopicName) *access.Topic {
 				Err(err).
 				Msg("unable to load topic")
 		}
-		log.Info().Str("topic", string(topicName)).Msg("loaded")
+		log.Info().Str("topic", string(topicName)).Msg("loaded topic from disk")
 	} else {
-		log.Info().Str("topic", string(topicName)).Msg("created")
+		log.Info().Str("topic", string(topicName)).Msg("created topic")
 	}
 	return topic
 }
@@ -148,20 +145,13 @@ func (l *LogTopicsManager) startIndexScheduler(terminate chan bool) {
 			return
 		default:
 			time.Sleep(time.Second * 10)
-			for name, topic := range l.Topics {
-				_, err := topic.UpdateIndex()
+			l.Topics.Range(func(key, value any) bool {
+				_, err := value.(*access.Topic).UpdateIndex()
 				if err != nil {
-					log.Err(err).Msg(fmt.Sprintf("index builder for topic %s has failed", name))
+					log.Err(err).Msg(fmt.Sprintf("index builder for topic %s has failed", key.(string)))
 				}
-			}
+				return true
+			})
 		}
 	}
-}
-
-func keys[K comparable, V any](m map[K]V) []K {
-	keys := make([]K, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }

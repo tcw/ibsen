@@ -14,13 +14,13 @@ import (
 )
 
 func TestName(t *testing.T) {
-	var fs = afero.NewMemMapFs()
-	//var fs = afero.NewOsFs()
+	//var fs = afero.NewMemMapFs()
+	var fs = afero.NewOsFs()
 	afs = &afero.Afero{Fs: fs}
 	//file, err := startCpuPprof()
 	//assert.Nil(t, err)
-	go startGrpcServer(afs, "/tmp/data")
-	//go startGrpcServer(afs, "/home/tom/Ibsen/data")
+	//go startGrpcServer(afs, "/tmp/data")
+	go startGrpcServer(afs, "/home/tom/Ibsen/data")
 
 	params := SimulationParams{
 		topics:       3,
