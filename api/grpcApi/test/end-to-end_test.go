@@ -2,7 +2,6 @@ package test
 
 import (
 	"context"
-	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/api/grpcApi"
@@ -98,7 +97,7 @@ func list() (*grpcApi.TopicList, error) {
 	if ctx.Err() == context.Canceled {
 		return nil, ctx.Err()
 	}
-	return client.Client.List(ctx, &empty.Empty{})
+	return client.Client.List(ctx, &grpcApi.EmptyArgs{})
 }
 func writeLarge(topic string, numberOfEntries int, entryKb int) (int, error) {
 	client, err := newIbsenClient(ibsenTestTarge)

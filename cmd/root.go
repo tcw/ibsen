@@ -233,6 +233,26 @@ var (
 			fmt.Println(result)
 		},
 	}
+
+	cmdClientList = &cobra.Command{
+		Use:              "list",
+		Short:            "list topics with grpc client",
+		Long:             `list topic with grpc client`,
+		TraverseChildren: true,
+		Args:             cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err)
+			}
+			result, err := client.List()
+			if err != nil {
+				log.Fatal().Err(err)
+			}
+			fmt.Println(result)
+		},
+	}
+
 	cmdClientRead = &cobra.Command{
 		Use:              "read [file] [offset (default=0)] [batch size (default=1000)]",
 		Short:            "read with grpc client",
@@ -306,7 +326,7 @@ func init() {
 
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdTools)
 	cmdTools.AddCommand(cmdToolsReadIndexLogFile, cmdToolsReadLogFile)
-	cmdClient.AddCommand(cmdClientWrite, cmdClientRead, cmdClientBench)
+	cmdClient.AddCommand(cmdClientList, cmdClientWrite, cmdClientRead, cmdClientBench)
 }
 
 func getenv(key, fallback string) string {

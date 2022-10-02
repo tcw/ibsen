@@ -2,7 +2,6 @@ package grpcApi
 
 import (
 	"context"
-	"github.com/golang/protobuf/ptypes/empty"
 	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/errore"
@@ -51,7 +50,7 @@ func NewUnsecureIbsenGrpcServer(manager manager.LogManager, TTL time.Duration, c
 	}
 }
 
-func NewIbsenGrpcServer(manager manager.LogManager, key string, cert string) *IbsenGrpcServer {
+func NewSecureIbsenGrpcServer(manager manager.LogManager, key string, cert string) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
 		CertFile: cert,
 		KeyFile:  key,
@@ -99,7 +98,7 @@ func (igs *IbsenGrpcServer) Shutdown() {
 
 var _ IbsenServer = &server{}
 
-func (s server) List(ctx context.Context, empty *empty.Empty) (*TopicList, error) {
+func (s server) List(ctx context.Context, empty *EmptyArgs) (*TopicList, error) {
 	list := s.manager.List()
 	return &TopicList{
 		Topics: convertTopics(list),
@@ -133,7 +132,7 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 		terminate := make(chan bool)
 		lastOffset := make(chan access.Offset)
 		var wg sync.WaitGroup
-		go sendBatchMessage(logChan, &wg, readServer, terminate, lastOffset)
+		go sendGRPCMessage(logChan, &wg, readServer, terminate, lastOffset)
 		topicName := manager.TopicName(params.Topic)
 		err := s.manager.Read(manager.ReadParams{
 			TopicName: topicName,
@@ -167,7 +166,7 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	return nil
 }
 
-func sendBatchMessage(logChan chan *[]access.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadServer, terminate chan bool, lastOffset chan access.Offset) {
+func sendGRPCMessage(logChan chan *[]access.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadServer, terminate chan bool, lastOffset chan access.Offset) {
 	var lastReadOffset = access.Offset(0)
 	for {
 		select {

@@ -39,17 +39,17 @@ type LogTopicManagerParams struct {
 }
 
 type LogTopicsManager struct {
-	Params LogTopicManagerParams
-	//Topics             map[TopicName]*access.Topic
+	Params             LogTopicManagerParams
 	TopicWriteLocker   *sync.Map
 	Topics             *sync.Map
 	TerminationChannel chan bool
 }
 
+var TopicNotFound = errors.New("topic not found")
+
 func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error) {
 	manager := LogTopicsManager{
-		Params: params,
-		//Topics:             make(map[TopicName]*access.Topic),
+		Params:             params,
 		TopicWriteLocker:   &sync.Map{},
 		Topics:             &sync.Map{},
 		TerminationChannel: make(chan bool),
@@ -85,8 +85,6 @@ func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr)
 	defer mutex.Unlock()
 	return topic.Write(entries)
 }
-
-var TopicNotFound error = errors.New("topic not found")
 
 func (l *LogTopicsManager) Read(params ReadParams) error {
 	topic := l.getOrCreateTopic(params.TopicName)

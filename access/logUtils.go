@@ -52,18 +52,6 @@ func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
 	return f, nil
 }
 
-func TouchFile(afs *afero.Afero, fileName string) error {
-	_, err := os.Stat(fileName)
-	if os.IsNotExist(err) {
-		file, err := afs.Create(fileName)
-		if err != nil {
-			return errore.Wrap(err)
-		}
-		defer file.Close()
-	}
-	return nil
-}
-
 func CreateTopicDirectory(afs *afero.Afero, rootPath string, topic string) (bool, error) {
 	path := rootPath + Sep + topic
 	exists, err := afero.Exists(afs, path)
@@ -263,6 +251,7 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 	var currentOffset Offset = 0
 	var offsetFromLogg Offset = 0
 	var entriesRead uint64 = 0
+	currentBatchInBytes := 0
 	log.Debug().
 		Str("filename", params.File.Name()).
 		Int64("byteOffset", params.StartByteOffset).
@@ -295,13 +284,16 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 				EntriesRead:   entriesRead,
 			}, nil
 		}
-		if slicePointer != 0 && uint32(slicePointer)%params.BatchSize == 0 {
+		if (slicePointer != 0 &&
+			uint32(slicePointer)%params.BatchSize == 0) ||
+			currentBatchInBytes > 10*1024*1024 {
 			params.Wg.Add(1)
 			sendingEntries := logEntries[:slicePointer]
 			logEntryCopy := make([]LogEntry, slicePointer)
 			copy(logEntryCopy, sendingEntries)
 			params.LogChan <- &logEntryCopy
 			slicePointer = 0
+			currentBatchInBytes = 0
 		}
 		// Checksum
 		_, err := io.ReadFull(reader, checksum)
@@ -357,6 +349,7 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 			ByteSize: int(size),
 			Entry:    entry,
 		}
+		currentBatchInBytes = +int(size)
 		entriesRead = entriesRead + 1
 		currentOffset = currentOffset + 1
 		slicePointer = slicePointer + 1

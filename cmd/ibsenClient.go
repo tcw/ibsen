@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -38,6 +39,14 @@ func newIbsenClient(target string) (IbsenClient, error) {
 		Client: client,
 		Ctx:    ctx,
 	}, nil
+}
+
+func (ic *IbsenClient) List() (string, error) {
+	list, err := ic.Client.List(ic.Ctx, &grpcApi.EmptyArgs{})
+	if err != nil {
+		return "", err
+	}
+	return strings.Join(list.Topics, "\n"), nil
 }
 
 func (ic *IbsenClient) Read(topic string, offset uint64, batchSize uint32) error {
