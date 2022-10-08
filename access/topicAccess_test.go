@@ -60,7 +60,7 @@ func TestTopic_Read_one_batch(t *testing.T) {
 	logChan := make(chan *[]LogEntry)
 	var wg sync.WaitGroup
 	go func() {
-		err := topic.ReadLog(ReadLogParams{
+		err := topic.Read(ReadLogParams{
 			LogChan:   logChan,
 			Wg:        &wg,
 			From:      0,
@@ -96,7 +96,7 @@ func TestTopic_Read_multiple_batches(t *testing.T) {
 	logChan := make(chan *[]LogEntry)
 	var wg sync.WaitGroup
 	go func() {
-		err := topic.ReadLog(ReadLogParams{
+		err := topic.Read(ReadLogParams{
 			LogChan:   logChan,
 			Wg:        &wg,
 			From:      0,

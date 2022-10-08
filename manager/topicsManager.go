@@ -89,7 +89,7 @@ func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr)
 func (l *LogTopicsManager) Read(params ReadParams) error {
 	topic := l.getOrCreateTopic(params.TopicName)
 	readFrom := params.From
-	return topic.ReadLog(access.ReadLogParams{
+	return topic.Read(access.ReadLogParams{
 		LogChan:   params.LogChan,
 		Wg:        params.Wg,
 		From:      readFrom,

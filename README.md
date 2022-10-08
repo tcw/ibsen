@@ -5,7 +5,7 @@
 ### GO
 
 ```shell script
-go get github.com/tcw/ibsen@latest
+go install github.com/tcw/ibsen@latest
 ```
 
 ### Docker
@@ -87,6 +87,7 @@ openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out c
 - better command completion
 - improved error recovery/analysis
 - block compression (Zstandard,snappy) ?
+- Improve message when no dir for startup is given
 
 ## Benchmarks
 
