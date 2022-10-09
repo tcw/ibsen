@@ -28,6 +28,8 @@ var (
 	benchWriteBaches       int
 	benchReadBatches       int
 	OTELExporterAddr       string
+	certKey                string
+	privateKey             string
 	concurrent             int
 	cpuProfile             string
 	memProfile             string
@@ -86,6 +88,8 @@ var (
 				TTL:              30 * time.Second,
 				MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
 				OTELExporterAddr: OTELExporterAddr,
+				GRPCCertKey:      AbsOrEmpty(certKey),
+				GRPCPrivateKey:   AbsOrEmpty(privateKey),
 				CpuProfile:       cpuProfile,
 				MemProfile:       memProfile,
 			}
@@ -291,6 +295,18 @@ var (
 	}
 )
 
+func AbsOrEmpty(path string) string {
+	if path == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		log.Warn().Msgf("unable to find absolut file path for %s", path)
+		return path
+	}
+	return abs
+}
+
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
@@ -308,13 +324,15 @@ func init() {
 
 	rootCmd.PersistentFlags().IntVarP(&port, "port", "p", port, "config file (default is current directory)")
 	rootCmd.PersistentFlags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
+	rootCmd.PersistentFlags().StringVarP(&certKey, "certKey", "", "", "Certificate key file path for GRPC SLT")
+	rootCmd.PersistentFlags().StringVarP(&privateKey, "privateKey", "", "", "Private key file path for GRPC SLT")
 	rootCmd.PersistentFlags().StringVarP(&OTELExporterAddr, "OTELExporter", "e", "", "config file (0.0.0.0:4317)")
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "v", false, "set logging to debug level")
 	rootCmd.PersistentFlags().BoolVarP(&trace, "trace", "t", false, "set logging to trace level")
+
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
 	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
 	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
-
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")
 

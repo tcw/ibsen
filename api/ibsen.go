@@ -41,6 +41,8 @@ type IbsenServer struct {
 	RootPath         string
 	MaxBlockSize     int
 	OTELExporterAddr string
+	GRPCPrivateKey   string
+	GRPCCertKey      string
 	CpuProfile       string
 	MemProfile       string
 	cpuProfileFile   *os.File
@@ -103,7 +105,15 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 }
 
 func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager manager.LogManager) error {
-	ibsenGrpcServer = grpcApi.NewUnsecureIbsenGrpcServer(manager, ibs.TTL, time.Second*2)
+	if ibs.GRPCPrivateKey == "" && ibs.GRPCCertKey == "" {
+		log.Warn().Msg("ibsen server is starting in UNSECURE mode")
+		ibsenGrpcServer = grpcApi.NewUnsecureIbsenGrpcServer(manager, ibs.TTL, time.Second*2)
+	} else {
+		ibsenGrpcServer = grpcApi.NewSecureIbsenGrpcServer(manager, grpcApi.GRPCSecurity{
+			CertKeyFile:   ibs.GRPCCertKey,
+			PrivteKeyFile: ibs.GRPCPrivateKey,
+		}, ibs.TTL, time.Second*2)
+	}
 	log.Info().Msg(fmt.Sprintf("Started ibsen server on: [%s]", lis.Addr().String()))
 	fmt.Print(ibsenFiglet)
 	var wg sync.WaitGroup

@@ -29,11 +29,15 @@ type server struct {
 	TTL              time.Duration
 }
 
+type GRPCSecurity struct {
+	CertKeyFile   string
+	PrivteKeyFile string
+}
+
 type IbsenGrpcServer struct {
-	CertFile         string
-	KeyFile          string
-	UseTls           bool
-	TTL              time.Duration
+	GRPCSecurity     GRPCSecurity
+	UseTLS           bool
+	ConnectionTTL    time.Duration
 	CheckForNewEvery time.Duration
 	IbsenServer      *grpc.Server
 	Manager          manager.LogManager
@@ -41,21 +45,20 @@ type IbsenGrpcServer struct {
 
 func NewUnsecureIbsenGrpcServer(manager manager.LogManager, TTL time.Duration, checkForNewEvery time.Duration) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
-		CertFile:         "",
-		KeyFile:          "",
-		UseTls:           false,
+		UseTLS:           false,
 		Manager:          manager,
 		CheckForNewEvery: checkForNewEvery,
-		TTL:              TTL,
+		ConnectionTTL:    TTL,
 	}
 }
 
-func NewSecureIbsenGrpcServer(manager manager.LogManager, key string, cert string) *IbsenGrpcServer {
+func NewSecureIbsenGrpcServer(manager manager.LogManager, grpcSec GRPCSecurity, TTL time.Duration, checkForNewEvery time.Duration) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
-		CertFile: cert,
-		KeyFile:  key,
-		UseTls:   true,
-		Manager:  manager,
+		GRPCSecurity:     grpcSec,
+		UseTLS:           true,
+		Manager:          manager,
+		CheckForNewEvery: checkForNewEvery,
+		ConnectionTTL:    TTL,
 	}
 }
 
@@ -71,9 +74,9 @@ func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener, wg *sync.WaitGroup,
 		grpc.UnaryInterceptor(otelgrpc.UnaryServerInterceptor()),
 		grpc.StreamInterceptor(otelgrpc.StreamServerInterceptor()),
 	}
-	if igs.UseTls {
-		absCert := testdata.Path(igs.CertFile)
-		absKey := testdata.Path(igs.KeyFile)
+	if igs.UseTLS {
+		absCert := testdata.Path(igs.GRPCSecurity.CertKeyFile)
+		absKey := testdata.Path(igs.GRPCSecurity.PrivteKeyFile)
 		creds, err := credentials.NewServerTLSFromFile(absCert, absKey)
 		opts = append(opts, grpc.Creds(creds))
 		if err != nil {
@@ -86,7 +89,7 @@ func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener, wg *sync.WaitGroup,
 
 	RegisterIbsenServer(grpcServer, &server{
 		manager:          igs.Manager,
-		TTL:              igs.TTL,
+		TTL:              igs.ConnectionTTL,
 		CheckForNewEvery: igs.CheckForNewEvery,
 	})
 	return grpcServer.Serve(listener)
