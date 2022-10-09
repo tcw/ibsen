@@ -16,23 +16,23 @@ import (
 )
 
 var (
-	debug                  bool
-	trace                  bool
-	host                   string
-	port                   int
-	maxBlockSizeMB         int
-	readOnly               bool
-	rootDirectory          string
-	benchEntiesByteSize    int
-	benchEntiesInEachBatch int
-	benchWriteBaches       int
-	benchReadBatches       int
-	OTELExporterAddr       string
-	certKey                string
-	privateKey             string
-	concurrent             int
-	cpuProfile             string
-	memProfile             string
+	debug                       bool
+	trace                       bool
+	host                        string
+	port                        int
+	maxBlockSizeMB              int
+	readOnly                    bool
+	rootDirectory               string
+	benchEntiesByteSize         int
+	benchEntiesInEachBatchWrite int
+	benchWriteBatches           int
+	benchReadBatches            int
+	OTELExporterAddr            string
+	certKey                     string
+	privateKey                  string
+	concurrent                  int
+	cpuProfile                  string
+	memProfile                  string
 
 	rootCmd = &cobra.Command{
 		Use:              "ibsen",
@@ -70,6 +70,13 @@ var (
 				absolutePath, err = filepath.Abs(rootDirectory)
 				if err != nil {
 					log.Fatal().Err(err)
+				}
+				exists, err := afs.DirExists(rootDirectory)
+				if err != nil {
+					log.Fatal().Err(err).Msgf("failed checking if root dir exists")
+				}
+				if !exists {
+					log.Fatal().Msgf("data root path [%s] does not exist", rootDirectory)
 				}
 				var fs = afero.NewOsFs()
 				if readOnly {
@@ -191,12 +198,12 @@ var (
 			}
 			benchmarkReport := ""
 			if concurrent > 1 {
-				benchmarkReport, err = client.BenchmarkConcurrent(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches, concurrent)
+				benchmarkReport, err = client.BenchmarkConcurrent(topic, benchEntiesByteSize, benchEntiesInEachBatchWrite, benchWriteBatches, benchReadBatches, concurrent)
 				if err != nil {
 					log.Fatal().Err(err)
 				}
 			} else {
-				benchmarkReport, err = client.Benchmark(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches)
+				benchmarkReport, err = client.Benchmark(topic, benchEntiesByteSize, benchEntiesInEachBatchWrite, benchWriteBatches, benchReadBatches)
 				if err != nil {
 					log.Fatal().Err(err)
 				}
@@ -336,11 +343,13 @@ func init() {
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")
 
-	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "bwe", "a", 100, "Entry byte size in bench")
-	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatch, "ben", "b", 1000, "Entries in each batch in bench")
-	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "r", 1000, "Read in batches of")
-	cmdClientBench.Flags().IntVarP(&benchWriteBaches, "bwb", "w", 1000, "Write in batches of")
-	cmdClientBench.Flags().IntVarP(&concurrent, "concurrent", "c", 1, "Concurrency number")
+	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "byteSize", "", 100, "Entry byte size in bench")
+	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatchWrite, "batchSize", "", 1000, "Entries in each batch in bench")
+	cmdClientBench.Flags().IntVarP(&benchWriteBatches, "bwb", "", 1000, "Write in batches of")
+	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "", 1000, "Read in batches of")
+	cmdClientBench.Flags().IntVarP(&concurrent, "concurrent", "", 1, "Concurrency number")
+
+	//writeEntryByteSize int, writeEntriesInEachBatch int, writeBatches int, readBatchSize int
 
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdTools)
 	cmdTools.AddCommand(cmdToolsReadIndexLogFile, cmdToolsReadLogFile)

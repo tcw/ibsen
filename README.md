@@ -82,12 +82,20 @@ GRPC_GO_LOG_VERBOSITY_LEVEL=99 GRPC_GO_LOG_SEVERITY_LEVEL=info
 openssl req -newkey rsa:2048 -new -nodes -x509 -days 3650 -keyout key.pem -out cert.pem
 ```
 
+```shell
+
+openssl req -x509 -newkey rsa:4096 -days 365 -nodes -keyout ca-key.pem -out ca-cert.pem 
+openssl x509 -in ca-cert.pem -noout -text
+openssl req -newkey rsa:4096 -nodes -keyout server-key.pem -out server-req.pem 
+openssl x509 -req -in server-req.pem -days 180 -CA ca-cert.pem -CAkey ca-key.pem -CAcreateserial -out server-cert.pem -extfile server-ext.cnf
+openssl x509 -in server-cert.pem -noout -text
+```
+
 ## Todo
 
 - better command completion
 - improved error recovery/analysis
 - block compression (Zstandard,snappy) ?
-- Improve message when no dir for startup is given
 
 ## Benchmarks
 
