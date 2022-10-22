@@ -375,10 +375,6 @@ func Uint64ArrayToBytes(uintArray []uint64) []byte {
 	return bytes
 }
 
-func isLittleEndianMSBSet(byteValue byte) bool {
-	return (byteValue>>7)&1 == 1
-}
-
 func uint64ToLittleEndian(offset uint64) []byte {
 	bytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(bytes, offset)

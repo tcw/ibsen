@@ -596,13 +596,6 @@ func (t *Topic) findBlocksToIndex() ([]LogBlock, error) {
 	return t.LogBlockList[logStartPos:], nil
 }
 
-func (t *Topic) tail() ([]LogBlock, error) {
-	if t.logSize() < 2 {
-		return []LogBlock{}, NoBlocksFound
-	}
-	return t.LogBlockList[:t.logSize()-2], nil
-}
-
 func (t *Topic) indexBlockContaining(offset Offset) (IndexBlock, bool) {
 	if t.indexSize() == 0 {
 		return 0, false
@@ -640,24 +633,6 @@ func (t *Topic) findBlockArrayIndex(block LogBlock) (bool, int) {
 		}
 	}
 	return false, 0
-}
-
-func (t *Topic) getBlocksIncludingAndAfter(offset Offset) ([]LogBlock, error) {
-	if t.logSize() <= 0 {
-		return []LogBlock{}, NoBlocksFound
-	}
-	if t.logSize() == 1 {
-		return t.LogBlockList[0:], nil
-	}
-	if offset < Offset(t.getLogBlock(0)) {
-		return t.LogBlockList[0:], nil
-	}
-	for i := t.logSize() - 1; i >= 0; i-- {
-		if offset >= Offset(t.LogBlockList[i]) {
-			return t.LogBlockList[i:], nil
-		}
-	}
-	return []LogBlock{}, NoBlocksFound
 }
 
 func (t *Topic) debugLogIndexLookup(from Offset, byteOffset int64, scanCount int) {
