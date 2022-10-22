@@ -122,6 +122,10 @@ func (l *LogTopicsManager) loadOrCreateNewTopic(topicName TopicName) *access.Top
 	})
 	if !created {
 		err = topic.Load()
+		if err == access.NoBlocksFound {
+			log.Err(err).Str("topic", string(topicName)).
+				Msg("Topic was not loaded nor created")
+		}
 		if err != nil {
 			log.Fatal().Str("topic", string(topicName)).
 				Str("stack", errore.SprintStackTraceBd(err)).

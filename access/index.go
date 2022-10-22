@@ -14,7 +14,7 @@ type Index struct {
 	IndexOffsets []IndexOffset
 }
 
-func CreateIndex(bytes []byte) Index {
+func BuildIndexStructure(bytes []byte) Index {
 	batchSize := 16
 	index := Index{IndexOffsets: make([]IndexOffset, 0)}
 	for i := 0; i < len(bytes); i += batchSize {

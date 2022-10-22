@@ -16,7 +16,7 @@ func TestCreateIndex(t *testing.T) {
 	assert.Nil(t, err)
 	indexBytes, _, err := FindIndexOffsetsFromLog(afs, "tmp/test.log", 0, 1)
 	assert.Nil(t, err)
-	index := CreateIndex(indexBytes)
+	index := BuildIndexStructure(indexBytes)
 	assert.Nil(t, err)
 	assert.Equal(t, index.Size(), 9)
 }

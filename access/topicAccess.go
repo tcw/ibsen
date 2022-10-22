@@ -29,7 +29,7 @@ type LogBlockPosition struct {
 	ByteOffset int64
 }
 
-var BlockNotFound = errors.New("block not found")
+var NoBlocksFound = errors.New("no blocks found")
 
 var NoEntriesFound = errors.New("no entries found")
 
@@ -93,6 +93,8 @@ func NewLogTopic(params TopicParams) *Topic {
 }
 
 func (t *Topic) UpdateIndex() (bool, error) {
+
+	// Check if an indexer is currently running
 	if !atomic.CompareAndSwapInt32(&t.indexMutex, 0, 1) {
 		log.Debug().Msg("competing indices")
 		return false, nil
@@ -103,97 +105,80 @@ func (t *Topic) UpdateIndex() (bool, error) {
 		t.indexWg.Done()
 	}()
 
-	notIndexed, err := t.findLogBlocksNotCompletelyIndexed()
-	if err == BlockNotFound {
+	notIndexed, err := t.findBlocksToIndex()
+	if err == NoBlocksFound {
 		return false, nil
 	}
 	if err != nil {
 		return false, errore.Wrap(err)
 	}
+
 	for _, block := range notIndexed {
+		// if no blocks have been indexed
 		if t.IndexPosition == nil {
 			pos, err := t.indexBlock(block, 0)
-			log.Debug().Str("topic", t.TopicName).
-				Uint64("logBlock", uint64(pos.Block)).
-				Int64("byteOffset", 0).
-				Msg("index updated from start of log")
 			if err != nil {
 				return true, errore.Wrap(err)
 			}
+			debugLogIndexing(t.TopicName, pos.Block, true, "first block")
 			t.addNewIndexBlock(block)
 			t.IndexPosition = &pos
-		} else {
-			position := t.IndexPosition
-			if position.Block == block {
-				pos, err := t.indexBlock(block, position.ByteOffset)
-				if pos.ByteOffset == position.ByteOffset {
-					log.Debug().Str("topic", t.TopicName).
-						Uint64("logBlock", uint64(pos.Block)).
-						Int64("byteOffset", position.ByteOffset).
-						Msg("index was at log head, not updated")
-				}
-				log.Debug().Str("topic", t.TopicName).
-					Uint64("logBlock", uint64(pos.Block)).
-					Int64("byteOffset", position.ByteOffset).
-					Msg("index updated")
-				if err != nil {
-					return true, errore.Wrap(err)
-				}
-				t.IndexPosition = &pos
-			} else {
-				pos, err := t.indexBlock(block, 0)
-				log.Debug().Str("topic", t.TopicName).
-					Uint64("logBlock", uint64(pos.Block)).
-					Int64("byteOffset", 0).
-					Msg("index updated on new block")
-				if err != nil {
-					return true, errore.Wrap(err)
-				}
-				t.addNewIndexBlock(block)
-				t.IndexPosition = &pos
-			}
+			continue
 		}
+		position := t.IndexPosition
+		// if indexing a block which is partly indexed
+		if position.Block == block {
+			pos, err := t.indexBlock(block, position.ByteOffset)
+			if err != nil {
+				return true, errore.Wrap(err)
+			}
+			debugLogIndexing(t.TopicName, pos.Block, pos.ByteOffset == position.ByteOffset, "existing block")
+			t.IndexPosition = &pos
+			continue
+		}
+		// indexing a new block after start block
+		pos, err := t.indexBlock(block, 0)
+		debugLogIndexing(t.TopicName, pos.Block, true, "new block")
+		if err != nil {
+			return true, errore.Wrap(err)
+		}
+		t.addNewIndexBlock(block)
+		t.IndexPosition = &pos
 	}
 	return true, nil
 }
 
 func (t *Topic) Load() error {
+	// Load log and index blocks from file
 	logBlocks, indexBlocks, err := LoadTopicBlocks(t.Afs, t.RootPath, t.TopicName)
 	if err != nil {
 		return err
 	}
 	if len(logBlocks) == 0 {
-		return nil
+		return NoBlocksFound
 	}
 	t.IndexBlockList = indexBlocks
 	t.LogBlockList = logBlocks
+
+	// Find position of last entry write to log
 	head, hasBlockHead := t.logBlockHead()
 	if !hasBlockHead {
 		return errore.New("Topic " + t.TopicName + " has no block head")
 	}
-	blockFileName, err := t.logBlockFileName(head)
-	if err != nil {
-		return errore.Wrap(err)
-	}
-	offset, byteSize, err := BlockInfo(t.Afs, blockFileName)
+	offset, byteSize, err := t.findCurrentLogPosition(err, head)
 	if err != nil {
 		return errore.Wrap(err)
 	}
 	t.NextOffset = offset + 1
 	t.HeadBlockSize = int(byteSize)
-	position, _, err := t.findLastIndexLogBlockPosition()
+
+	// Find position of last entry write to index
+	position, _, err := t.findCurrentIndexLogBlockPosition()
 	if err != nil {
 		return errore.Wrap(err)
 	}
 	t.IndexPosition = position
-	if e := log.Debug(); e.Enabled() {
-		e.Str("topic", t.TopicName).
-			Int("logBlocks", len(logBlocks)).
-			Int("indexBlocks", len(indexBlocks)).
-			Int("nextOffset", int(t.NextOffset)).
-			Int("headBlockSize", t.HeadBlockSize).
-			Msg("loaded topic")
-	}
+	t.debugLogLoadResult(logBlocks, indexBlocks)
 	return nil
 }
 
@@ -321,6 +306,39 @@ func (t *Topic) Write(entries EntriesPtr) error {
 	return nil
 }
 
+func (t *Topic) findCurrentLogPosition(err error, head LogBlock) (Offset, int64, error) {
+	blockFileName, err := t.logBlockFileName(head)
+	if err != nil {
+		return 0, 0, errore.Wrap(err)
+	}
+	offset, byteSize, err := BlockInfo(t.Afs, blockFileName)
+	if err != nil {
+		return 0, 0, errore.Wrap(err)
+	}
+	return offset, byteSize, nil
+}
+
+func (t *Topic) debugLogLoadResult(logBlocks []LogBlock, indexBlocks []IndexBlock) {
+	if e := log.Debug(); e.Enabled() {
+		e.Str("topic", t.TopicName).
+			Int("logBlocks", len(logBlocks)).
+			Int("indexBlocks", len(indexBlocks)).
+			Int("nextOffset", int(t.NextOffset)).
+			Int("headBlockSize", t.HeadBlockSize).
+			Msg("loaded topic")
+	}
+}
+
+func debugLogIndexing(topicName string, logBlock LogBlock, indexUpdated bool, posDesc string) {
+	if d := log.Debug(); d.Enabled() {
+		d.Str("topic", topicName).
+			Uint64("logBlock", uint64(logBlock)).
+			Int64("byteOffset", 0).
+			Bool("index_updated", indexUpdated).
+			Msgf("index on %s", posDesc)
+	}
+}
+
 func closeFile(file afero.File) {
 	if file == nil {
 		return
@@ -382,37 +400,16 @@ func (t *Topic) endBoundaryForReadOffset() (Offset, bool) {
 
 func (t *Topic) logBlockFileName(block LogBlock) (string, error) {
 	if t.logBlockIsEmpty() {
-		return "", BlockNotFound
+		return "", NoBlocksFound
 	}
 	return t.RootPath + Sep + t.TopicName + Sep + fmt.Sprintf("%020d.log", block), nil
 }
 
 func (t *Topic) indexBlockFileName(block IndexBlock) (string, error) {
 	if t.logBlockIsEmpty() {
-		return "", BlockNotFound
+		return "", NoBlocksFound
 	}
 	return t.RootPath + Sep + t.TopicName + Sep + fmt.Sprintf("%020d.idx", block), nil
-}
-
-func (t *Topic) findLastIndexLogBlockPosition() (*LogBlockPosition, bool, error) {
-	indexBlockHead, hasHead := t.indexBlockHead()
-	if !hasHead {
-		return nil, false, nil
-	}
-	indexBlockFileName, err := t.indexBlockFileName(indexBlockHead)
-	if err != nil {
-		return nil, false, errore.Wrap(err)
-	}
-	indexAsBytes, err := t.Afs.ReadFile(indexBlockFileName)
-	if err != nil {
-		return nil, false, errore.Wrap(err)
-	}
-	index := CreateIndex(indexAsBytes)
-	indexOffsetHead := index.Head()
-	return &LogBlockPosition{
-		Block:      LogBlock(indexBlockHead),
-		ByteOffset: indexOffsetHead.ByteOffset,
-	}, true, nil
 }
 
 func (t *Topic) indexBlock(block LogBlock, byteOffset int64) (LogBlockPosition, error) {
@@ -442,25 +439,22 @@ func (t *Topic) indexBlock(block LogBlock, byteOffset int64) (LogBlockPosition, 
 	}, nil
 }
 
-func (t *Topic) findCurrentIndexLogBlockPosition() (LogBlockPosition, bool, error) {
+func (t *Topic) findCurrentIndexLogBlockPosition() (*LogBlockPosition, bool, error) {
 	indexBlockHead, hasBlock := t.indexBlockHead()
 	if !hasBlock {
-		return LogBlockPosition{}, false, nil
+		return nil, false, nil
 	}
 	indexBlockFileName, err := t.indexBlockFileName(indexBlockHead)
 	if err != nil {
-		return LogBlockPosition{}, false, errore.Wrap(err)
+		return nil, false, errore.Wrap(err)
 	}
 	byteIndex, err := t.Afs.ReadFile(indexBlockFileName)
 	if err != nil {
-		return LogBlockPosition{}, false, errore.Wrap(err)
+		return nil, false, errore.Wrap(err)
 	}
-	index := CreateIndex(byteIndex)
-	if err != nil {
-		return LogBlockPosition{}, false, errore.Wrap(err)
-	}
+	index := BuildIndexStructure(byteIndex)
 	head := index.Head()
-	return LogBlockPosition{
+	return &LogBlockPosition{
 		Block:      LogBlock(indexBlockHead),
 		ByteOffset: head.ByteOffset,
 	}, true, nil
@@ -516,7 +510,7 @@ func (t *Topic) getIndexFromIndexBlock(block IndexBlock) (Index, error) {
 	if err != nil {
 		return Index{}, errore.Wrap(err)
 	}
-	index := CreateIndex(bytes)
+	index := BuildIndexStructure(bytes)
 	if err != nil {
 		return Index{}, errore.Wrap(err)
 	}
@@ -576,9 +570,9 @@ func (t *Topic) indexSize() int {
 	return len(t.IndexBlockList)
 }
 
-func (t *Topic) findLogBlocksNotCompletelyIndexed() ([]LogBlock, error) {
+func (t *Topic) findBlocksToIndex() ([]LogBlock, error) {
 	if t.logSize() == 0 {
-		return nil, BlockNotFound
+		return nil, NoBlocksFound
 	}
 	logStartPos := t.indexSize() - 1
 	if logStartPos < 0 {
@@ -589,7 +583,7 @@ func (t *Topic) findLogBlocksNotCompletelyIndexed() ([]LogBlock, error) {
 
 func (t *Topic) tail() ([]LogBlock, error) {
 	if t.logSize() < 2 {
-		return []LogBlock{}, BlockNotFound
+		return []LogBlock{}, NoBlocksFound
 	}
 	return t.LogBlockList[:t.logSize()-2], nil
 }
@@ -635,7 +629,7 @@ func (t *Topic) findBlockArrayIndex(block LogBlock) (bool, int) {
 
 func (t *Topic) getBlocksIncludingAndAfter(offset Offset) ([]LogBlock, error) {
 	if t.logSize() <= 0 {
-		return []LogBlock{}, BlockNotFound
+		return []LogBlock{}, NoBlocksFound
 	}
 	if t.logSize() == 1 {
 		return t.LogBlockList[0:], nil
@@ -648,7 +642,7 @@ func (t *Topic) getBlocksIncludingAndAfter(offset Offset) ([]LogBlock, error) {
 			return t.LogBlockList[i:], nil
 		}
 	}
-	return []LogBlock{}, BlockNotFound
+	return []LogBlock{}, NoBlocksFound
 }
 
 func (t *Topic) debugLogIndexLookup(from Offset, byteOffset int64, scanCount int) {

@@ -42,7 +42,7 @@ func ReadLogIndexFile(fileName string) error {
 		log.Fatal().Err(err).Str("file", fileName).Msg("reading file failed")
 	}
 	log.Info().Str("file", fileName).Msg("read index file")
-	index := access.CreateIndex(file)
+	index := access.BuildIndexStructure(file)
 	if err != nil {
 		log.Fatal().Err(err).Str("file", fileName).Msg("marshalling file failed")
 	}
