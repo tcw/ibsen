@@ -105,6 +105,7 @@ func (t *Topic) UpdateIndex() (bool, error) {
 		t.indexWg.Done()
 	}()
 
+	// index log blocks not already indexed
 	notIndexed, err := t.findBlocksToIndex()
 	if err == NoBlocksFound {
 		return false, nil
@@ -185,14 +186,16 @@ func (t *Topic) Load() error {
 // ReadLog
 // Reads a log from and including the ReadLogParams.From offset until end of log.
 func (t *Topic) Read(params ReadLogParams) error {
-	endOffset, exists := t.findEndOffset(params.From)
+	// ensures reader will not read partially written log entries from file
+	endOffset, exists := t.findLastConfirmedWrittenEntryOffset(params.From)
 	if !exists {
 		return NoEntriesFound
 	}
 	block, found := t.logBlockContaining(params.From)
 	if !found {
-		return errore.New("offset out of bounds")
+		return errore.New("offset out of bounds, this should never happen!")
 	}
+	// find byte offset in file to set seek point to
 	byteOffset, scanCount, err := t.findByteOffsetInLogBlockFile(params.From)
 	if err == NoByteOffsetFound {
 		return NoEntriesFound
@@ -201,6 +204,7 @@ func (t *Topic) Read(params ReadLogParams) error {
 		return errore.Wrap(err)
 	}
 	t.debugLogIndexLookup(params.From, byteOffset, scanCount)
+	// find log file that contains offset
 	fileName, err := t.logBlockFileName(block)
 	if err != nil {
 		return errore.Wrap(err)
@@ -209,6 +213,8 @@ func (t *Topic) Read(params ReadLogParams) error {
 	if err != nil {
 		return errore.Wrap(err)
 	}
+
+	// read log file from byte offset position (with seek)
 	_, err = ReadFile(ReadFileParams{
 		File:            file,
 		LogChan:         params.LogChan,
@@ -222,6 +228,8 @@ func (t *Topic) Read(params ReadLogParams) error {
 		return errore.Wrap(err)
 	}
 	closeFile(file)
+
+	// read remaining log files
 	wasFound, i := t.findBlockArrayIndex(block)
 	if wasFound {
 		if t.logSize()-1 == i {
@@ -258,14 +266,18 @@ func (t *Topic) Read(params ReadLogParams) error {
 }
 
 func (t *Topic) Write(entries EntriesPtr) error {
+
+	// if topic is empty create the first log block
 	if t.logBlockIsEmpty() {
 		t.addNewLogBlock()
 	}
+	// if block has excited is max size create a new block
 	if t.HeadBlockSize > t.MaxBlockSize {
 		t.addNewLogBlock()
 		t.resetHeadBlockSize()
 	}
-	bytes, offsets := t.createWritableByteArray(entries)
+	// create a byte representation of entries and write to disk
+	bytes, offsets := t.buildBinaryEntryRepresentation(entries)
 	head, hasBlockHead := t.logBlockHead()
 	if !hasBlockHead {
 		return errors.New("Topic " + t.TopicName + " has no block head")
@@ -290,8 +302,11 @@ func (t *Topic) Write(entries EntriesPtr) error {
 		return err
 	}
 
+	// update internal log state
 	t.incrementOffset(offsets)
 	t.incrementHeadBlockSize(n)
+
+	// update index async if no indexer is running
 	go func() {
 		wasExecuted, err := t.UpdateIndex()
 		if err != nil {
@@ -349,7 +364,7 @@ func closeFile(file afero.File) {
 	}
 }
 
-func (t *Topic) findEndOffset(from Offset) (Offset, bool) {
+func (t *Topic) findLastConfirmedWrittenEntryOffset(from Offset) (Offset, bool) {
 	if t.logBlockIsEmpty() {
 		return 0, false
 	}
@@ -372,7 +387,7 @@ func (t *Topic) ToString() string {
 	return blocklist
 }
 
-func (t *Topic) createWritableByteArray(entries EntriesPtr) ([]byte, int) {
+func (t *Topic) buildBinaryEntryRepresentation(entries EntriesPtr) ([]byte, int) {
 	neededAllocation := 0
 	for _, entry := range *entries {
 		neededAllocation = neededAllocation + len(entry) + 20
