@@ -6,6 +6,8 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
+	"github.com/tcw/ibsen/access/common"
+	ibsLog "github.com/tcw/ibsen/access/log"
 	"github.com/tcw/ibsen/errore"
 	"sync"
 	"time"
@@ -15,15 +17,15 @@ type TopicName string
 
 type ReadParams struct {
 	TopicName TopicName
-	LogChan   chan *[]access.LogEntry
+	LogChan   chan *[]common.LogEntry
 	Wg        *sync.WaitGroup
-	From      access.Offset
+	From      common.Offset
 	BatchSize uint32
 }
 
 type LogManager interface {
 	List() []TopicName
-	Write(topic TopicName, entries access.EntriesPtr) error
+	Write(topic TopicName, entries common.EntriesPtr) error
 	Read(params ReadParams) error
 }
 
@@ -63,7 +65,7 @@ func (l *LogTopicsManager) ShutdownIndexer() {
 }
 
 func (l *LogTopicsManager) List() []TopicName {
-	topics, err := access.ListAllTopics(l.Params.Afs, l.Params.RootPath)
+	topics, err := ibsLog.ListAllTopics(l.Params.Afs, l.Params.RootPath)
 	if err != nil {
 		log.Err(err).Msg("failed listing topics")
 	}
@@ -74,7 +76,7 @@ func (l *LogTopicsManager) List() []TopicName {
 	return topicNames
 }
 
-func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr) error {
+func (l *LogTopicsManager) Write(topicName TopicName, entries common.EntriesPtr) error {
 	if l.Params.ReadOnly {
 		return errors.New("ibsen is in read only mode and will not accept any writes")
 	}
@@ -89,7 +91,7 @@ func (l *LogTopicsManager) Write(topicName TopicName, entries access.EntriesPtr)
 func (l *LogTopicsManager) Read(params ReadParams) error {
 	topic := l.getOrCreateTopic(params.TopicName)
 	readFrom := params.From
-	return topic.Read(access.ReadLogParams{
+	return topic.Read(common.ReadLogParams{
 		LogChan:   params.LogChan,
 		Wg:        params.Wg,
 		From:      readFrom,
@@ -107,14 +109,14 @@ func (l *LogTopicsManager) getOrCreateTopic(name TopicName) *access.Topic {
 }
 
 func (l *LogTopicsManager) loadOrCreateNewTopic(topicName TopicName) *access.Topic {
-	created, err := access.CreateTopicDirectory(l.Params.Afs, l.Params.RootPath, string(topicName))
+	created, err := ibsLog.CreateTopicDirectory(l.Params.Afs, l.Params.RootPath, string(topicName))
 	if err != nil {
 		log.Fatal().Str("topic", string(topicName)).
 			Str("stack", errore.SprintStackTraceBd(err)).
 			Err(err).
 			Msg("unable to create new topic directory")
 	}
-	topic := access.NewLogTopic(access.TopicParams{
+	topic := access.NewLogTopic(common.TopicParams{
 		Afs:          l.Params.Afs,
 		RootPath:     l.Params.RootPath,
 		TopicName:    string(topicName),
@@ -122,7 +124,7 @@ func (l *LogTopicsManager) loadOrCreateNewTopic(topicName TopicName) *access.Top
 	})
 	if !created {
 		err = topic.Load()
-		if err == access.NoBlocksFound {
+		if err == common.NoBlocksFound {
 			log.Err(err).Str("topic", string(topicName)).
 				Msg("Topic was not loaded nor created")
 		}

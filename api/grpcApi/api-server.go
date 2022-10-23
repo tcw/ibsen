@@ -3,7 +3,7 @@ package grpcApi
 import (
 	"context"
 	"github.com/rs/zerolog/log"
-	"github.com/tcw/ibsen/access"
+	"github.com/tcw/ibsen/access/common"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/manager"
 	"github.com/tcw/ibsen/telemetry"
@@ -129,11 +129,11 @@ func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus,
 
 func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	readTTL := time.Now().Add(s.TTL)
-	var nextOffset = access.Offset(params.Offset)
+	var nextOffset = common.Offset(params.Offset)
 	for time.Until(readTTL) > 0 {
-		logChan := make(chan *[]access.LogEntry)
+		logChan := make(chan *[]common.LogEntry)
 		terminate := make(chan bool)
-		lastOffset := make(chan access.Offset)
+		lastOffset := make(chan common.Offset)
 		var wg sync.WaitGroup
 		go sendGRPCMessage(logChan, &wg, readServer, terminate, lastOffset)
 		topicName := manager.TopicName(params.Topic)
@@ -148,7 +148,7 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 			terminate <- true
 			return status.Errorf(codes.NotFound, "Topic %s not found", topicName)
 		}
-		if err == access.NoEntriesFound {
+		if err == common.NoEntriesFound {
 			terminate <- true
 			time.Sleep(s.CheckForNewEvery)
 			continue
@@ -169,8 +169,8 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	return nil
 }
 
-func sendGRPCMessage(logChan chan *[]access.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadServer, terminate chan bool, lastOffset chan access.Offset) {
-	var lastReadOffset = access.Offset(0)
+func sendGRPCMessage(logChan chan *[]common.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadServer, terminate chan bool, lastOffset chan common.Offset) {
+	var lastReadOffset = common.Offset(0)
 	for {
 		select {
 		case <-terminate:
@@ -182,7 +182,7 @@ func sendGRPCMessage(logChan chan *[]access.LogEntry, wg *sync.WaitGroup, outStr
 			if len(batch) == 0 {
 				break
 			}
-			lastReadOffset = access.Offset(batch[len(batch)-1].Offset)
+			lastReadOffset = common.Offset(batch[len(batch)-1].Offset)
 			err := outStream.Send(&OutputEntries{
 				Entries: convert(entryBatch),
 			})
@@ -195,7 +195,7 @@ func sendGRPCMessage(logChan chan *[]access.LogEntry, wg *sync.WaitGroup, outStr
 	}
 }
 
-func convert(entries *[]access.LogEntry) []*Entry {
+func convert(entries *[]common.LogEntry) []*Entry {
 	outEntries := make([]*Entry, len(*entries))
 	for i, entry := range *entries {
 		outEntries[i] = &Entry{

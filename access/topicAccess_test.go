@@ -3,6 +3,8 @@ package access
 import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
+	"github.com/tcw/ibsen/access/common"
+	ibsLog "github.com/tcw/ibsen/access/log"
 	"strconv"
 	"sync"
 	"testing"
@@ -14,8 +16,8 @@ func init() {
 }
 
 func TestTopic_Write(t *testing.T) {
-	afs := memAfs()
-	topic := NewLogTopic(TopicParams{
+	afs := common.MemAfs()
+	topic := NewLogTopic(common.TopicParams{
 		Afs:          afs,
 		RootPath:     "tmp",
 		TopicName:    "topic1",
@@ -23,15 +25,15 @@ func TestTopic_Write(t *testing.T) {
 	})
 	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
-	lastOffset, _, err := BlockInfo(afs, "tmp/topic1/00000000000000000000.log")
+	lastOffset, _, err := ibsLog.BlockInfo(afs, "tmp/topic1/00000000000000000000.log")
 	assert.Nil(t, err)
-	assert.Equal(t, Offset(9), lastOffset)
+	assert.Equal(t, common.Offset(9), lastOffset)
 }
 
 func TestTopic_Load(t *testing.T) {
-	afs := memAfs()
+	afs := common.MemAfs()
 	//topic := NewLogTopic(afs, "tmp", "topic1", 2000, false)
-	topic := NewLogTopic(TopicParams{
+	topic := NewLogTopic(common.TopicParams{
 		Afs:          afs,
 		RootPath:     "tmp",
 		TopicName:    "topic1",
@@ -41,13 +43,13 @@ func TestTopic_Load(t *testing.T) {
 	assert.Nil(t, err)
 	err = topic.Load()
 	assert.Nil(t, err)
-	assert.Equal(t, Offset(10), topic.NextOffset)
+	assert.Equal(t, common.Offset(10), topic.NextOffset)
 	assert.Len(t, topic.LogBlockList, 1)
 }
 
 func TestTopic_Read_one_batch(t *testing.T) {
-	afs := memAfs()
-	topic := NewLogTopic(TopicParams{
+	afs := common.MemAfs()
+	topic := NewLogTopic(common.TopicParams{
 		Afs:          afs,
 		RootPath:     "tmp",
 		TopicName:    "topic1",
@@ -57,10 +59,10 @@ func TestTopic_Read_one_batch(t *testing.T) {
 	assert.Nil(t, err)
 	err = topic.Load()
 	assert.Nil(t, err)
-	logChan := make(chan *[]LogEntry)
+	logChan := make(chan *[]common.LogEntry)
 	var wg sync.WaitGroup
 	go func() {
-		err := topic.Read(ReadLogParams{
+		err := topic.Read(common.ReadLogParams{
 			LogChan:   logChan,
 			Wg:        &wg,
 			From:      0,
@@ -78,8 +80,8 @@ func TestTopic_Read_one_batch(t *testing.T) {
 }
 
 func TestTopic_Read_multiple_batches(t *testing.T) {
-	afs := memAfs()
-	topic := NewLogTopic(TopicParams{
+	afs := common.MemAfs()
+	topic := NewLogTopic(common.TopicParams{
 		Afs:          afs,
 		RootPath:     "tmp",
 		TopicName:    "topic1",
@@ -93,10 +95,10 @@ func TestTopic_Read_multiple_batches(t *testing.T) {
 	assert.Nil(t, err)
 	err = topic.Load()
 	assert.Nil(t, err)
-	logChan := make(chan *[]LogEntry)
+	logChan := make(chan *[]common.LogEntry)
 	var wg sync.WaitGroup
 	go func() {
-		err := topic.Read(ReadLogParams{
+		err := topic.Read(common.ReadLogParams{
 			LogChan:   logChan,
 			Wg:        &wg,
 			From:      0,
@@ -114,8 +116,8 @@ func TestTopic_Read_multiple_batches(t *testing.T) {
 }
 
 func TestTopic_UpdateIndex_sigle_block(t *testing.T) {
-	afs := memAfs()
-	topic := NewLogTopic(TopicParams{
+	afs := common.MemAfs()
+	topic := NewLogTopic(common.TopicParams{
 		Afs:          afs,
 		RootPath:     "tmp",
 		TopicName:    "topic1",
@@ -136,12 +138,12 @@ func TestTopic_UpdateIndex_sigle_block(t *testing.T) {
 	assert.True(t, hasHead)
 	index, err := topic.getIndexFromIndexBlock(head)
 	assert.Nil(t, err)
-	assert.Equal(t, Offset(190), index.Head().Offset)
+	assert.Equal(t, common.Offset(190), index.Head().Offset)
 }
 
 func TestTopic_UpdateIndex_multiple_blocks(t *testing.T) {
-	afs := memAfs()
-	topic := NewLogTopic(TopicParams{
+	afs := common.MemAfs()
+	topic := NewLogTopic(common.TopicParams{
 		Afs:          afs,
 		RootPath:     "tmp",
 		TopicName:    "topic1",
@@ -164,7 +166,7 @@ func TestTopic_UpdateIndex_multiple_blocks(t *testing.T) {
 	assert.True(t, hasHead)
 	index, err := topic.getIndexFromIndexBlock(head)
 	assert.Nil(t, err)
-	assert.Equal(t, Offset(2990), index.Head().Offset)
+	assert.Equal(t, common.Offset(2990), index.Head().Offset)
 }
 
 func createInputEntries(numberOfEntries int) *[][]byte {

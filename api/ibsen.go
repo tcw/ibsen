@@ -34,7 +34,7 @@ var ibsenFiglet = `
 
 type IbsenServer struct {
 	Readonly         bool
-	Lock             consensus.Lock
+	Lock             consensus.SingleIbsenWriterLock
 	InMemory         bool
 	Afs              *afero.Afero
 	TTL              time.Duration

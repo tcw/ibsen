@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
-	"github.com/tcw/ibsen/access"
+	"github.com/tcw/ibsen/access/common"
 	"github.com/tcw/ibsen/api/grpcApi"
 	"io"
 	"math/rand"
@@ -39,7 +39,7 @@ type Simulation struct {
 
 type User struct {
 	name           string
-	offsets        map[string]access.Offset
+	offsets        map[string]common.Offset
 	topics         GlobalTopics
 	ibsenClient    IbsenClient
 	params         SimulationParams
@@ -237,7 +237,7 @@ func newUser(username string, globalTopics GlobalTopics, params SimulationParams
 	return &User{
 		name:           username,
 		ibsenClient:    client,
-		offsets:        make(map[string]access.Offset),
+		offsets:        make(map[string]common.Offset),
 		dataWriteLimit: params.dataLimit / params.users,
 		topics:         globalTopics,
 		params:         params,

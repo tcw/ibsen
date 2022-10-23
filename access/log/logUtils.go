@@ -1,4 +1,4 @@
-package access
+package log
 
 import (
 	"bufio"
@@ -6,9 +6,8 @@ import (
 	"errors"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access/common"
 	"github.com/tcw/ibsen/errore"
-	"github.com/tcw/ibsen/utils"
-	"hash/crc32"
 	"io"
 	"math"
 	"os"
@@ -23,37 +22,10 @@ type BlockSizeInBytes uint64
 type FileName string
 type StrictlyMonotonicVarIntIndex []byte
 
-const Sep = string(os.PathSeparator)
-
-var crc32q = crc32.MakeTable(crc32.Castagnoli)
-
-func openFileForWrite(afs *afero.Afero, fileName string) (afero.File, error) {
-	f, err := afs.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return nil, errore.Wrap(err)
-	}
-	return f, nil
-}
-
-var FileNotFound = errors.New("file not found")
-
-func OpenFileForRead(afs *afero.Afero, fileName string) (afero.File, error) {
-	exists, err := afs.Exists(fileName)
-	if err != nil {
-		return nil, errore.NewF("Failes checking if file %s exist", fileName)
-	}
-	if !exists {
-		return nil, FileNotFound
-	}
-	f, err := afs.OpenFile(fileName, os.O_RDONLY, 0400)
-	if err != nil {
-		return nil, errore.Wrap(err)
-	}
-	return f, nil
-}
+var NoByteOffsetFound = errors.New("no byte offset found")
 
 func CreateTopicDirectory(afs *afero.Afero, rootPath string, topic string) (bool, error) {
-	path := rootPath + Sep + topic
+	path := rootPath + common.Sep + topic
 	exists, err := afero.Exists(afs, path)
 	if err != nil {
 		return false, errore.Wrap(err)
@@ -69,7 +41,7 @@ func CreateTopicDirectory(afs *afero.Afero, rootPath string, topic string) (bool
 }
 
 func ListAllFilesInTopic(afs *afero.Afero, rootPath string, topic string) ([]os.FileInfo, error) {
-	dir, err := OpenFileForRead(afs, rootPath+Sep+topic)
+	dir, err := common.OpenFileForRead(afs, rootPath+common.Sep+topic)
 	if err != nil {
 		return nil, errore.Wrap(err)
 	}
@@ -77,13 +49,13 @@ func ListAllFilesInTopic(afs *afero.Afero, rootPath string, topic string) ([]os.
 	return dir.Readdir(0)
 }
 
-func LoadTopicBlocks(afs *afero.Afero, rootPath string, topic string) ([]LogBlock, []IndexBlock, error) {
+func LoadTopicBlocks(afs *afero.Afero, rootPath string, topic string) ([]common.LogBlock, []common.IndexBlock, error) {
 	filesInTopic, err := ListAllFilesInTopic(afs, rootPath, topic)
 	if err != nil {
 		return nil, nil, errore.Wrap(err)
 	}
-	var indexBlocks []IndexBlock
-	var logBlocks []LogBlock
+	var indexBlocks []common.IndexBlock
+	var logBlocks []common.LogBlock
 	for _, info := range filesInTopic {
 		if info.IsDir() {
 			continue
@@ -95,10 +67,10 @@ func LoadTopicBlocks(afs *afero.Afero, rootPath string, topic string) ([]LogBloc
 			return nil, nil, errore.Wrap(err)
 		}
 		if fileExtension == ".log" {
-			logBlocks = append(logBlocks, LogBlock(parseUint))
+			logBlocks = append(logBlocks, common.LogBlock(parseUint))
 		}
 		if fileExtension == ".idx" {
-			indexBlocks = append(indexBlocks, IndexBlock(parseUint))
+			indexBlocks = append(indexBlocks, common.IndexBlock(parseUint))
 		}
 	}
 	sort.Slice(indexBlocks, func(i, j int) bool { return indexBlocks[i] < indexBlocks[j] })
@@ -108,7 +80,7 @@ func LoadTopicBlocks(afs *afero.Afero, rootPath string, topic string) ([]LogBloc
 
 func ListAllTopics(afs *afero.Afero, dir string) ([]string, error) {
 	var filenames []string
-	file, err := OpenFileForRead(afs, dir)
+	file, err := common.OpenFileForRead(afs, dir)
 	if err != nil {
 		return nil, errore.Wrap(err)
 	}
@@ -123,14 +95,12 @@ func ListAllTopics(afs *afero.Afero, dir string) ([]string, error) {
 	return filenames, nil
 }
 
-var NoByteOffsetFound error = errors.New("no byte offset found")
-
-func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, startAtByteOffset int64, offset Offset) (int64, int, error) {
+func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, startAtByteOffset int64, offset common.Offset) (int64, int, error) {
 	scanCount := 0
 	if offset == 0 {
 		return 0, 0, nil
 	}
-	file, err := OpenFileForRead(afs, fileName)
+	file, err := common.OpenFileForRead(afs, fileName)
 	if err != nil {
 		return 0, scanCount, errore.Wrap(err)
 	}
@@ -157,7 +127,7 @@ func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, sta
 	var offsetInFile int64 = math.MaxInt64 - 1
 	var byteOffset = startAtByteOffset
 	for {
-		if Offset(offsetInFile+1) == offset {
+		if common.Offset(offsetInFile+1) == offset {
 			return byteOffset, scanCount, nil
 		}
 		checksumBytes, err := io.ReadFull(reader, checksum)
@@ -171,7 +141,7 @@ func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, sta
 		if err != nil {
 			return 0, scanCount, errore.Wrap(err)
 		}
-		entrySize := littleEndianToUint64(bytes)
+		entrySize := binary.LittleEndian.Uint64(bytes)
 		entryBytes := make([]byte, entrySize)
 		_, err = io.ReadFull(reader, entryBytes)
 		if err != nil {
@@ -181,13 +151,13 @@ func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, sta
 		if err != nil {
 			return 0, scanCount, errore.Wrap(err)
 		}
-		offsetInFile = int64(littleEndianToUint64(bytes))
+		offsetInFile = int64(binary.LittleEndian.Uint64(bytes))
 		byteOffset = byteOffset + int64(offsetBytes) + int64(checksumBytes) + int64(sizeBytes) + int64(entrySize)
 		scanCount = scanCount + 1
 	}
 }
 
-func offsetLookBack(file afero.File) (Offset, error) {
+func offsetLookBack(file afero.File) (common.Offset, error) {
 	_, err := file.Seek(-8, io.SeekCurrent)
 	if err != nil {
 		return 0, errore.Wrap(err)
@@ -197,11 +167,11 @@ func offsetLookBack(file afero.File) (Offset, error) {
 	if err != nil {
 		return 0, errore.Wrap(err)
 	}
-	return Offset(littleEndianToUint64(bytes)), nil
+	return common.Offset(binary.LittleEndian.Uint64(bytes)), nil
 }
 
-func BlockInfo(afs *afero.Afero, blockFileName string) (Offset, int64, error) {
-	file, err := OpenFileForRead(afs, blockFileName)
+func BlockInfo(afs *afero.Afero, blockFileName string) (common.Offset, int64, error) {
+	file, err := common.OpenFileForRead(afs, blockFileName)
 	if err != nil {
 		return 0, 0, errore.Wrap(err)
 	}
@@ -215,21 +185,21 @@ func BlockInfo(afs *afero.Afero, blockFileName string) (Offset, int64, error) {
 	if err != nil {
 		return 0, 0, errore.Wrap(err)
 	}
-	offset := int64(littleEndianToUint64(bytes))
-	return Offset(offset), fileSize, nil
+	offset := int64(binary.LittleEndian.Uint64(bytes))
+	return common.Offset(offset), fileSize, nil
 }
 
 type ReadFileParams struct {
 	File            afero.File
-	LogChan         chan *[]LogEntry
+	LogChan         chan *[]common.LogEntry
 	Wg              *sync.WaitGroup
 	BatchSize       uint32
 	StartByteOffset int64
-	EndOffset       Offset
+	EndOffset       common.Offset
 }
 
 type ReadResult struct {
-	LastLogOffset Offset
+	LastLogOffset common.Offset
 	EntriesRead   uint64
 }
 
@@ -238,18 +208,13 @@ func (r *ReadResult) Update(result ReadResult) {
 	r.EntriesRead = r.EntriesRead + result.EntriesRead
 }
 
-func (r *ReadResult) NextOffset() Offset {
+func (r *ReadResult) NextOffset() common.Offset {
 	return r.LastLogOffset + 1
 }
 
-var EmptyReadResult = ReadResult{
-	LastLogOffset: 0,
-	EntriesRead:   0,
-}
-
 func ReadFile(params ReadFileParams) (ReadResult, error) {
-	var currentOffset Offset = 0
-	var offsetFromLogg Offset = 0
+	var currentOffset common.Offset = 0
+	var offsetFromLogg common.Offset = 0
 	var entriesRead uint64 = 0
 	currentBatchInBytes := 0
 	log.Debug().
@@ -270,7 +235,7 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 	reader := bufio.NewReader(params.File)
 	bytes := make([]byte, 8)
 	checksum := make([]byte, 4)
-	logEntries := make([]LogEntry, params.BatchSize)
+	logEntries := make([]common.LogEntry, params.BatchSize)
 	slicePointer := 0
 	for {
 		if currentOffset == params.EndOffset {
@@ -289,7 +254,7 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 			currentBatchInBytes > 10*1024*1024 {
 			params.Wg.Add(1)
 			sendingEntries := logEntries[:slicePointer]
-			logEntryCopy := make([]LogEntry, slicePointer)
+			logEntryCopy := make([]common.LogEntry, slicePointer)
 			copy(logEntryCopy, sendingEntries)
 			params.LogChan <- &logEntryCopy
 			slicePointer = 0
@@ -311,7 +276,7 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 		if err != nil {
 			return ReadResult{}, errore.Wrap(err)
 		}
-		checksumValue := littleEndianToUint32(bytes)
+		checksumValue := binary.LittleEndian.Uint32(bytes)
 
 		// Entry size
 		_, err = io.ReadFull(reader, bytes)
@@ -319,7 +284,7 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 			return ReadResult{}, errore.Wrap(err)
 		}
 
-		size := littleEndianToUint64(bytes)
+		size := binary.LittleEndian.Uint64(bytes)
 
 		// Entry bytes
 		entry := make([]byte, size)
@@ -335,15 +300,15 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 			return ReadResult{}, errore.Wrap(err)
 		}
 
-		offset := int64(littleEndianToUint64(bytes))
-		offsetFromLogg = Offset(offset)
+		offset := int64(binary.LittleEndian.Uint64(bytes))
+		offsetFromLogg = common.Offset(offset)
 		if currentOffset == 0 {
 			currentOffset = offsetFromLogg
 		}
 		if currentOffset != offsetFromLogg {
 			return ReadResult{}, errore.NewF("read order assertion failed, expected [%d] actual [%d]", currentOffset, offsetFromLogg)
 		}
-		logEntries[slicePointer] = LogEntry{
+		logEntries[slicePointer] = common.LogEntry{
 			Offset:   uint64(offset),
 			Crc:      checksumValue,
 			ByteSize: int(size),
@@ -354,43 +319,4 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 		currentOffset = currentOffset + 1
 		slicePointer = slicePointer + 1
 	}
-}
-
-func CreateByteEntry(entry []byte, currentOffset Offset) []byte {
-	offset := uint64ToLittleEndian(uint64(currentOffset))
-	entrySize := len(entry)
-	byteSize := uint64ToLittleEndian(uint64(entrySize))
-	checksum := crc32.Checksum(byteSize, crc32q)
-	checksum = crc32.Update(checksum, crc32q, entry)
-	checksum = crc32.Update(checksum, crc32q, offset)
-	check := uint32ToLittleEndian(checksum)
-	return utils.JoinSize(20+entrySize, check, byteSize, entry, offset)
-}
-
-func Uint64ArrayToBytes(uintArray []uint64) []byte {
-	var bytes []byte
-	for _, value := range uintArray {
-		bytes = append(bytes, uint64ToLittleEndian(value)...)
-	}
-	return bytes
-}
-
-func uint64ToLittleEndian(offset uint64) []byte {
-	bytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(bytes, offset)
-	return bytes
-}
-
-func uint32ToLittleEndian(number uint32) []byte {
-	bytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(bytes, number)
-	return bytes
-}
-
-func littleEndianToUint64(bytes []byte) uint64 {
-	return binary.LittleEndian.Uint64(bytes)
-}
-
-func littleEndianToUint32(bytes []byte) uint32 {
-	return binary.LittleEndian.Uint32(bytes)
 }

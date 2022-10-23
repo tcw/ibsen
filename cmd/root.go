@@ -6,8 +6,8 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/tcw/ibsen/access/locking"
 	"github.com/tcw/ibsen/api"
-	"github.com/tcw/ibsen/consensus"
 	"net"
 	"os"
 	"path/filepath"
@@ -71,6 +71,14 @@ var (
 				if err != nil {
 					log.Fatal().Err(err)
 				}
+				log.Info().Msgf("Data directory: %s", rootDirectory)
+
+				var fs = afero.NewOsFs()
+				if readOnly {
+					fs = afero.NewReadOnlyFs(fs)
+				}
+				afs = &afero.Afero{Fs: fs}
+
 				exists, err := afs.DirExists(rootDirectory)
 				if err != nil {
 					log.Fatal().Err(err).Msgf("failed checking if root dir exists")
@@ -78,14 +86,9 @@ var (
 				if !exists {
 					log.Fatal().Msgf("data root path [%s] does not exist", rootDirectory)
 				}
-				var fs = afero.NewOsFs()
-				if readOnly {
-					fs = afero.NewReadOnlyFs(fs)
-				}
-				afs = &afero.Afero{Fs: fs}
 			}
 			writeLock := absolutePath + string(os.PathSeparator) + ".writeLock"
-			lock := consensus.NewFileLock(afs, writeLock, time.Second*10, time.Second*5)
+			lock := locking.NewFileLock(afs, writeLock, time.Second*10, time.Second*5)
 			ibsenServer := api.IbsenServer{
 				Readonly:         readOnly,
 				Lock:             lock,

@@ -1,20 +1,16 @@
-package access
+package log
 
 import (
 	"fmt"
-	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
+	"github.com/tcw/ibsen/access/common"
+	"github.com/tcw/ibsen/access/index"
 	"sync"
 	"testing"
 )
 
-func memAfs() *afero.Afero {
-	var fs = afero.NewMemMapFs()
-	return &afero.Afero{Fs: fs}
-}
-
 func TestCreateTopic(t *testing.T) {
-	afs := memAfs()
+	afs := common.MemAfs()
 	_, err := CreateTopicDirectory(afs, "tmp", "topic1")
 	assert.Nil(t, err)
 	exists, err := afs.Exists("tmp/topic1")
@@ -23,7 +19,7 @@ func TestCreateTopic(t *testing.T) {
 }
 
 func TestListAllFilesInTopic(t *testing.T) {
-	afs := memAfs()
+	afs := common.MemAfs()
 	_, err := CreateTopicDirectory(afs, "tmp", "topic1")
 	assert.Nil(t, err)
 	err = afs.WriteFile("tmp/topic1/001.log", []byte("dummy"), 0600)
@@ -44,7 +40,7 @@ func TestListAllFilesInTopic(t *testing.T) {
 }
 
 func TestListAllTopics(t *testing.T) {
-	afs := memAfs()
+	afs := common.MemAfs()
 	_, err := CreateTopicDirectory(afs, "tmp", "topic1")
 	assert.Nil(t, err)
 	_, err = CreateTopicDirectory(afs, "tmp", "topic2")
@@ -59,13 +55,13 @@ func TestListAllTopics(t *testing.T) {
 }
 
 func TestCreateByteEntry(t *testing.T) {
-	entry := CreateByteEntry([]byte("dummy"), 0)
-	afs := memAfs()
+	entry := common.CreateByteEntry([]byte("dummy"), 0)
+	afs := common.MemAfs()
 	err := afs.WriteFile("tmp/topic1/001.log", entry, 0600)
 	assert.Nil(t, err)
-	file, err := OpenFileForRead(afs, "tmp/topic1/001.log")
+	file, err := common.OpenFileForRead(afs, "tmp/topic1/001.log")
 	assert.Nil(t, err)
-	logChan := make(chan *[]LogEntry)
+	logChan := make(chan *[]common.LogEntry)
 	var wg sync.WaitGroup
 	go func() {
 		_, err = ReadFile(ReadFileParams{
@@ -89,32 +85,32 @@ func TestCreateByteEntry(t *testing.T) {
 }
 
 func TestFindBlockInfo(t *testing.T) {
-	afs := memAfs()
-	file, err := openFileForWrite(afs, "tmp/topic1/001.log")
+	afs := common.MemAfs()
+	file, err := common.OpenFileForWrite(afs, "tmp/topic1/001.log")
 	assert.Nil(t, err)
-	_, err = file.Write(CreateByteEntry([]byte("dummy1"), 0))
+	_, err = file.Write(common.CreateByteEntry([]byte("dummy1"), 0))
 	assert.Nil(t, err)
-	_, err = file.Write(CreateByteEntry([]byte("dummy2"), 1))
+	_, err = file.Write(common.CreateByteEntry([]byte("dummy2"), 1))
 	assert.Nil(t, err)
-	_, err = file.Write(CreateByteEntry([]byte("dummy3"), 2))
+	_, err = file.Write(common.CreateByteEntry([]byte("dummy3"), 2))
 	assert.Nil(t, err)
 
 	lastOffset, i, err := BlockInfo(afs, "tmp/topic1/001.log")
 	assert.Nil(t, err)
-	assert.Equal(t, Offset(2), lastOffset)
+	assert.Equal(t, common.Offset(2), lastOffset)
 	assert.Equal(t, int64(78), i)
 }
 
 func Test(t *testing.T) {
-	afs := memAfs()
+	afs := common.MemAfs()
 	fileName := "tmp/topic1/001.log"
-	file, err := openFileForWrite(afs, fileName)
+	file, err := common.OpenFileForWrite(afs, fileName)
 	assert.Nil(t, err)
-	_, err = file.Write(CreateByteEntry([]byte("dummy1"), 0))
+	_, err = file.Write(common.CreateByteEntry([]byte("dummy1"), 0))
 	assert.Nil(t, err)
-	_, err = file.Write(CreateByteEntry([]byte("dummy2"), 1))
+	_, err = file.Write(common.CreateByteEntry([]byte("dummy2"), 1))
 	assert.Nil(t, err)
-	_, err = file.Write(CreateByteEntry([]byte("dummy3"), 2))
+	_, err = file.Write(common.CreateByteEntry([]byte("dummy3"), 2))
 	assert.Nil(t, err)
 	tests := []struct {
 		offsetInput        int
@@ -173,7 +169,7 @@ func Test(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(fmt.Sprintf("byteOffset %d and offset %d", test.byteOffsetInput, test.offsetInput), func(t *testing.T) {
-			byteOffset, scanned, err := FindByteOffsetFromAndIncludingOffset(afs, fileName, test.byteOffsetInput, Offset(test.offsetInput))
+			byteOffset, scanned, err := FindByteOffsetFromAndIncludingOffset(afs, fileName, test.byteOffsetInput, common.Offset(test.offsetInput))
 			assert.Nil(t, err)
 			assert.Equal(t, test.expectedByteOffset, byteOffset)
 			assert.Equal(t, test.expectedScanned, scanned)
@@ -182,23 +178,23 @@ func Test(t *testing.T) {
 }
 
 func TestLoadTopicBlocks(t *testing.T) {
-	afs := memAfs()
+	afs := common.MemAfs()
 	logFileName := "tmp/topic1/001.log"
 	indexFileName := "tmp/topic1/001.idx"
-	file, err := openFileForWrite(afs, logFileName)
+	file, err := common.OpenFileForWrite(afs, logFileName)
 	if err != nil {
 		t.Error(err)
 	}
-	_, err = file.Write(CreateByteEntry([]byte("dummy1"), 0))
+	_, err = file.Write(common.CreateByteEntry([]byte("dummy1"), 0))
 	assert.Nil(t, err)
-	_, err = file.Write(CreateByteEntry([]byte("dummy2"), 1))
+	_, err = file.Write(common.CreateByteEntry([]byte("dummy2"), 1))
 	assert.Nil(t, err)
-	_, err = file.Write(CreateByteEntry([]byte("dummy3"), 2))
+	_, err = file.Write(common.CreateByteEntry([]byte("dummy3"), 2))
 	assert.Nil(t, err)
 
-	index, _, err := FindIndexOffsetsFromLog(afs, logFileName, 0, 1)
+	idx, _, err := index.CreateBinaryIndexFromLogFile(afs, logFileName, 0, 1)
 	assert.Nil(t, err)
-	err = afs.WriteFile(indexFileName, index, 0600)
+	err = afs.WriteFile(indexFileName, idx, 0600)
 	assert.Nil(t, err)
 	logBlocks, indexBlocks, err := LoadTopicBlocks(afs, "tmp", "topic1")
 	assert.Nil(t, err)
