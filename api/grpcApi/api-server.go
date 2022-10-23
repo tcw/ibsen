@@ -108,7 +108,7 @@ func (s server) List(ctx context.Context, empty *EmptyArgs) (*TopicList, error) 
 	}, nil
 }
 
-func convertTopics(topics []manager.TopicName) []string {
+func convertTopics(topics []common.TopicName) []string {
 	var sTopic []string
 	for _, topic := range topics {
 		sTopic = append(sTopic, string(topic))
@@ -117,7 +117,7 @@ func convertTopics(topics []manager.TopicName) []string {
 }
 
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
-	err := s.manager.Write(manager.TopicName(entries.Topic), &entries.Entries)
+	err := s.manager.Write(common.TopicName(entries.Topic), &entries.Entries)
 	if err != nil {
 		log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("write api failed")
 		return nil, status.Error(codes.Unknown, "error writing batch")
@@ -136,7 +136,7 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 		lastOffset := make(chan common.Offset)
 		var wg sync.WaitGroup
 		go sendGRPCMessage(logChan, &wg, readServer, terminate, lastOffset)
-		topicName := manager.TopicName(params.Topic)
+		topicName := common.TopicName(params.Topic)
 		err := s.manager.Read(manager.ReadParams{
 			TopicName: topicName,
 			From:      nextOffset,

@@ -15,7 +15,7 @@ import (
 
 type TopicAccess interface {
 	UpdateIndex() (bool, error)
-	Load() error
+	LoadOrCreate() error
 	Read(params common.ReadLogParams) error
 	Write(entries common.EntriesPtr) error
 }
@@ -108,7 +108,11 @@ func (t *Topic) UpdateIndex() (bool, error) {
 	return true, nil
 }
 
-func (t *Topic) Load() error {
+func (t *Topic) LoadOrCreate() error {
+	created, err := ibsLog.CreateTopicDirectory(t.Afs, t.RootPath, t.TopicName)
+	if created {
+		return nil
+	}
 	// Load log and index blocks from file
 	logBlocks, indexBlocks, err := ibsLog.LoadTopicBlocks(t.Afs, t.RootPath, t.TopicName)
 	if err != nil {

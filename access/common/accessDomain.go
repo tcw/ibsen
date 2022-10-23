@@ -10,6 +10,7 @@ type Offset uint64
 type LogBlock uint64
 type IndexBlock uint64
 type BlockIndex uint32
+type TopicName string
 
 var NoBlocksFound = errors.New("no blocks found")
 

@@ -7,16 +7,13 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/access/common"
-	ibsLog "github.com/tcw/ibsen/access/log"
 	"github.com/tcw/ibsen/errore"
 	"sync"
 	"time"
 )
 
-type TopicName string
-
 type ReadParams struct {
-	TopicName TopicName
+	TopicName common.TopicName
 	LogChan   chan *[]common.LogEntry
 	Wg        *sync.WaitGroup
 	From      common.Offset
@@ -24,8 +21,8 @@ type ReadParams struct {
 }
 
 type LogManager interface {
-	List() []TopicName
-	Write(topic TopicName, entries common.EntriesPtr) error
+	List() []common.TopicName
+	Write(topic common.TopicName, entries common.EntriesPtr) error
 	Read(params ReadParams) error
 }
 
@@ -45,6 +42,7 @@ type LogTopicsManager struct {
 	TopicWriteLocker   *sync.Map
 	Topics             *sync.Map
 	TerminationChannel chan bool
+	StatusAccess       access.StatusAccess
 }
 
 var TopicNotFound = errors.New("topic not found")
@@ -55,6 +53,10 @@ func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error)
 		TopicWriteLocker:   &sync.Map{},
 		Topics:             &sync.Map{},
 		TerminationChannel: make(chan bool),
+		StatusAccess: &access.Status{
+			Afs:      params.Afs,
+			RootPath: params.RootPath,
+		},
 	}
 	go manager.startIndexScheduler(manager.TerminationChannel)
 	return manager, nil
@@ -64,19 +66,11 @@ func (l *LogTopicsManager) ShutdownIndexer() {
 	l.TerminationChannel <- true
 }
 
-func (l *LogTopicsManager) List() []TopicName {
-	topics, err := ibsLog.ListAllTopics(l.Params.Afs, l.Params.RootPath)
-	if err != nil {
-		log.Err(err).Msg("failed listing topics")
-	}
-	var topicNames []TopicName
-	for _, topic := range topics {
-		topicNames = append(topicNames, TopicName(topic))
-	}
-	return topicNames
+func (l *LogTopicsManager) List() []common.TopicName {
+	return l.StatusAccess.List()
 }
 
-func (l *LogTopicsManager) Write(topicName TopicName, entries common.EntriesPtr) error {
+func (l *LogTopicsManager) Write(topicName common.TopicName, entries common.EntriesPtr) error {
 	if l.Params.ReadOnly {
 		return errors.New("ibsen is in read only mode and will not accept any writes")
 	}
@@ -99,7 +93,7 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 	})
 }
 
-func (l *LogTopicsManager) getOrCreateTopic(name TopicName) *access.Topic {
+func (l *LogTopicsManager) getOrCreateTopic(name common.TopicName) *access.Topic {
 	topic, ok := l.Topics.Load(string(name))
 	if !ok {
 		topic = l.loadOrCreateNewTopic(name)
@@ -108,35 +102,23 @@ func (l *LogTopicsManager) getOrCreateTopic(name TopicName) *access.Topic {
 	return topic.(*access.Topic)
 }
 
-func (l *LogTopicsManager) loadOrCreateNewTopic(topicName TopicName) *access.Topic {
-	created, err := ibsLog.CreateTopicDirectory(l.Params.Afs, l.Params.RootPath, string(topicName))
-	if err != nil {
-		log.Fatal().Str("topic", string(topicName)).
-			Str("stack", errore.SprintStackTraceBd(err)).
-			Err(err).
-			Msg("unable to create new topic directory")
-	}
+func (l *LogTopicsManager) loadOrCreateNewTopic(topicName common.TopicName) *access.Topic {
 	topic := access.NewLogTopic(common.TopicParams{
 		Afs:          l.Params.Afs,
 		RootPath:     l.Params.RootPath,
 		TopicName:    string(topicName),
 		MaxBlockSize: l.Params.MaxBlockSize,
 	})
-	if !created {
-		err = topic.Load()
-		if err == common.NoBlocksFound {
-			log.Err(err).Str("topic", string(topicName)).
-				Msg("Topic was not loaded nor created")
-		}
-		if err != nil {
-			log.Fatal().Str("topic", string(topicName)).
-				Str("stack", errore.SprintStackTraceBd(err)).
-				Err(err).
-				Msg("unable to load topic")
-		}
-		log.Info().Str("topic", string(topicName)).Msg("loaded topic from disk")
-	} else {
-		log.Info().Str("topic", string(topicName)).Msg("created topic")
+	err := topic.LoadOrCreate()
+	if err == common.NoBlocksFound {
+		log.Err(err).Str("topic", string(topicName)).
+			Msg("Topic was not loaded nor created")
+	}
+	if err != nil {
+		log.Fatal().Str("topic", string(topicName)).
+			Str("stack", errore.SprintStackTraceBd(err)).
+			Err(err).
+			Msg("unable to load topic")
 	}
 	return topic
 }
