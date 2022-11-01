@@ -40,7 +40,14 @@ func newIbsenBench(target string) (IbsenBench, error) {
 	}, nil
 }
 
-func (b *IbsenBench) BenchmarkConcurrent(topic string, writeEntryByteSize int, writeEntriesInEachBatch int, writeBatches int, readBatchSize int, concurrency int) (string, error) {
+func (b *IbsenBench) BenchmarkConcurrent(
+	topic string,
+	writeEntryByteSize int,
+	writeEntriesInEachBatch int,
+	writeBatches int,
+	readBatchSize int,
+	concurrency int) (string, error) {
+
 	var wgWrite sync.WaitGroup
 	wgWrite.Add(concurrency)
 	topicPostfixCounter := 1
@@ -65,7 +72,13 @@ func (b *IbsenBench) BenchmarkConcurrent(topic string, writeEntryByteSize int, w
 	return fmt.Sprintf("wrote\t%d in %s\nread\t%d in %s", totalWritten, writeTime, totalWritten, readTime), nil
 }
 
-func (b *IbsenBench) Benchmark(topic string, writeEntryByteSize int, writeEntriesInEachBatch int, writeBatches int, readBatchSize int) (string, error) {
+func (b *IbsenBench) Benchmark(
+	topic string,
+	writeEntryByteSize int,
+	writeEntriesInEachBatch int,
+	writeBatches int,
+	readBatchSize int) (string, error) {
+
 	writeReport, err := b.benchWrite(topic, writeEntryByteSize, writeEntriesInEachBatch, writeBatches)
 	if err != nil {
 		return "", err

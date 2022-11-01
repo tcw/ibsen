@@ -16,7 +16,8 @@ func ReadLogFile(fileName string, batchSize uint32) error {
 	var wg sync.WaitGroup
 	var fs = afero.NewOsFs()
 	afs := &afero.Afero{Fs: fs}
-	go sendBatchMessage(logChan, &wg)
+	terminate := make(chan bool)
+	go sendBatchMessage(logChan, &wg, terminate)
 	file, err := common.OpenFileForRead(afs, fileName)
 	if err != nil {
 		return err
@@ -33,6 +34,7 @@ func ReadLogFile(fileName string, batchSize uint32) error {
 		return err
 	}
 	wg.Wait()
+	terminate <- true
 	return nil
 }
 
@@ -52,13 +54,18 @@ func ReadLogIndexFile(fileName string) error {
 	return nil
 }
 
-func sendBatchMessage(logChan chan *[]common.LogEntry, wg *sync.WaitGroup) {
+func sendBatchMessage(logChan chan *[]common.LogEntry, wg *sync.WaitGroup, terminate chan bool) {
 	for {
-		entryBatch := <-logChan
-		batch := *entryBatch
-		for _, entry := range batch {
-			fmt.Printf("%d\t%s\n", entry.Offset, string(entry.Entry))
+		select {
+		case <-terminate:
+			close(logChan)
+			return
+		case entryBatch := <-logChan:
+			batch := *entryBatch
+			for _, entry := range batch {
+				fmt.Printf("%d\t%s\n", entry.Offset, string(entry.Entry))
+			}
+			wg.Done()
 		}
-		wg.Done()
 	}
 }

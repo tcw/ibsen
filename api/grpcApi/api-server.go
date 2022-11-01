@@ -43,7 +43,10 @@ type IbsenGrpcServer struct {
 	Manager          manager.LogManager
 }
 
-func NewUnsecureIbsenGrpcServer(manager manager.LogManager, TTL time.Duration, checkForNewEvery time.Duration) *IbsenGrpcServer {
+func NewUnsecureIbsenGrpcServer(
+	manager manager.LogManager,
+	TTL time.Duration,
+	checkForNewEvery time.Duration) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
 		UseTLS:           false,
 		Manager:          manager,
@@ -52,7 +55,11 @@ func NewUnsecureIbsenGrpcServer(manager manager.LogManager, TTL time.Duration, c
 	}
 }
 
-func NewSecureIbsenGrpcServer(manager manager.LogManager, grpcSec GRPCSecurity, TTL time.Duration, checkForNewEvery time.Duration) *IbsenGrpcServer {
+func NewSecureIbsenGrpcServer(
+	manager manager.LogManager,
+	grpcSec GRPCSecurity,
+	TTL time.Duration,
+	checkForNewEvery time.Duration) *IbsenGrpcServer {
 	return &IbsenGrpcServer{
 		GRPCSecurity:     grpcSec,
 		UseTLS:           true,
@@ -123,7 +130,7 @@ func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus,
 		return nil, status.Error(codes.Unknown, "error writing batch")
 	}
 	return &WriteStatus{
-		Wrote: int64(0), //todo
+		Wrote: int64(len(entries.Entries)),
 	}, nil
 }
 
@@ -134,9 +141,11 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 		logChan := make(chan *[]common.LogEntry)
 		terminate := make(chan bool)
 		lastOffset := make(chan common.Offset)
+		// starts a go routine for sending messages over grpc async
 		var wg sync.WaitGroup
 		go sendGRPCMessage(logChan, &wg, readServer, terminate, lastOffset)
 		topicName := common.TopicName(params.Topic)
+		// start reading entries passed to go routine for sending
 		err := s.manager.Read(manager.ReadParams{
 			TopicName: topicName,
 			From:      nextOffset,
@@ -158,9 +167,12 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 			log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("read api failed")
 			return status.Error(codes.Unknown, "error reading streaming")
 		}
+		// wait for all entries in topic to be sent by go routine
 		wg.Wait()
+		// destroy routine
 		terminate <- true
 		nextOffset = <-lastOffset + 1
+		// refresh ttl
 		readTTL = time.Now().Add(s.TTL)
 		if params.StopOnCompletion {
 			return nil
@@ -169,7 +181,12 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	return nil
 }
 
-func sendGRPCMessage(logChan chan *[]common.LogEntry, wg *sync.WaitGroup, outStream Ibsen_ReadServer, terminate chan bool, lastOffset chan common.Offset) {
+func sendGRPCMessage(logChan chan *[]common.LogEntry,
+	wg *sync.WaitGroup,
+	outStream Ibsen_ReadServer,
+	terminate chan bool,
+	lastOffset chan common.Offset) {
+
 	var lastReadOffset = common.Offset(0)
 	for {
 		select {
