@@ -1,4 +1,4 @@
-package access
+package utils
 
 func Join(s ...[]byte) []byte {
 	n := 0
@@ -26,4 +26,12 @@ func JoinSizeFixed(fs []byte, s ...[]byte) {
 	for _, v := range s {
 		i += copy(fs[i:], v)
 	}
+}
+
+func keys[K comparable, V any](m map[K]V) []K {
+	keys := make([]K, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

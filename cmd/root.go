@@ -2,12 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/tcw/ibsen/access/locking"
 	"github.com/tcw/ibsen/api"
-	"github.com/tcw/ibsen/consensus"
-	"github.com/tcw/ibsen/errore"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -16,18 +16,23 @@ import (
 )
 
 var (
-	host                   string
-	port                   int
-	maxBlockSizeMB         int
-	readOnly               bool
-	rootDirectory          string
-	benchEntiesByteSize    int
-	benchEntiesInEachBatch int
-	benchWriteBaches       int
-	benchReadBatches       int
-	concurrent             int
-	cpuProfile             string
-	memProfile             string
+	debug                       bool
+	trace                       bool
+	host                        string
+	port                        int
+	maxBlockSizeMB              int
+	readOnly                    bool
+	rootDirectory               string
+	benchEntiesByteSize         int
+	benchEntiesInEachBatchWrite int
+	benchWriteBatches           int
+	benchReadBatches            int
+	OTELExporterAddr            string
+	certKey                     string
+	privateKey                  string
+	concurrent                  int
+	cpuProfile                  string
+	memProfile                  string
 
 	rootCmd = &cobra.Command{
 		Use:              "ibsen",
@@ -43,6 +48,16 @@ var (
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
+			if trace {
+				zerolog.SetGlobalLevel(zerolog.TraceLevel)
+				log.Info().Msg("logger lever at trace")
+			} else if debug {
+				zerolog.SetGlobalLevel(zerolog.DebugLevel)
+				log.Info().Msg("logger lever at debug")
+			} else {
+				zerolog.SetGlobalLevel(zerolog.InfoLevel)
+				log.Info().Msg("logger lever at info")
+			}
 			inMemory := false
 			var afs *afero.Afero
 			absolutePath := "/tmp/data"
@@ -54,34 +69,48 @@ var (
 				var err error
 				absolutePath, err = filepath.Abs(rootDirectory)
 				if err != nil {
-					log.Fatal(err)
+					log.Fatal().Err(err)
 				}
+				log.Info().Msgf("Data directory: %s", rootDirectory)
+
 				var fs = afero.NewOsFs()
 				if readOnly {
 					fs = afero.NewReadOnlyFs(fs)
 				}
 				afs = &afero.Afero{Fs: fs}
+
+				exists, err := afs.DirExists(rootDirectory)
+				if err != nil {
+					log.Fatal().Err(err).Msgf("failed checking if root dir exists")
+				}
+				if !exists {
+					log.Fatal().Msgf("data root path [%s] does not exist", rootDirectory)
+				}
 			}
 			writeLock := absolutePath + string(os.PathSeparator) + ".writeLock"
-			lock := consensus.NewFileLock(afs, writeLock, time.Second*10, time.Second*5)
+			lock := locking.NewFileLock(afs, writeLock, time.Second*10, time.Second*5)
 			ibsenServer := api.IbsenServer{
-				Readonly:     readOnly,
-				Lock:         lock,
-				InMemory:     inMemory,
-				Afs:          afs,
-				RootPath:     absolutePath,
-				MaxBlockSize: maxBlockSizeMB,
-				CpuProfile:   cpuProfile,
-				MemProfile:   memProfile,
+				Readonly:         readOnly,
+				Lock:             lock,
+				InMemory:         inMemory,
+				Afs:              afs,
+				RootPath:         absolutePath,
+				TTL:              30 * time.Second,
+				MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
+				OTELExporterAddr: OTELExporterAddr,
+				GRPCCertKey:      AbsOrEmpty(certKey),
+				GRPCPrivateKey:   AbsOrEmpty(privateKey),
+				CpuProfile:       cpuProfile,
+				MemProfile:       memProfile,
 			}
 			lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 			if err != nil {
-				log.Println(errore.SprintTrace(err))
+				log.Err(err)
 				return
 			}
 			err = ibsenServer.Start(lis)
 			if err != nil {
-				log.Fatalf(errore.SprintTrace(err))
+				log.Fatal().Err(err)
 			}
 		},
 	}
@@ -117,20 +146,21 @@ var (
 				batchSizeString := args[1]
 				batchSize, err = strconv.Atoi(batchSizeString)
 				if err != nil {
-					log.Fatalf("%s is not a number", batchSizeString)
+					log.Fatal().Msg(fmt.Sprintf("%s is not a number", batchSizeString))
 				}
 			}
 			file, err := filepath.Abs(args[0])
 			if err != nil {
-				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				log.Fatal().Err(err)
 			}
 			err = ReadLogFile(file, uint32(batchSize))
 			if err != nil {
-				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				log.Fatal().Err(err)
 			}
 		},
 	}
 
+	//Todo: fix
 	cmdToolsReadIndexLogFile = &cobra.Command{
 		Use:              "read-index [file]",
 		Short:            "read ibsen index file from disk",
@@ -144,11 +174,11 @@ var (
 			}
 			absolutePath, err := filepath.Abs(args[0])
 			if err != nil {
-				log.Fatal(err)
+				log.Fatal().Err(err)
 			}
 			err = ReadLogIndexFile(absolutePath)
 			if err != nil {
-				log.Fatalln(errore.SprintTrace(errore.WrapWithContext(err)))
+				log.Fatal().Err(err)
 			}
 		},
 	}
@@ -165,18 +195,20 @@ var (
 				return
 			}
 			topic := args[0]
-			client := newIbsenBench(host + ":" + strconv.Itoa(port))
+			client, err := newIbsenBench(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err)
+			}
 			benchmarkReport := ""
-			var err error
 			if concurrent > 1 {
-				benchmarkReport, err = client.BenchmarkConcurrent(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches, concurrent)
+				benchmarkReport, err = client.BenchmarkConcurrent(topic, benchEntiesByteSize, benchEntiesInEachBatchWrite, benchWriteBatches, benchReadBatches, concurrent)
 				if err != nil {
-					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+					log.Fatal().Err(err)
 				}
 			} else {
-				benchmarkReport, err = client.Benchmark(topic, benchEntiesByteSize, benchEntiesInEachBatch, benchWriteBaches, benchReadBatches)
+				benchmarkReport, err = client.Benchmark(topic, benchEntiesByteSize, benchEntiesInEachBatchWrite, benchWriteBatches, benchReadBatches)
 				if err != nil {
-					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+					log.Fatal().Err(err)
 				}
 			}
 			fmt.Println(benchmarkReport)
@@ -195,23 +227,46 @@ var (
 				return
 			}
 			topic := args[0]
-			client := newIbsenClient(host + ":" + strconv.Itoa(port))
+			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err)
+			}
 			result := ""
-			var err error
+
 			if len(args) > 1 {
 				result, err = client.Write(topic, args[1])
 				if err != nil {
-					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+					log.Fatal().Err(err)
 				}
 			} else {
 				result, err = client.Write(topic)
 				if err != nil {
-					log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+					log.Fatal().Err(err)
 				}
 			}
 			fmt.Println(result)
 		},
 	}
+
+	cmdClientList = &cobra.Command{
+		Use:              "list",
+		Short:            "list topics with grpc client",
+		Long:             `list topic with grpc client`,
+		TraverseChildren: true,
+		Args:             cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err)
+			}
+			result, err := client.List()
+			if err != nil {
+				log.Fatal().Err(err)
+			}
+			fmt.Println(result)
+		},
+	}
+
 	cmdClientRead = &cobra.Command{
 		Use:              "read [file] [offset (default=0)] [batch size (default=1000)]",
 		Short:            "read with grpc client",
@@ -238,14 +293,29 @@ var (
 					fmt.Printf("offset %s not a uint64", args[1])
 				}
 			}
-			client := newIbsenClient(host + ":" + strconv.Itoa(port))
+			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err)
+			}
 			err = client.Read(topic, offset, uint32(batchSize64))
 			if err != nil {
-				log.Fatal(errore.SprintTrace(errore.WrapWithContext(err)))
+				log.Fatal().Err(err)
 			}
 		},
 	}
 )
+
+func AbsOrEmpty(path string) string {
+	if path == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		log.Warn().Msgf("unable to find absolut file path for %s", path)
+		return path
+	}
+	return abs
+}
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
@@ -262,24 +332,31 @@ func init() {
 	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
 	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
 
-	rootCmd.Flags().IntVarP(&port, "port", "p", port, "config file (default is current directory)")
-	rootCmd.Flags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
+	rootCmd.PersistentFlags().IntVarP(&port, "port", "p", port, "config file (default is current directory)")
+	rootCmd.PersistentFlags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
+	rootCmd.PersistentFlags().StringVarP(&certKey, "certKey", "", "", "Certificate key file path for GRPC SLT")
+	rootCmd.PersistentFlags().StringVarP(&privateKey, "privateKey", "", "", "Private key file path for GRPC SLT")
+	rootCmd.PersistentFlags().StringVarP(&OTELExporterAddr, "OTELExporter", "e", "", "config file (0.0.0.0:4317)")
+	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "v", false, "set logging to debug level")
+	rootCmd.PersistentFlags().BoolVarP(&trace, "trace", "t", false, "set logging to trace level")
+
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
 	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
 	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
-
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")
 
-	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "bwe", "e", 100, "Entry byte size in bench")
-	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatch, "ben", "b", 1000, "Entries in each batch in bench")
-	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "r", 1000, "Read in batches of")
-	cmdClientBench.Flags().IntVarP(&benchWriteBaches, "bwb", "w", 1000, "Write in batches of")
-	cmdClientBench.Flags().IntVarP(&concurrent, "concurrent", "c", 1, "Concurrency number")
+	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "byteSize", "", 100, "Entry byte size in bench")
+	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatchWrite, "batchSize", "", 1000, "Entries in each batch in bench")
+	cmdClientBench.Flags().IntVarP(&benchWriteBatches, "bwb", "", 1000, "Write in batches of")
+	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "", 1000, "Read in batches of")
+	cmdClientBench.Flags().IntVarP(&concurrent, "concurrent", "", 1, "Concurrency number")
+
+	//writeEntryByteSize int, writeEntriesInEachBatch int, writeBatches int, readBatchSize int
 
 	rootCmd.AddCommand(cmdServer, cmdClient, cmdTools)
 	cmdTools.AddCommand(cmdToolsReadIndexLogFile, cmdToolsReadLogFile)
-	cmdClient.AddCommand(cmdClientWrite, cmdClientRead, cmdClientBench)
+	cmdClient.AddCommand(cmdClientList, cmdClientWrite, cmdClientRead, cmdClientBench)
 }
 
 func getenv(key, fallback string) string {

@@ -7,7 +7,7 @@ import (
 )
 
 func TestWrapWithContextError(t *testing.T) {
-	err := WrapWithContext(errors.New("err1"))
+	err := Wrap(errors.New("err1"))
 	if err == nil {
 		t.FailNow()
 	}
@@ -19,9 +19,9 @@ func TestWrapWithContextError(t *testing.T) {
 }
 
 func TestRootCause(t *testing.T) {
-	err := WrapWithContext(errors.New("err1"))
-	err = WrapWithContext(err)
-	err = WrapWithContext(err)
+	err := Wrap(errors.New("err1"))
+	err = Wrap(err)
+	err = Wrap(err)
 	root := RootCause(err)
 	if root != nil && root.Error() != "err1" {
 		t.Fail()
@@ -29,31 +29,31 @@ func TestRootCause(t *testing.T) {
 }
 
 func TestErrorTrace(t *testing.T) {
-	err := WrapWithContext(errors.New("err1"))
-	err = WrapWithContext(err)
-	err = WrapWithContext(err)
+	err := Wrap(errors.New("err1"))
+	err = Wrap(err)
+	err = Wrap(err)
 
-	trace := Trace(err)
+	trace := StackTrace(err)
 	if trace[0] != "err1" {
 		t.Fail()
 	}
 }
 
 func TestErrorTraceSprint(t *testing.T) {
-	err := WrapWithContext(errors.New("err1"))
-	err = WrapWithContext(err)
-	err = WrapWithContext(err)
+	err := Wrap(errors.New("err1"))
+	err = Wrap(err)
+	err = Wrap(err)
 
-	trace := SprintTrace(err)
+	trace := SprintStackTraceNd(err)
 	if !strings.Contains(trace, "err1") {
 		t.Fail()
 	}
 }
 
 func TestErrorWrapWithNew(t *testing.T) {
-	err := WrapWithContextAndMessage(errors.New("err1"), "err2")
-	err2 := WrapWithContext(err)
-	trace := SprintTrace(err2)
+	err := WrapWithContextF(errors.New("err1"), "err2")
+	err2 := Wrap(err)
+	trace := SprintStackTraceNd(err2)
 	println(trace)
 	if !strings.Contains(trace, "err1") {
 		t.Fail()

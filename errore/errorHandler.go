@@ -7,24 +7,35 @@ import (
 	"strings"
 )
 
-func NewWithContext(format string, v ...interface{}) error {
+func New(message string) error {
+	pc, file, line, _ := runtime.Caller(1)
+	functionName := runtime.FuncForPC(pc).Name()
+	return fmt.Errorf("at %s(%s:%d) %w", functionName, file, line, errors.New(message))
+}
+
+func NewF(format string, v ...interface{}) error {
 	pc, file, line, _ := runtime.Caller(1)
 	functionName := runtime.FuncForPC(pc).Name()
 	err := fmt.Sprintf(format, v...)
 	return fmt.Errorf("at %s(%s:%d) %w", functionName, file, line, errors.New(err))
 }
 
-func WrapWithContextAndMessage(err error, format string, v ...interface{}) error {
+func WrapWithContextF(err error, format string, v ...interface{}) error {
 	pc, file, line, _ := runtime.Caller(1)
 	functionName := runtime.FuncForPC(pc).Name()
 	additional := fmt.Sprintf(format, v...)
 	return fmt.Errorf("at %s(%s:%d) [%s] %w", functionName, file, line, additional, err)
 }
 
-func WrapWithContext(err error) error {
+func Wrap(err error) error {
 	pc, file, line, _ := runtime.Caller(1)
 	functionName := runtime.FuncForPC(pc).Name()
 	return fmt.Errorf("at %s(%s:%d) %w", functionName, file, line, err)
+}
+
+func WrapError(err1 error, err2 error) error {
+	err2 = Wrap(err2)
+	return fmt.Errorf("%s: %w", err1.Error(), err2)
 }
 
 func RootCause(err error) error {
@@ -43,16 +54,25 @@ func UnwrapAll(err error) []error {
 	return errorList
 }
 
-func SprintTrace(err error) string {
+func SprintStackTraceNd(err error) string {
 	builder := strings.Builder{}
-	trace := Trace(err)
+	trace := StackTrace(err)
 	for _, line := range trace {
 		builder.Write([]byte(line + "\n"))
 	}
 	return builder.String()
 }
 
-func Trace(err error) []string {
+func SprintStackTraceBd(err error) string {
+	builder := strings.Builder{}
+	trace := StackTrace(err)
+	for _, line := range trace {
+		builder.Write([]byte("[" + line + "]"))
+	}
+	return builder.String()
+}
+
+func StackTrace(err error) []string {
 	all := UnwrapAll(err)
 	errLine := make([]string, 0)
 	lastErr := ""
