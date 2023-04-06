@@ -1,0 +1,1 @@
+protoc --proto_path=../../api/grpcApi --go_out=. --go-grpc_out=. ibsen.proto
