@@ -1,5 +1,7 @@
 # Ibsen (under development)
 
+<img src="mascot/ibsenMascot.svg" width="300" height="300" alt="ibsen mascot">
+
 ## Install
 
 ### GO
@@ -94,8 +96,9 @@ openssl x509 -in server-cert.pem -noout -text
 ## Todo
 
 - better command completion
-- improved error recovery/analysis
-- block compression (Zstandard,snappy) ?
+- improve error recovery/analysis
+- improve system status
+- add clients (go,java,kotlin,clojure,python,...)
 
 ## Benchmarks
 
@@ -118,3 +121,8 @@ echo 1 > /proc/sys/vm/drop_caches
 ## OpenTelemetry
 
 docker run -v collector-gateway.yaml:/etc/otelcol/config.yaml otel/opentelemetry-collector:0.54.0
+
+## client generation
+apt install -y protobuf-compiler
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+go install google.golang.org/protobuf/cmd/protoc-gen-go@latest

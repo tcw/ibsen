@@ -108,19 +108,14 @@ func (igs *IbsenGrpcServer) Shutdown() {
 
 var _ IbsenServer = &server{}
 
+func (s server) mustEmbedUnimplementedIbsenServer() {
+}
+
 func (s server) List(ctx context.Context, empty *EmptyArgs) (*TopicList, error) {
 	list := s.manager.List()
 	return &TopicList{
 		Topics: convertTopics(list),
 	}, nil
-}
-
-func convertTopics(topics []common.TopicName) []string {
-	var sTopic []string
-	for _, topic := range topics {
-		sTopic = append(sTopic, string(topic))
-	}
-	return sTopic
 }
 
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
@@ -210,6 +205,14 @@ func sendGRPCMessage(logChan chan *[]common.LogEntry,
 			wg.Done()
 		}
 	}
+}
+
+func convertTopics(topics []common.TopicName) []string {
+	var sTopic []string
+	for _, topic := range topics {
+		sTopic = append(sTopic, string(topic))
+	}
+	return sTopic
 }
 
 func convert(entries *[]common.LogEntry) []*Entry {
