@@ -7,7 +7,7 @@ RUN go build -v -o app/ibsen . && mkdir -p app/data && chmod 600 app/data
 FROM scratch
 COPY --from=builder /build/app/* /app/
 COPY --from=builder /build/app/data /app/data
-CMD ["app/ibsen","server","-d", "app/data", "-e", "collector-gateway:4317"]
-#CMD ["app/ibsen","server","-d", "build/app/data"]
+#CMD ["app/ibsen","server","-d", "app/data", "-e", "collector-gateway:4317"]
+CMD ["app/ibsen","server","-d", "app/data"]
 
 

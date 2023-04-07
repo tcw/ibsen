@@ -2,3 +2,7 @@
 ibsen
 bin/
 target/
+clients/java-client/.idea
+clients/java-client/.gradle
+clients/java-client/build
+clients/java-client/gradle

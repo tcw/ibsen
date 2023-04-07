@@ -1,1 +1,0 @@
-protoc --proto_path=../../api/grpcApi --java_out=. ibsen.proto
