@@ -1,0 +1,1 @@
+protoc --proto_path=../../api/grpcApi  --csharp_out=. ibsen.proto

@@ -1,8 +1,11 @@
 .idea
-ibsen
+./ibsen
+*.iml
 bin/
 target/
 clients/java-client/.idea
 clients/java-client/.gradle
 clients/java-client/build
 clients/java-client/gradle
+clients/python/ibsen_pb2.py
+clients/c-sharp/Ibsen.cs

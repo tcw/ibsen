@@ -1,0 +1,1 @@
+protoc --proto_path=../../api/grpcApi --python_out=. ibsen.proto

@@ -153,12 +153,12 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 
 func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager manager.LogManager) error {
 	if ibs.GRPCPrivateKey == "" && ibs.GRPCCertKey == "" {
-		log.Warn().Msg("ibsen server is starting in UNSECURE mode")
+		log.Warn().Msg("ibsen server started in INSECURE mode")
 		ibsenGrpcServer = grpcApi.NewUnsecureIbsenGrpcServer(manager, ibs.TTL, time.Second*2)
 	} else {
 		ibsenGrpcServer = grpcApi.NewSecureIbsenGrpcServer(manager, grpcApi.GRPCSecurity{
-			CertKeyFile:   ibs.GRPCCertKey,
-			PrivteKeyFile: ibs.GRPCPrivateKey,
+			CertKeyFile:    ibs.GRPCCertKey,
+			PrivateKeyFile: ibs.GRPCPrivateKey,
 		}, ibs.TTL, time.Second*2)
 	}
 	log.Info().Msg(fmt.Sprintf("Started ibsen server on: [%s]", lis.Addr().String()))

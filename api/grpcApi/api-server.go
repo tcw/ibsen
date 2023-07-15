@@ -30,8 +30,8 @@ type server struct {
 }
 
 type GRPCSecurity struct {
-	CertKeyFile   string
-	PrivteKeyFile string
+	CertKeyFile    string
+	PrivateKeyFile string
 }
 
 type IbsenGrpcServer struct {
@@ -83,7 +83,7 @@ func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener, wg *sync.WaitGroup,
 	}
 	if igs.UseTLS {
 		absCert := testdata.Path(igs.GRPCSecurity.CertKeyFile)
-		absKey := testdata.Path(igs.GRPCSecurity.PrivteKeyFile)
+		absKey := testdata.Path(igs.GRPCSecurity.PrivateKeyFile)
 		creds, err := credentials.NewServerTLSFromFile(absCert, absKey)
 		opts = append(opts, grpc.Creds(creds))
 		if err != nil {
