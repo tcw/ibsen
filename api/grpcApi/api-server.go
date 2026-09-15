@@ -119,6 +119,9 @@ func (s server) List(ctx context.Context, empty *EmptyArgs) (*TopicList, error) 
 }
 
 func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus, error) {
+	if err := common.ValidateTopicName(common.TopicName(entries.Topic)); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	err := s.manager.Write(common.TopicName(entries.Topic), &entries.Entries)
 	if err != nil {
 		log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("write api failed")
@@ -130,6 +133,9 @@ func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus,
 }
 
 func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
+	if err := common.ValidateTopicName(common.TopicName(params.Topic)); err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
 	ctx := readServer.Context()
 	topicName := common.TopicName(params.Topic)
 	nextOffset := common.Offset(params.Offset)

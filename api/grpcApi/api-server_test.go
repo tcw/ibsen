@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/manager"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // fakeReadStream is an Ibsen_ReadServer whose Send is supplied by the test.
@@ -234,5 +236,18 @@ func TestRead_tailingReceivesNewEntries(t *testing.T) {
 	waitForRead(t, done)
 	if err := c.checkContiguous(0, 80); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWriteAndRead_rejectInvalidTopicName(t *testing.T) {
+	s := newTestServer(t, 1)
+	_, err := s.Write(context.Background(), &InputEntries{Topic: "../escaped", Entries: [][]byte{[]byte("x")}})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("write err=%v, want InvalidArgument", err)
+	}
+	stream := &fakeReadStream{ctx: context.Background(), send: func(*OutputEntries) error { return nil }}
+	err = waitForRead(t, startRead(s, &ReadParams{Topic: "../escaped", BatchSize: 10}, stream))
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("read err=%v, want InvalidArgument", err)
 	}
 }

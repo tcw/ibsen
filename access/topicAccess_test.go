@@ -154,3 +154,14 @@ func createInputEntries(numberOfEntries int) *[][]byte {
 	}
 	return &tmpBytes
 }
+
+func TestTopic_rejectsInvalidTopicName(t *testing.T) {
+	afs := common.MemAfs()
+	topic := NewLogTopic(common.TopicParams{Afs: afs, RootPath: "tmp", TopicName: "../escaped", MaxBlockSize: 1000})
+	assert.ErrorIs(t, topic.LoadOrCreate(), common.ErrInvalidTopicName)
+	assert.ErrorIs(t, topic.Write(createInputEntries(3)), common.ErrInvalidTopicName)
+	assert.ErrorIs(t, topic.Read(common.ReadLogParams{BatchSize: 10}), common.ErrInvalidTopicName)
+	exists, err := afs.Exists("escaped")
+	assert.Nil(t, err)
+	assert.False(t, exists)
+}

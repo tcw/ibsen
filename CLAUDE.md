@@ -40,9 +40,9 @@ All known bugs below are fixed (2026-09-15), each with a regression test. Remain
 - **Concurrency and cross-block index lookups**: fixed in step zero (`Topic.mu`, read snapshot, index only used for its own block).
 - **gRPC `Read`**: a failed `Send` or a departed client used to hang the handler and reader forever, and every empty poll while tailing leaked a goroutine. Reads now take a `Cancel` channel (`common.ReadLogParams`, `manager.ReadParams`, `log.ReadFileParams`); the handler sends from its own goroutine via `streamFrom`, cancels and drains on send failure, and watches the stream context while polling. Covered by `api/grpcApi/api-server_test.go` (fake stream, no network).
 - **Stray files**: topic loading only considers block names the topic writes (`%020d.log` / `.idx`) and ignores anything else with a warning; `ListAllTopics` only lists directories. The manager no longer `log.Fatal`s when a topic fails to load: the request gets the error, the topic is not cached, and other topics keep working.
+- **Topic names**: `common.ValidateTopicName` rejects names that would escape or misuse the topic directory: empty or longer than 255 bytes, a leading dot (covers `.` and `..`), `/`, `\`, or control characters. `Topic.LoadOrCreate`, `Write` and `Read` enforce it; the gRPC handlers check first and return `InvalidArgument`.
 
 Known, not yet fixed:
-- Topic names from clients are not validated and are joined into paths (`rootPath + Sep + topic` in `log.CreateTopicDirectory` and the block file names), so a name such as `../other` reads and writes outside the data directory. Found by reading the code, not yet covered by a test.
 - `TestReadWriteWithOffsetVerification` in `api/grpcApi/test` is still commented out.
 
 ## 2. Durability
