@@ -24,9 +24,10 @@ func TestTopic_Write(t *testing.T) {
 	})
 	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
-	lastOffset, _, err := ibsLog.BlockInfo(afs, "tmp/topic1/00000000000000000000.log")
+	nextOffset, _, truncated, err := ibsLog.RecoverBlock(afs, "tmp/topic1/00000000000000000000.log", 0)
 	assert.Nil(t, err)
-	assert.Equal(t, common.Offset(9), lastOffset)
+	assert.Equal(t, common.Offset(10), nextOffset)
+	assert.Equal(t, int64(0), truncated)
 }
 
 func TestTopic_Load(t *testing.T) {
