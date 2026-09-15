@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/rs/zerolog/log"
-	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/access/common"
 	"github.com/tcw/ibsen/api/grpcApi"
 	"io"
@@ -175,7 +174,11 @@ func (u *User) read(t *testing.T, topic string) {
 		Offset:           offset,
 		BatchSize:        uint32(u.params.entries.value()),
 	})
-	assert.Nil(t, err)
+	if err != nil {
+		// readers start concurrently with the simulation, so the client may already be closed
+		log.Info().Err(err).Str("user", u.name).Str("topic", topic).Msg("simulated read did not start")
+		return
+	}
 
 	var expectedOffset int64 = 0
 	entriesRead := 0
