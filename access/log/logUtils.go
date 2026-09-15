@@ -69,22 +69,44 @@ func LoadTopicBlocks(afs *afero.Afero, rootPath string, topic string) ([]common.
 		if info.IsDir() {
 			continue
 		}
-		nameExt := strings.Split(info.Name(), ".")
-		fileExtension := filepath.Ext(info.Name())
-		parseUint, err := strconv.ParseUint(nameExt[0], 10, 64)
-		if err != nil {
-			return nil, nil, errore.Wrap(err)
+		block, extension, ok := parseBlockFileName(info.Name())
+		if !ok {
+			log.Warn().Str("topic", topic).Str("file", info.Name()).Msg("ignoring file that is not a log or index block")
+			continue
 		}
-		if fileExtension == ".log" {
-			logBlocks = append(logBlocks, common.LogBlock(parseUint))
+		if extension == ".log" {
+			logBlocks = append(logBlocks, common.LogBlock(block))
 		}
-		if fileExtension == ".idx" {
-			indexBlocks = append(indexBlocks, common.IndexBlock(parseUint))
+		if extension == ".idx" {
+			indexBlocks = append(indexBlocks, common.IndexBlock(block))
 		}
 	}
 	sort.Slice(indexBlocks, func(i, j int) bool { return indexBlocks[i] < indexBlocks[j] })
 	sort.Slice(logBlocks, func(i, j int) bool { return logBlocks[i] < logBlocks[j] })
 	return logBlocks, indexBlocks, nil
+}
+
+// parseBlockFileName parses a block file name as the topic writes it, such as
+// 00000000000000000042.log. ok is false for any other name.
+func parseBlockFileName(name string) (block uint64, extension string, ok bool) {
+	extension = filepath.Ext(name)
+	if extension != ".log" && extension != ".idx" {
+		return 0, "", false
+	}
+	digits := strings.TrimSuffix(name, extension)
+	if len(digits) != 20 {
+		return 0, "", false
+	}
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return 0, "", false
+		}
+	}
+	block, err := strconv.ParseUint(digits, 10, 64)
+	if err != nil {
+		return 0, "", false
+	}
+	return block, extension, true
 }
 
 func ListAllTopics(afs *afero.Afero, dir string) ([]string, error) {
@@ -94,11 +116,14 @@ func ListAllTopics(afs *afero.Afero, dir string) ([]string, error) {
 		return nil, errore.Wrap(err)
 	}
 	defer file.Close()
-	names, err := file.Readdirnames(0)
-	for _, name := range names {
-		isHidden := strings.HasPrefix(name, ".")
-		if !isHidden {
-			filenames = append(filenames, name)
+	infos, err := file.Readdir(0)
+	if err != nil {
+		return nil, errore.Wrap(err)
+	}
+	for _, info := range infos {
+		// topics are directories; hidden entries and stray files are not topics
+		if info.IsDir() && !strings.HasPrefix(info.Name(), ".") {
+			filenames = append(filenames, info.Name())
 		}
 	}
 	return filenames, nil

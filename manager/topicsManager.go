@@ -76,7 +76,10 @@ func (l *LogTopicsManager) Write(topicName common.TopicName, entries common.Entr
 	if l.Params.ReadOnly {
 		return errors.New("ibsen is in read only mode and will not accept any writes")
 	}
-	topic := l.getOrCreateTopic(topicName)
+	topic, err := l.getOrCreateTopic(topicName)
+	if err != nil {
+		return err
+	}
 	locker, _ := l.TopicWriteLocker.LoadOrStore(string(topicName), &sync.Mutex{})
 	var mutex = locker.(*sync.Mutex)
 	mutex.Lock()
@@ -85,7 +88,10 @@ func (l *LogTopicsManager) Write(topicName common.TopicName, entries common.Entr
 }
 
 func (l *LogTopicsManager) Read(params ReadParams) error {
-	topic := l.getOrCreateTopic(params.TopicName)
+	topic, err := l.getOrCreateTopic(params.TopicName)
+	if err != nil {
+		return err
+	}
 	readFrom := params.From
 	return topic.Read(common.ReadLogParams{
 		LogChan:   params.LogChan,
@@ -96,34 +102,32 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 	})
 }
 
-func (l *LogTopicsManager) getOrCreateTopic(name common.TopicName) *access.Topic {
+func (l *LogTopicsManager) getOrCreateTopic(name common.TopicName) (*access.Topic, error) {
 	topic, ok := l.Topics.Load(string(name))
 	if !ok {
-		topic = l.loadOrCreateNewTopic(name)
-		topic, _ = l.Topics.LoadOrStore(string(name), topic)
+		loaded, err := l.loadOrCreateNewTopic(name)
+		if err != nil {
+			return nil, err
+		}
+		topic, _ = l.Topics.LoadOrStore(string(name), loaded)
 	}
-	return topic.(*access.Topic)
+	return topic.(*access.Topic), nil
 }
 
-func (l *LogTopicsManager) loadOrCreateNewTopic(topicName common.TopicName) *access.Topic {
+// loadOrCreateNewTopic loads a topic from disk or creates it. A topic that fails to load is
+// not cached, so its requests keep failing until the problem is fixed while other topics
+// keep working.
+func (l *LogTopicsManager) loadOrCreateNewTopic(topicName common.TopicName) (*access.Topic, error) {
 	topic := access.NewLogTopic(common.TopicParams{
 		Afs:          l.Params.Afs,
 		RootPath:     l.Params.RootPath,
 		TopicName:    string(topicName),
 		MaxBlockSize: l.Params.MaxBlockSize,
 	})
-	err := topic.LoadOrCreate()
-	if err == common.NoBlocksFound {
-		log.Err(err).Str("topic", string(topicName)).
-			Msg("Topic was not loaded nor created")
+	if err := topic.LoadOrCreate(); err != nil {
+		return nil, errore.WrapWithContextF(err, "unable to load topic %s", topicName)
 	}
-	if err != nil {
-		log.Fatal().Str("topic", string(topicName)).
-			Str("stack", errore.SprintStackTraceBd(err)).
-			Err(err).
-			Msg("unable to load topic")
-	}
-	return topic
+	return topic, nil
 }
 
 func (l *LogTopicsManager) startIndexScheduler(terminate chan bool) {
