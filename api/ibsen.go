@@ -46,9 +46,17 @@ type IbsenServer struct {
 	CpuProfile       string
 	MemProfile       string
 	cpuProfileFile   *os.File
+	// mu guards topicsManager, which Start sets while the signal handler may read it
+	mu            sync.Mutex
+	topicsManager *manager.LogTopicsManager
+	shutdownOnce  sync.Once
+	stopping      chan struct{} // closed when a shutdown begins
+	stopped       chan struct{} // closed when the shutdown has finished
 }
 
 func (ibs *IbsenServer) Start(listener net.Listener) error {
+	ibs.stopping = make(chan struct{})
+	ibs.stopped = make(chan struct{})
 	go ibs.initSignals()
 	log.Info().Msg(fmt.Sprintf("Using listener: %s", listener.Addr().String()))
 	if ibs.Readonly {
@@ -97,7 +105,17 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	if err != nil {
 		return errore.Wrap(err)
 	}
+	ibs.mu.Lock()
+	ibs.topicsManager = &topicsManager
+	ibs.mu.Unlock()
 	err = ibs.startGRPCServer(listener, &topicsManager)
+	// gRPC stops serving early in a shutdown, and the process exits once Start returns, so
+	// wait until the shutdown has closed the log and released the lock
+	select {
+	case <-ibs.stopping:
+		<-ibs.stopped
+	default:
+	}
 	if err != nil {
 		return errore.Wrap(err)
 	}
@@ -132,7 +150,17 @@ func (ibs *IbsenServer) initSignals() {
 	ibs.signalHandler(<-captureSignal)
 }
 
+// ShutdownCleanly stops the gRPC server, waits for in-flight writes and background indexing
+// to finish, and then releases the single-writer lock. Later calls wait for the first.
 func (ibs *IbsenServer) ShutdownCleanly() {
+	ibs.shutdownOnce.Do(ibs.shutdown)
+}
+
+func (ibs *IbsenServer) shutdown() {
+	if ibs.stopping != nil {
+		close(ibs.stopping)
+		defer close(ibs.stopped)
+	}
 
 	// profiling failures are logged but do not stop the shutdown, which still has to release the lock
 	if ibs.MemProfile != "" {
@@ -167,6 +195,17 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 		ibsenGrpcServer.IbsenServer.Stop()
 	case <-stopped:
 		t.Stop()
+	}
+
+	// gRPC does not wait for the handlers of a forced stop, and writes still index in the
+	// background. The lock is only released once nothing writes, even if that takes long:
+	// another instance must never write beside this one.
+	ibs.mu.Lock()
+	topicsManager := ibs.topicsManager
+	ibs.mu.Unlock()
+	if topicsManager != nil {
+		log.Info().Msg("waiting for in-flight writes and indexing to finish...")
+		topicsManager.Close()
 	}
 
 	if !ibs.InMemory {

@@ -2,6 +2,7 @@ package grpcApi
 
 import (
 	"context"
+	"errors"
 	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/access/common"
 	"github.com/tcw/ibsen/errore"
@@ -130,6 +131,9 @@ func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus,
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	err := s.manager.Write(common.TopicName(entries.Topic), &entries.Entries)
+	if errors.Is(err, manager.ErrClosed) {
+		return nil, status.Error(codes.Unavailable, "ibsen is shutting down")
+	}
 	if err != nil {
 		log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("write api failed")
 		return nil, status.Error(codes.Unknown, "error writing batch")
@@ -154,6 +158,9 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 		}
 		if ctx.Err() != nil {
 			return status.FromContextError(ctx.Err()).Err()
+		}
+		if errors.Is(readErr, manager.ErrClosed) {
+			return status.Error(codes.Unavailable, "ibsen is shutting down")
 		}
 		if readErr == manager.TopicNotFound {
 			return status.Errorf(codes.NotFound, "Topic %s not found", topicName)

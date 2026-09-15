@@ -22,6 +22,9 @@ type TopicAccess interface {
 
 var _ TopicAccess = &Topic{}
 
+// ErrTopicClosed is returned by writes to a topic after Close.
+var ErrTopicClosed = errors.New("topic is closed")
+
 type Topic struct {
 	mu             sync.RWMutex
 	Afs            *afero.Afero
@@ -38,6 +41,8 @@ type Topic struct {
 	// writeFailure is set when a failed write could not be rolled back. The head block may
 	// end in a partial entry, so writes are refused until LoadOrCreate recovers it.
 	writeFailure error
+	// closed is set by Close; writes are refused so no new background indexing starts
+	closed bool
 }
 
 func NewLogTopic(params common.TopicParams) *Topic {
@@ -63,10 +68,6 @@ func (t *Topic) UpdateIndex() (bool, error) {
 		return false, nil
 	}
 	defer atomic.CompareAndSwapInt32(&t.indexMutex, 1, 0)
-	t.indexWg.Add(1)
-	defer func() {
-		t.indexWg.Done()
-	}()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -293,6 +294,9 @@ func (t *Topic) Write(entries common.EntriesPtr) error {
 	if t.writeFailure != nil {
 		return errore.Wrap(t.writeFailure)
 	}
+	if t.closed {
+		return ErrTopicClosed
+	}
 
 	// if topic is empty create the first log block
 	if t.logBlockIsEmpty() {
@@ -334,7 +338,8 @@ func (t *Topic) Write(entries common.EntriesPtr) error {
 	t.incrementOffset(offsets)
 	t.incrementHeadBlockSize(n)
 
-	// update index async if no index is running
+	// update index async if no index is running; Close waits for it. The Add happens under
+	// t.mu before closed is set, so it never races with the Wait in Close.
 	t.indexWg.Add(1)
 	go func() {
 		defer t.indexWg.Done()
@@ -349,6 +354,15 @@ func (t *Topic) Write(entries common.EntriesPtr) error {
 		return ioErr
 	}
 	return nil
+}
+
+// Close refuses further writes and waits for the background indexing started by earlier
+// writes. It does not wait for UpdateIndex calls made by others; stop those first.
+func (t *Topic) Close() {
+	t.mu.Lock()
+	t.closed = true
+	t.mu.Unlock()
+	t.indexWg.Wait()
 }
 
 func (t *Topic) debugLogLoadResult(logBlocks []common.LogBlock, indexBlocks []common.IndexBlock) {

@@ -40,13 +40,26 @@ type LogTopicManagerParams struct {
 }
 
 type LogTopicsManager struct {
-	Params             LogTopicManagerParams
-	TopicWriteLocker   *sync.Map
-	Topics             *sync.Map
-	TerminationChannel chan bool
-	StatusAccess       access.StatusAccess
+	Params           LogTopicManagerParams
+	TopicWriteLocker *sync.Map
+	Topics           *sync.Map
+	StatusAccess     access.StatusAccess
 	// loads holds a *topicLoad for each topic whose first load is running
 	loads *sync.Map
+	state *managerState
+}
+
+// ErrClosed is returned by writes, and by reads of topics that are not loaded, after Close.
+var ErrClosed = errors.New("log manager is closed")
+
+// managerState tracks requests that can write to storage, so Close can wait for them.
+type managerState struct {
+	mu          sync.RWMutex
+	closed      bool
+	requests    sync.WaitGroup
+	stopIndexer chan struct{}
+	indexerDone chan struct{}
+	stopOnce    sync.Once
 }
 
 // topicLoad is the first load of a topic from disk, shared by every request for the topic
@@ -61,22 +74,50 @@ var TopicNotFound = errors.New("topic not found")
 
 func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error) {
 	manager := LogTopicsManager{
-		Params:             params,
-		TopicWriteLocker:   &sync.Map{},
-		Topics:             &sync.Map{},
-		loads:              &sync.Map{},
-		TerminationChannel: make(chan bool),
+		Params:           params,
+		TopicWriteLocker: &sync.Map{},
+		Topics:           &sync.Map{},
+		loads:            &sync.Map{},
+		state: &managerState{
+			stopIndexer: make(chan struct{}),
+			indexerDone: make(chan struct{}),
+		},
 		StatusAccess: &access.Status{
 			Afs:      params.Afs,
 			RootPath: params.RootPath,
 		},
 	}
-	go manager.startIndexScheduler(manager.TerminationChannel)
+	go manager.startIndexScheduler()
 	return manager, nil
 }
 
-func (l *LogTopicsManager) ShutdownIndexer() {
-	l.TerminationChannel <- true
+// Close stops accepting writes and topic loads, waits for those in flight, stops the index
+// scheduler and waits for background indexing, so nothing writes to storage once it
+// returns. Reads of loaded topics are not waited for: they do not write, and a tailing read
+// lasts until its client leaves. Calling Close again is a no-op.
+func (l *LogTopicsManager) Close() {
+	l.state.mu.Lock()
+	l.state.closed = true
+	l.state.mu.Unlock()
+	l.state.requests.Wait()
+	l.state.stopOnce.Do(func() { close(l.state.stopIndexer) })
+	<-l.state.indexerDone
+	l.Topics.Range(func(_, topic any) bool {
+		topic.(*access.Topic).Close()
+		return true
+	})
+}
+
+// begin registers a request that may write to storage, or fails once the manager is closed.
+// Call l.state.requests.Done when it finishes.
+func (l *LogTopicsManager) begin() error {
+	l.state.mu.RLock()
+	defer l.state.mu.RUnlock()
+	if l.state.closed {
+		return ErrClosed
+	}
+	l.state.requests.Add(1)
+	return nil
 }
 
 func (l *LogTopicsManager) List() []common.TopicName {
@@ -87,6 +128,10 @@ func (l *LogTopicsManager) Write(topicName common.TopicName, entries common.Entr
 	if l.Params.ReadOnly {
 		return errors.New("ibsen is in read only mode and will not accept any writes")
 	}
+	if err := l.begin(); err != nil {
+		return err
+	}
+	defer l.state.requests.Done()
 	topic, err := l.getOrCreateTopic(topicName)
 	if err != nil {
 		return err
@@ -99,7 +144,7 @@ func (l *LogTopicsManager) Write(topicName common.TopicName, entries common.Entr
 }
 
 func (l *LogTopicsManager) Read(params ReadParams) error {
-	topic, err := l.getOrCreateTopic(params.TopicName)
+	topic, err := l.loadForRead(params.TopicName)
 	if err != nil {
 		return err
 	}
@@ -111,6 +156,19 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 		BatchSize: params.BatchSize,
 		Cancel:    params.Cancel,
 	})
+}
+
+// loadForRead returns the topic to read. A loaded topic stays readable after Close; only a
+// load is tracked as in flight, since loading recovers the head block and may write.
+func (l *LogTopicsManager) loadForRead(name common.TopicName) (*access.Topic, error) {
+	if topic, ok := l.Topics.Load(string(name)); ok {
+		return topic.(*access.Topic), nil
+	}
+	if err := l.begin(); err != nil {
+		return nil, err
+	}
+	defer l.state.requests.Done()
+	return l.getOrCreateTopic(name)
 }
 
 // getOrCreateTopic returns the cached topic, loading it first if needed. A topic is loaded
@@ -158,14 +216,15 @@ func (l *LogTopicsManager) loadOrCreateNewTopic(topicName common.TopicName) (*ac
 	return topic, nil
 }
 
-func (l *LogTopicsManager) startIndexScheduler(terminate chan bool) {
+func (l *LogTopicsManager) startIndexScheduler() {
+	defer close(l.state.indexerDone)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
-		case <-terminate:
-			close(terminate)
+		case <-l.state.stopIndexer:
 			return
-		default:
-			time.Sleep(time.Second * 10)
+		case <-ticker.C:
 			l.Topics.Range(func(key, value any) bool {
 				_, err := value.(*access.Topic).UpdateIndex()
 				if err != nil {
