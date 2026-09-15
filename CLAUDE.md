@@ -38,9 +38,9 @@ All known bugs below are fixed (2026-09-15), each with a regression test. Remain
 - **Reads**: batch byte cap works; batch size 0 is an error; the batch buffer is no longer preallocated to a client-supplied size.
 - **Topics**: reloading a topic directory with no blocks (created by a read of an unknown topic) is valid instead of a `log.Fatal`; a concurrent `Mkdir` of the same topic is not an error.
 - **Concurrency and cross-block index lookups**: fixed in step zero (`Topic.mu`, read snapshot, index only used for its own block).
+- **gRPC `Read`**: a failed `Send` or a departed client used to hang the handler and reader forever, and every empty poll while tailing leaked a goroutine. Reads now take a `Cancel` channel (`common.ReadLogParams`, `manager.ReadParams`, `log.ReadFileParams`); the handler sends from its own goroutine via `streamFrom`, cancels and drains on send failure, and watches the stream context while polling. Covered by `api/grpcApi/api-server_test.go` (fake stream, no network).
 
 Known, not yet fixed:
-- gRPC `Read`: if `Send` fails (client gone), `sendGRPCMessage` exits without draining, so the reader goroutine and the handler block forever.
 - `TestReadWriteWithOffsetVerification` in `api/grpcApi/test` is still commented out.
 - `LoadTopicBlocks` fails on any non-numeric file name in a topic directory, which `log.Fatal`s the server.
 

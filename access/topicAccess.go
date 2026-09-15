@@ -231,6 +231,7 @@ func (t *Topic) read(params common.ReadLogParams) error {
 		LogChan:         params.LogChan,
 		Wg:              params.Wg,
 		BatchSize:       params.BatchSize,
+		Cancel:          params.Cancel,
 		StartByteOffset: byteOffset,
 		EndOffset:       endOffset,
 	})
@@ -263,6 +264,7 @@ func (t *Topic) read(params common.ReadLogParams) error {
 				LogChan:         params.LogChan,
 				Wg:              params.Wg,
 				BatchSize:       params.BatchSize,
+				Cancel:          params.Cancel,
 				StartByteOffset: 0,
 				EndOffset:       endOffset,
 			})
