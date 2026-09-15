@@ -66,17 +66,26 @@ func readTopic(m *LogTopicsManager, topic string) ([]common.LogEntry, error) {
 
 func TestManager_loadsTopicWithStrayFiles(t *testing.T) {
 	afs := newTestAfs(t)
-	writeTopic(t, newTestManager(t, afs), "topic", 0, 30)
-	for _, name := range []string{"README", ".DS_Store", "backup.tar", "123.log"} {
-		if err := afs.WriteFile("data/topic/"+name, []byte("not a block"), 0600); err != nil {
+	// a topic as a previous run left it, written directly so no background indexing is still
+	// running when the manager loads it: one log block plus files that are not blocks
+	var block []byte
+	for i := 0; i < 30; i++ {
+		block = append(block, common.CreateByteEntry([]byte(fmt.Sprintf("topic-%d", i)), common.Offset(i))...)
+	}
+	files := map[string][]byte{
+		"data/topic/00000000000000000000.log": block,
+		"data/topic/README":                   []byte("not a block"),
+		"data/topic/.DS_Store":                []byte("not a block"),
+		"data/topic/backup.tar":               []byte("not a block"),
+		"data/topic/123.log":                  []byte("not a block"),
+		"data/notes.txt":                      []byte("not a topic"),
+	}
+	for name, content := range files {
+		if err := afs.WriteFile(name, content, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := afs.WriteFile("data/notes.txt", []byte("not a topic"), 0600); err != nil {
-		t.Fatal(err)
-	}
 
-	// a new manager loads the topic from disk, as after a restart
 	m := newTestManager(t, afs)
 	if topics := m.List(); len(topics) != 1 || topics[0] != "topic" {
 		t.Fatalf("List()=%v, want [topic]", topics)

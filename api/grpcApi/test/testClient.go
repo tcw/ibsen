@@ -2,7 +2,6 @@ package test
 
 import (
 	"context"
-	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/api/grpcApi"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -14,7 +13,7 @@ import (
 
 type IbsenClient struct {
 	Client grpcApi.IbsenClient
-	Ctx    context.Context
+	conn   *grpc.ClientConn
 }
 
 func createInputEntries(topic string, numberOfEntries int, entryByteSize int) grpcApi.InputEntries {
@@ -67,26 +66,28 @@ func createTestValues(entrySizeBytes int) []byte {
 	return []byte(string(b))
 }
 
+// newIbsenClient connects to target, waiting up to ten seconds for the server to answer.
+// Close the client when done.
 func newIbsenClient(target string) (IbsenClient, error) {
-
-	conn, err := grpc.Dial(target,
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	conn, err := grpc.DialContext(ctx, target,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithBlock(),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(math.MaxInt32),
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
-		log.Fatal().Err(err)
+		return IbsenClient{}, err
 	}
-
-	client := grpcApi.NewIbsenClient(conn)
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute)
-	if ctx.Err() == context.Canceled {
-		return IbsenClient{}, ctx.Err()
-	}
-
 	return IbsenClient{
-		Client: client,
-		Ctx:    ctx,
+		Client: grpcApi.NewIbsenClient(conn),
+		conn:   conn,
 	}, nil
+}
+
+func (c IbsenClient) Close() {
+	if c.conn != nil {
+		_ = c.conn.Close()
+	}
 }

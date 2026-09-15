@@ -25,7 +25,7 @@ A Go append-only log server, Kafka-like: topics you write entries to and read ba
 - `go test -race ./...` passes (step zero). Run it before and after every migration step.
 - Property tests: `access/topicAccess_property_test.go` (read-from-every-offset across block sizes and reload modes; concurrent write/read/index). Stdlib-only, intended to become the `BlockStore` conformance suite.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
-- `go vet` still flags discarded `context.WithTimeout` cancels in `cmd/` and `api/grpcApi/test/` (not yet fixed).
+- `go vet` still flags discarded `context.WithTimeout` cancels in `cmd/` (not yet fixed).
 
 ## 1. Correctness bugs
 
@@ -41,9 +41,10 @@ All known bugs below are fixed (2026-09-15), each with a regression test. Remain
 - **gRPC `Read`**: a failed `Send` or a departed client used to hang the handler and reader forever, and every empty poll while tailing leaked a goroutine. Reads now take a `Cancel` channel (`common.ReadLogParams`, `manager.ReadParams`, `log.ReadFileParams`); the handler sends from its own goroutine via `streamFrom`, cancels and drains on send failure, and watches the stream context while polling. Covered by `api/grpcApi/api-server_test.go` (fake stream, no network).
 - **Stray files**: topic loading only considers block names the topic writes (`%020d.log` / `.idx`) and ignores anything else with a warning; `ListAllTopics` only lists directories. The manager no longer `log.Fatal`s when a topic fails to load: the request gets the error, the topic is not cached, and other topics keep working.
 - **Topic names**: `common.ValidateTopicName` rejects names that would escape or misuse the topic directory: empty or longer than 255 bytes, a leading dot (covers `.` and `..`), `/`, `\`, or control characters. `Topic.LoadOrCreate`, `Write` and `Read` enforce it; the gRPC handlers check first and return `InvalidArgument`.
+- **End-to-end test harness** (`api/grpcApi/test`): each test starts its own server on a free port with `startTestServer(t)`, which fails the test if the server does not start and stops it on cleanup; clients are closed. Before, `TestName` left its server running, the next server failed to bind silently (`log.Fatal().Err(err)` without `Msg` never logs or exits), and `-count=2` hung. `TestReadWriteWithOffsetVerification` is enabled and reads from every offset across several blocks.
 
 Known, not yet fixed:
-- `TestReadWriteWithOffsetVerification` in `api/grpcApi/test` is still commented out.
+- Concurrent first loads of the same topic: `LogTopicsManager.getOrCreateTopic` lets two requests for a not-yet-loaded topic both run `LoadOrCreate`, keeping one. The discarded load keeps recovering the head block and rewriting the head index while the kept topic already accepts writes, so its recovery scan can truncate just-acknowledged entries and its index rewrite can clobber appended pairs. Found by reading the code, not yet covered by a test.
 
 ## 2. Durability
 

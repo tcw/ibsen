@@ -3,7 +3,6 @@ package test
 import (
 	"fmt"
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/errore"
 	"os"
@@ -14,13 +13,9 @@ import (
 )
 
 func TestName(t *testing.T) {
-	var fs = afero.NewMemMapFs()
-	//var fs = afero.NewOsFs()
-	afs = &afero.Afero{Fs: fs}
+	startTestServer(t)
 	//file, err := startCpuPprof()
 	//assert.Nil(t, err)
-	go startGrpcServer(afs, "/tmp/data")
-	//go startGrpcServer(afs, "/home/tom/Ibsen/data")
 
 	params := SimulationParams{
 		topics:       3,

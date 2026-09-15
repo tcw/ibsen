@@ -1,7 +1,6 @@
 package test
 
 import (
-	"fmt"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
@@ -10,12 +9,12 @@ import (
 	"net"
 	"os"
 	"sync"
+	"testing"
 	"time"
 )
 
-var afs *afero.Afero
-var ibsenServer *grpcApi.IbsenGrpcServer
-var ibsenTestTarge = fmt.Sprintf("%s:%d", "localhost", 50002)
+// ibsenTestTarget is the address of the server started by the running test.
+var ibsenTestTarget string
 
 func init() {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
@@ -23,10 +22,15 @@ func init() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 }
 
-func startGrpcServer(afs *afero.Afero, rootPath string) {
-	err := afs.Mkdir(rootPath, 0600)
-	if err != nil {
-		log.Fatal().Err(err)
+// startTestServer starts an Ibsen gRPC server with an in-memory filesystem on a free local
+// port, points the test clients at it, and stops it when the test ends. Each test gets its
+// own server, so a test that leaves streams open cannot affect the next one.
+func startTestServer(t *testing.T) {
+	t.Helper()
+	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
+	rootPath := "/tmp/data"
+	if err := afs.MkdirAll(rootPath, 0700); err != nil {
+		t.Fatal(err)
 	}
 	params := manager.LogTopicManagerParams{
 		ReadOnly:         false,
@@ -38,18 +42,32 @@ func startGrpcServer(afs *afero.Afero, rootPath string) {
 	}
 	topicsManager, err := manager.NewLogTopicsManager(params)
 	if err != nil {
-		log.Fatal().Err(err)
+		t.Fatal(err)
 	}
-	ibsenServer = grpcApi.NewUnsecureIbsenGrpcServer(&topicsManager, params.TTL, params.CheckForNewEvery)
-	lis, err := net.Listen("tcp", ibsenTestTarge)
+	server := grpcApi.NewUnsecureIbsenGrpcServer(&topicsManager, params.TTL, params.CheckForNewEvery)
+	lis, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
-		log.Fatal().Err(err)
+		t.Fatal(err)
 	}
-	var wg sync.WaitGroup
-	wg.Add(1)
-	err = ibsenServer.StartGRPC(lis, &wg, "")
+	ibsenTestTarget = lis.Addr().String()
+
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		var wg sync.WaitGroup
+		if err := server.StartGRPC(lis, &wg, ""); err != nil {
+			log.Error().Err(err).Msg("test server failed")
+		}
+	}()
+	// wait until the server answers, so Shutdown never runs before StartGRPC has created it
+	client, err := newIbsenClient(ibsenTestTarget)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Test server failed")
+		t.Fatalf("test server did not start: %v", err)
 	}
-	wg.Done()
+	client.Close()
+
+	t.Cleanup(func() {
+		server.Shutdown()
+		<-stopped
+	})
 }
