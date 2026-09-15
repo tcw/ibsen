@@ -1,10 +1,14 @@
 package log
 
 import (
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/access/common"
 	"github.com/tcw/ibsen/access/index"
+	"math"
 	"sync"
 	"testing"
 )
@@ -77,27 +81,132 @@ func TestCreateByteEntry(t *testing.T) {
 	logEntry := <-logChan
 	wg.Done()
 	for _, l := range *logEntry {
+		assert.Equal(t, binary.LittleEndian.Uint32(entry[:4]), l.Crc)
 		assert.Equal(t, 5, l.ByteSize)
 		assert.Equal(t, uint64(0), l.Offset)
 		assert.Equal(t, "dummy", string(l.Entry))
 	}
 }
 
-func TestFindBlockInfo(t *testing.T) {
-	afs := common.MemAfs()
-	file, err := common.OpenFileForWrite(afs, "tmp/topic1/001.log")
-	assert.Nil(t, err)
-	_, err = file.Write(common.CreateByteEntry([]byte("dummy1"), 0))
-	assert.Nil(t, err)
-	_, err = file.Write(common.CreateByteEntry([]byte("dummy2"), 1))
-	assert.Nil(t, err)
-	_, err = file.Write(common.CreateByteEntry([]byte("dummy3"), 2))
-	assert.Nil(t, err)
+func TestRecoverBlock(t *testing.T) {
+	var valid []byte
+	for i, payload := range []string{"dummy1", "dummy2", "dummy3"} {
+		valid = append(valid, common.CreateByteEntry([]byte(payload), common.Offset(100+i))...)
+	}
+	withTail := func(tail []byte) []byte {
+		return append(append([]byte(nil), valid...), tail...)
+	}
+	corruptLast := withTail(nil)
+	corruptLast[len(corruptLast)-1] ^= 0xff
+	tests := []struct {
+		name          string
+		content       []byte
+		wantNext      common.Offset
+		wantSize      int64
+		wantTruncated int64
+	}{
+		{name: "clean block", content: valid, wantNext: 103, wantSize: 78},
+		{name: "empty block", content: nil, wantNext: 100, wantSize: 0},
+		{name: "partial entry", content: withTail(common.CreateByteEntry([]byte("dummy4"), 103)[:15]), wantNext: 103, wantSize: 78, wantTruncated: 15},
+		{name: "garbage tail", content: withTail(bytes.Repeat([]byte{0xff}, 40)), wantNext: 103, wantSize: 78, wantTruncated: 40},
+		{name: "corrupt last entry", content: corruptLast, wantNext: 102, wantSize: 52, wantTruncated: 26},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			afs := common.MemAfs()
+			fileName := "tmp/topic1/100.log"
+			assert.Nil(t, afs.WriteFile(fileName, test.content, 0600))
+			next, size, truncated, err := RecoverBlock(afs, fileName, 100)
+			assert.Nil(t, err)
+			assert.Equal(t, test.wantNext, next)
+			assert.Equal(t, test.wantSize, size)
+			assert.Equal(t, test.wantTruncated, truncated)
+			info, err := afs.Stat(fileName)
+			assert.Nil(t, err)
+			assert.Equal(t, test.wantSize, info.Size())
+		})
+	}
+}
 
-	lastOffset, i, err := BlockInfo(afs, "tmp/topic1/001.log")
+func TestRecoverBlock_offsetGapIsAnError(t *testing.T) {
+	afs := common.MemAfs()
+	fileName := "tmp/topic1/000.log"
+	content := append(common.CreateByteEntry([]byte("dummy1"), 0), common.CreateByteEntry([]byte("dummy2"), 2)...)
+	assert.Nil(t, afs.WriteFile(fileName, content, 0600))
+	_, _, _, err := RecoverBlock(afs, fileName, 0)
+	assert.NotNil(t, err)
+	info, err := afs.Stat(fileName)
 	assert.Nil(t, err)
-	assert.Equal(t, common.Offset(2), lastOffset)
-	assert.Equal(t, int64(78), i)
+	assert.Equal(t, int64(len(content)), info.Size(), "must not truncate valid entries")
+}
+
+func collectBatches(params ReadFileParams) ([][]common.LogEntry, error) {
+	logChan := make(chan *[]common.LogEntry)
+	var wg sync.WaitGroup
+	params.LogChan = logChan
+	params.Wg = &wg
+	var batches [][]common.LogEntry
+	done := make(chan struct{})
+	go func() {
+		for batch := range logChan {
+			batches = append(batches, *batch)
+			wg.Done()
+		}
+		close(done)
+	}()
+	_, err := ReadFile(params)
+	wg.Wait()
+	close(logChan)
+	<-done
+	return batches, err
+}
+
+func readFileContent(t *testing.T, content []byte, batchSize uint32) ([][]common.LogEntry, error) {
+	afs := common.MemAfs()
+	fileName := "tmp/topic1/000.log"
+	assert.Nil(t, afs.WriteFile(fileName, content, 0600))
+	file, err := common.OpenFileForRead(afs, fileName)
+	assert.Nil(t, err)
+	defer file.Close()
+	return collectBatches(ReadFileParams{File: file, BatchSize: batchSize, EndOffset: math.MaxUint64})
+}
+
+func TestReadFile_splitsBatchesAtByteLimit(t *testing.T) {
+	payload := bytes.Repeat([]byte("x"), 1024*1024)
+	var content []byte
+	for i := 0; i < 25; i++ {
+		content = append(content, common.CreateByteEntry(payload, common.Offset(i))...)
+	}
+	batches, err := readFileContent(t, content, 1000)
+	assert.Nil(t, err)
+	var sizes []int
+	for _, batch := range batches {
+		sizes = append(sizes, len(batch))
+	}
+	assert.Equal(t, []int{11, 11, 3}, sizes)
+}
+
+func TestReadFile_rejectsCorruptEntry(t *testing.T) {
+	content := append(common.CreateByteEntry([]byte("dummy1"), 0), common.CreateByteEntry([]byte("dummy2"), 1)...)
+	content[26+12] ^= 0xff // first payload byte of the second entry
+	_, err := readFileContent(t, content, 10)
+	assert.True(t, errors.Is(err, common.ErrCorruptEntry), "err=%v", err)
+}
+
+func TestReadFile_rejectsZeroBatchSize(t *testing.T) {
+	_, err := readFileContent(t, common.CreateByteEntry([]byte("dummy1"), 0), 0)
+	assert.NotNil(t, err)
+}
+
+func TestReadFile_hugeBatchSize(t *testing.T) {
+	var content []byte
+	for i := 0; i < 3; i++ {
+		content = append(content, common.CreateByteEntry([]byte("dummy"), common.Offset(i))...)
+	}
+	batches, err := readFileContent(t, content, math.MaxUint32)
+	assert.Nil(t, err)
+	assert.Len(t, batches, 1)
+	assert.Len(t, batches[0], 3)
 }
 
 func Test(t *testing.T) {

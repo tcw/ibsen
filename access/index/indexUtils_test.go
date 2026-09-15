@@ -19,7 +19,8 @@ func TestCreateIndex(t *testing.T) {
 	assert.Nil(t, err)
 	index := NewIndex(indexBytes)
 	assert.Nil(t, err)
-	assert.Equal(t, index.Size(), 9)
+	// every entry is indexed when oneEntryForEvery is 1, including the block's first
+	assert.Equal(t, 10, index.Size())
 }
 
 func createLogEntries(entries int) []byte {

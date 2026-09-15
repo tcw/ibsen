@@ -27,20 +27,22 @@ A Go append-only log server, Kafka-like: topics you write entries to and read ba
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
 - `go vet` still flags discarded `context.WithTimeout` cancels in `cmd/` and `api/grpcApi/test/` (not yet fixed).
 
-## 1. Correctness bugs (fix first)
+## 1. Correctness bugs
 
-From the design session:
-1. **Size field width mismatch.** Written as uint64, read as uint32 in the index builder (`access/index/indexUtils.go:138`). Latent rather than active: it still consumes 8 bytes and LE low bits are correct below 4 GiB, but fix it.
-2. **Recovery trusts the last 8 bytes** as the final offset (`access/log/logUtils.go:173` `BlockInfo`). Replace with a CRC-validated forward scan that finds the true end of log and truncates any torn tail.
+All known bugs below are fixed (2026-09-15), each with a regression test. Remaining known gaps are listed at the end.
 
-Found while verifying (not in the original summary):
-3. **CRC read from the wrong buffer and never verified.** `logUtils.go:279` decodes `bytes` instead of `checksum`; no read path checks CRCs.
-4. **Batch byte cap never triggers.** `logUtils.go:317` is `= +int(size)`, not `+=`.
-5. **Nil deref on open failure.** `topicAccess.go:254` calls `file.Close()` when `OpenFileForWrite` returned nil.
-6. **Index file handle leak.** `topicAccess.go:408` opens the `.idx` for write and never closes it.
-7. ~~**Unsynchronized topic state.**~~ Fixed in step zero (`Topic.mu` + read snapshot).
-8. **Index resume drops sample points (perf only).** In-process resume starts at end-of-scan and `isFirst` skips that entry; on restart resume starts at the last indexed entry. The two paths disagree on what `IndexPosition.ByteOffset` means.
-9. ~~**Cross-block index lookup.**~~ Fixed in step zero. When the newest log block had no index yet (async indexer behind, or `.idx` missing after restart), reads used the previous block's byte offsets to seek in the new block: wrong data, `unexpected EOF`, or a `makeslice` panic. Covered by the `reload-without-newest-index` property mode.
+- **Entry decoding** is one function, `common.ReadEntry`: it verifies the CRC, treats a size larger than `MaxEntrySize` (or than the remaining file) as corruption, and distinguishes `io.EOF` (clean boundary), `io.ErrUnexpectedEOF` (partial entry) and `common.ErrCorruptEntry`. Index building, offset scans, reads and recovery all use it. This fixed the uint64/uint32 size mismatch, the CRC read from the wrong buffer, and unverified reads.
+- **Recovery**: `log.RecoverBlock` replaces `BlockInfo`. It scans the head block from the start, truncates from the first partial or corrupt entry, and errors (without truncating) on a valid entry with an unexpected offset. Complete entries of a batch whose write returned an error can survive recovery, as with any crash; there are no batch markers.
+- **Index after recovery**: pairs past the recovered end and torn partial pairs are dropped from the head index; indexing resumes right after the last kept entry. `IndexPosition.ByteOffset` always means "end of the scanned region", and the builder indexes every entry with `offset % 10 == 0`, including a block's first.
+- **Writes**: open failures return errors; a failed write truncates the block back to `HeadBlockSize`; if that also fails the topic refuses writes until `LoadOrCreate`. Failed index writes are rolled back; index file handles are closed.
+- **Reads**: batch byte cap works; batch size 0 is an error; the batch buffer is no longer preallocated to a client-supplied size.
+- **Topics**: reloading a topic directory with no blocks (created by a read of an unknown topic) is valid instead of a `log.Fatal`; a concurrent `Mkdir` of the same topic is not an error.
+- **Concurrency and cross-block index lookups**: fixed in step zero (`Topic.mu`, read snapshot, index only used for its own block).
+
+Known, not yet fixed:
+- gRPC `Read`: if `Send` fails (client gone), `sendGRPCMessage` exits without draining, so the reader goroutine and the handler block forever.
+- `TestReadWriteWithOffsetVerification` in `api/grpcApi/test` is still commented out.
+- `LoadTopicBlocks` fails on any non-numeric file name in a topic directory, which `log.Fatal`s the server.
 
 ## 2. Durability
 
@@ -49,7 +51,7 @@ fsync-on-flush policy: flush after N entries or a time interval. Only acknowledg
 ## 3. Index
 
 - Binary search over the already-sorted offsets instead of the linear scan (`access/index/index.go:53`).
-- Make sparsity configurable (hardcoded `10` at `topicAccess.go:400`).
+- Make sparsity configurable (hardcoded `10` in `Topic.indexBlock`).
 - Checksum index files.
 
 ## 4. Architecture: hexagonal refactor
