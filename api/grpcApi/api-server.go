@@ -12,7 +12,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/testdata"
 	"math"
 	"net"
 	"sync"
@@ -82,13 +81,11 @@ func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener, wg *sync.WaitGroup,
 		grpc.StreamInterceptor(otelgrpc.StreamServerInterceptor()),
 	}
 	if igs.UseTLS {
-		absCert := testdata.Path(igs.GRPCSecurity.CertKeyFile)
-		absKey := testdata.Path(igs.GRPCSecurity.PrivteKeyFile)
-		creds, err := credentials.NewServerTLSFromFile(absCert, absKey)
-		opts = append(opts, grpc.Creds(creds))
+		creds, err := serverCredentials(igs.GRPCSecurity)
 		if err != nil {
 			return err
 		}
+		opts = append(opts, grpc.Creds(creds))
 	}
 	grpcServer := grpc.NewServer(opts...)
 
@@ -100,6 +97,16 @@ func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener, wg *sync.WaitGroup,
 		CheckForNewEvery: igs.CheckForNewEvery,
 	})
 	return grpcServer.Serve(listener)
+}
+
+// serverCredentials loads the TLS certificate and private key. Relative paths are resolved
+// against the working directory.
+func serverCredentials(sec GRPCSecurity) (credentials.TransportCredentials, error) {
+	creds, err := credentials.NewServerTLSFromFile(sec.CertKeyFile, sec.PrivteKeyFile)
+	if err != nil {
+		return nil, errore.WrapWithContextF(err, "unable to load TLS certificate %s and key %s", sec.CertKeyFile, sec.PrivteKeyFile)
+	}
+	return creds, nil
 }
 
 func (igs *IbsenGrpcServer) Shutdown() {
