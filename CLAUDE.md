@@ -25,7 +25,7 @@ A Go append-only log server, Kafka-like: topics you write entries to and read ba
 - `go test -race ./...` passes (step zero). Run it before and after every migration step.
 - Property tests: `access/topicAccess_property_test.go` (read-from-every-offset across block sizes and reload modes; concurrent write/read/index). Stdlib-only, intended to become the `BlockStore` conformance suite.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
-- `go vet` still flags discarded `context.WithTimeout` cancels in `cmd/` (not yet fixed).
+- `go vet ./...` is clean; keep it that way.
 
 ## 1. Correctness bugs
 
@@ -46,10 +46,10 @@ All known bugs below are fixed (2026-09-15), each with a regression test. Remain
 - **Single-writer lease renewal** (`access/locking`): renewal opened the lock file with `O_RDWR|O_EXCL`, which Linux ignores but afero's in-memory fs rejects for an existing file; it now opens with `O_WRONLY|O_TRUNC`. A failed renewal exits the process (another instance could claim the lock). `ReleaseLock` stops the renewer under a mutex, so a clean shutdown no longer races a renewal of the removed file (which used to panic on a nil file). The expired-lease claim checks its write. Tested on mem and OS fs.
 - **TLS paths**: `api/grpcApi/api-server.go` used grpc's `testdata.Path` for the cert and key, which joins relative paths onto grpc's own test data directory. `serverCredentials` now loads them as given (relative to the working directory) and returns the error before using the credentials. Covered by `api/grpcApi/tls_test.go` (self-signed cert at relative paths, TLS round trip).
 - **Shutdown**: `LogTopicsManager.Close` refuses new writes and topic loads (`manager.ErrClosed`), waits for those in flight, stops the index scheduler and closes each topic; `Topic.Close` refuses writes (`access.ErrTopicClosed`) and waits for the indexing earlier writes started. Loaded topics stay readable. `IbsenServer.ShutdownCleanly` closes the manager after gRPC stops (a forced stop does not wait for handlers) and only then releases the lock, and `Start` waits for the shutdown to finish, since the process exits when it returns. gRPC calls during shutdown get `Unavailable`. Only the Write goroutine adds to `Topic.indexWg`, under `Topic.mu` before `closed` is set, so `Close` never races an `Add`. Covered by `manager/close_test.go` (gated writes) and `api/ibsen_test.go`.
+- **CLI clients**: `newIbsenClient` / `newIbsenBench` discarded the `context.WithTimeout` cancel (`go vet`); the clients now keep it and the connection, and each command defers `Close`.
 - **End-to-end test harness** (`api/grpcApi/test`): each test starts its own server on a free port with `startTestServer(t)`, which fails the test if the server does not start and stops it on cleanup; clients are closed. Before, `TestName` left its server running, the next server failed to bind silently (`log.Fatal().Err(err)` without `Msg` never logs or exits), and `-count=2` hung. `TestReadWriteWithOffsetVerification` is enabled and reads from every offset across several blocks. A simulated reader whose stream fails to open returns instead of calling `Recv` on a nil stream (that crashed `TestName` now and then).
 
-Known, not yet fixed:
-- `go vet` flags discarded `context.WithTimeout` cancels in `cmd/ibsenBench.go` and `cmd/ibsenClient.go`.
+Known, not yet fixed: none.
 
 ## 2. Durability
 

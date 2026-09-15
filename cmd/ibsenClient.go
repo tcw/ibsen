@@ -18,6 +18,8 @@ import (
 type IbsenClient struct {
 	Client grpcApi.IbsenClient
 	Ctx    context.Context
+	cancel context.CancelFunc
+	conn   *grpc.ClientConn
 }
 
 func newIbsenClient(target string) (IbsenClient, error) {
@@ -28,16 +30,19 @@ func newIbsenClient(target string) (IbsenClient, error) {
 		return IbsenClient{}, err
 	}
 
-	client := grpcApi.NewIbsenClient(conn)
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute)
-	if ctx.Err() == context.Canceled {
-		return IbsenClient{}, ctx.Err()
-	}
-
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute)
 	return IbsenClient{
-		Client: client,
+		Client: grpcApi.NewIbsenClient(conn),
 		Ctx:    ctx,
+		cancel: cancel,
+		conn:   conn,
 	}, nil
+}
+
+// Close cancels the context used for calls and closes the connection.
+func (ic *IbsenClient) Close() {
+	ic.cancel()
+	_ = ic.conn.Close()
 }
 
 func (ic *IbsenClient) List() (string, error) {

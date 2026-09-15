@@ -17,6 +17,8 @@ import (
 type IbsenBench struct {
 	Client grpcApi.IbsenClient
 	Ctx    context.Context
+	cancel context.CancelFunc
+	conn   *grpc.ClientConn
 }
 
 func newIbsenBench(target string) (IbsenBench, error) {
@@ -27,16 +29,19 @@ func newIbsenBench(target string) (IbsenBench, error) {
 		return IbsenBench{}, err
 	}
 
-	client := grpcApi.NewIbsenClient(conn)
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute)
-	if ctx.Err() == context.Canceled {
-		return IbsenBench{}, ctx.Err()
-	}
-
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(10)*time.Minute)
 	return IbsenBench{
-		Client: client,
+		Client: grpcApi.NewIbsenClient(conn),
 		Ctx:    ctx,
+		cancel: cancel,
+		conn:   conn,
 	}, nil
+}
+
+// Close cancels the context used for calls and closes the connection.
+func (b *IbsenBench) Close() {
+	b.cancel()
+	_ = b.conn.Close()
 }
 
 func (b *IbsenBench) BenchmarkConcurrent(
