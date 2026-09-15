@@ -287,8 +287,8 @@ func Test(t *testing.T) {
 
 func TestLoadTopicBlocks(t *testing.T) {
 	afs := common.MemAfs()
-	logFileName := "tmp/topic1/001.log"
-	indexFileName := "tmp/topic1/001.idx"
+	logFileName := "tmp/topic1/00000000000000000000.log"
+	indexFileName := "tmp/topic1/00000000000000000000.idx"
 	file, err := common.OpenFileForWrite(afs, logFileName)
 	if err != nil {
 		t.Error(err)
@@ -334,4 +334,29 @@ func TestReadFile_stopsWhenCancelled(t *testing.T) {
 	_, err = ReadFile(ReadFileParams{File: file, LogChan: logChan, Wg: &wg, Cancel: cancel, BatchSize: 1, EndOffset: math.MaxUint64})
 	assert.True(t, errors.Is(err, common.ErrReadCancelled), "err=%v", err)
 	wg.Wait()
+}
+
+func TestLoadTopicBlocks_ignoresUnexpectedFiles(t *testing.T) {
+	afs := common.MemAfs()
+	for _, name := range []string{
+		"00000000000000000000.log", "00000000000000000000.idx", "00000000000000000042.log",
+		".DS_Store", "README", "notes.txt", "123.log", "1.2.log", "00000000000000000042.log.swp", "99999999999999999999.log",
+	} {
+		assert.Nil(t, afs.WriteFile("tmp/topic1/"+name, []byte("x"), 0600))
+	}
+	assert.Nil(t, afs.MkdirAll("tmp/topic1/backup", 0744))
+	logBlocks, indexBlocks, err := LoadTopicBlocks(afs, "tmp", "topic1")
+	assert.Nil(t, err)
+	assert.Equal(t, []common.LogBlock{0, 42}, logBlocks)
+	assert.Equal(t, []common.IndexBlock{0}, indexBlocks)
+}
+
+func TestListAllTopics_ignoresFiles(t *testing.T) {
+	afs := common.MemAfs()
+	_, err := CreateTopicDirectory(afs, "tmp", "topic1")
+	assert.Nil(t, err)
+	assert.Nil(t, afs.WriteFile("tmp/notes.txt", []byte("x"), 0600))
+	topics, err := ListAllTopics(afs, "tmp")
+	assert.Nil(t, err)
+	assert.Equal(t, []string{"topic1"}, topics)
 }
