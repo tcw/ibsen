@@ -117,6 +117,9 @@ func (s *Simulation) stop() {
 		s.cancel <- true
 	}
 	s.wg.Wait()
+	for _, user := range s.users {
+		user.ibsenClient.Close()
+	}
 }
 
 func (u *User) run(t *testing.T, wg *sync.WaitGroup, cancel chan bool) {
@@ -148,7 +151,8 @@ func (u *User) run(t *testing.T, wg *sync.WaitGroup, cancel chan bool) {
 }
 
 func (u *User) write(t *testing.T) {
-	ctx, _ := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
 	numberOfEntries := u.params.entries.value()
 	randTopic := u.topics.randTopic()
 	entryByteSize := 100
@@ -162,7 +166,8 @@ func (u *User) write(t *testing.T) {
 }
 
 func (u *User) read(t *testing.T, topic string) {
-	ctx, _ := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
 	var offset uint64 = 0
 	entryStream, err := u.ibsenClient.Client.Read(ctx, &grpcApi.ReadParams{
 		StopOnCompletion: false,
@@ -230,7 +235,7 @@ func newUsers(users int, globalTopics GlobalTopics, params SimulationParams) ([]
 }
 
 func newUser(username string, globalTopics GlobalTopics, params SimulationParams) (*User, error) {
-	client, err := newIbsenClient(ibsenTestTarge)
+	client, err := newIbsenClient(ibsenTestTarget)
 	if err != nil {
 		return nil, err
 	}

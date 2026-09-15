@@ -2,7 +2,6 @@ package test
 
 import (
 	"context"
-	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/api/grpcApi"
 	"io"
@@ -11,8 +10,7 @@ import (
 )
 
 func TestTopicList(t *testing.T) {
-	afs := newMemMapFs()
-	go startGrpcServer(afs, "/tmp/data")
+	startTestServer(t)
 	err := write("test1", 10, 10)
 	assert.Nil(t, err)
 	err = write("test2", 10, 10)
@@ -26,20 +24,13 @@ func TestTopicList(t *testing.T) {
 
 	topicList, err := list()
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 	assert.Equal(t, 5, len(topicList.GetTopics()), "should be equal")
-	ibsenServer.Shutdown()
-}
-
-func newMemMapFs() *afero.Afero {
-	var fs = afero.NewMemMapFs()
-	return &afero.Afero{Fs: fs}
 }
 
 func TestReadWriteLargeObject(t *testing.T) {
-	afs := newMemMapFs()
-	go startGrpcServer(afs, "/tmp/data")
+	startTestServer(t)
 	numberOfEntries := 1
 	objectBytes, err := writeLarge("test", numberOfEntries, 50_000)
 	if err != nil {
@@ -54,62 +45,66 @@ func TestReadWriteLargeObject(t *testing.T) {
 	}
 	actualObjectSize := len(entries[0].Content)
 	assert.Equal(t, actualObjectSize, objectBytes, "should be equal")
-	ibsenServer.Shutdown()
 }
 
 func TestReadWriteVerification(t *testing.T) {
-	afs := newMemMapFs()
-	go startGrpcServer(afs, "/tmp/data")
+	startTestServer(t)
 	numberOfEntries := 10000
 	err := write("test", numberOfEntries, 100)
 	assert.Nil(t, err)
 	entries, err := read("test", 0, 1000)
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 	assert.Equal(t, numberOfEntries, len(entries), "should be equal")
-	ibsenServer.Shutdown()
 }
 
-// Todo: fix
-//func TestReadWriteWithOffsetVerification(t *testing.T) {
-//	afs := newMemMapFs()
-//	go startGrpcServer(afs, "/tmp/data")
-//	writeEntries := 1000
-//	err := write("test", writeEntries, 100)
-//	assert.Nil(t, err)
-//	for i := 1; i < writeEntries; i++ {
-//		offset := uint64(writeEntries - i)
-//		expected := writeEntries - int(offset)
-//		entries, err := read("test", offset, 10)
-//		if err != nil {
-//			t.Error(err)
-//		}
-//		assert.Equal(t, expected, len(entries), "should be equal")
-//	}
-//	ibsenServer.Shutdown()
-//}
+// Reads from every offset of a topic spanning several blocks, and checks each read returns
+// exactly the entries from that offset to the end of the log, in order.
+func TestReadWriteWithOffsetVerification(t *testing.T) {
+	startTestServer(t)
+	batches, batchSize := 10, 100
+	for i := 0; i < batches; i++ {
+		if err := write("test", batchSize, 100); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeEntries := batches * batchSize
+	for offset := 0; offset < writeEntries; offset++ {
+		entries, err := read("test", uint64(offset), 10)
+		if err != nil {
+			t.Fatalf("read from offset %d: %v", offset, err)
+		}
+		if len(entries) != writeEntries-offset {
+			t.Fatalf("read from offset %d returned %d entries, want %d", offset, len(entries), writeEntries-offset)
+		}
+		for i, entry := range entries {
+			if entry.Offset != uint64(offset+i) {
+				t.Fatalf("read from offset %d: entry %d has offset %d", offset, i, entry.Offset)
+			}
+		}
+	}
+}
 
 func list() (*grpcApi.TopicList, error) {
-	client, err := newIbsenClient(ibsenTestTarge)
+	client, err := newIbsenClient(ibsenTestTarget)
 	if err != nil {
 		return nil, err
 	}
-	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
-	if ctx.Err() == context.Canceled {
-		return nil, ctx.Err()
-	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	return client.Client.List(ctx, &grpcApi.EmptyArgs{})
 }
+
 func writeLarge(topic string, numberOfEntries int, entryKb int) (int, error) {
-	client, err := newIbsenClient(ibsenTestTarge)
+	client, err := newIbsenClient(ibsenTestTarget)
 	if err != nil {
 		return 0, err
 	}
-	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
-	if ctx.Err() == context.Canceled {
-		return 0, ctx.Err()
-	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	entries, size := createLargeInputEntries(topic, numberOfEntries, entryKb)
 	_, err = client.Client.Write(ctx, &entries)
 	if err != nil {
@@ -119,28 +114,26 @@ func writeLarge(topic string, numberOfEntries int, entryKb int) (int, error) {
 }
 
 func write(topic string, numberOfEntries int, entryByteSize int) error {
-	client, err := newIbsenClient(ibsenTestTarge)
+	client, err := newIbsenClient(ibsenTestTarget)
 	if err != nil {
 		return err
 	}
-	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	entries := createInputEntries(topic, numberOfEntries, entryByteSize)
 	_, err = client.Client.Write(ctx, &entries)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func read(topic string, offset uint64, batchSize uint32) ([]*grpcApi.Entry, error) {
-	client, err := newIbsenClient(ibsenTestTarge)
+	client, err := newIbsenClient(ibsenTestTarget)
 	if err != nil {
 		return nil, err
 	}
-	ctx, _ := context.WithTimeout(context.Background(), 30*time.Second)
-	if ctx.Err() == context.Canceled {
-		return nil, ctx.Err()
-	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	entryStream, err := client.Client.Read(ctx, &grpcApi.ReadParams{
 		StopOnCompletion: true,
 		Topic:            topic,
