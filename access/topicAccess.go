@@ -115,6 +115,9 @@ func (t *Topic) UpdateIndex() (bool, error) {
 }
 
 func (t *Topic) LoadOrCreate() error {
+	if err := common.ValidateTopicName(common.TopicName(t.TopicName)); err != nil {
+		return err
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	created, err := ibsLog.CreateTopicDirectory(t.Afs, t.RootPath, t.TopicName)
@@ -173,6 +176,9 @@ func (t *Topic) LoadOrCreate() error {
 // ReadLog
 // Reads a log from and including the ReadLogParams.From offset until end of log.
 func (t *Topic) Read(params common.ReadLogParams) error {
+	if err := common.ValidateTopicName(common.TopicName(t.TopicName)); err != nil {
+		return err
+	}
 	return t.snapshot().read(params)
 }
 
@@ -279,6 +285,9 @@ func (t *Topic) read(params common.ReadLogParams) error {
 }
 
 func (t *Topic) Write(entries common.EntriesPtr) error {
+	if err := common.ValidateTopicName(common.TopicName(t.TopicName)); err != nil {
+		return err
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.writeFailure != nil {

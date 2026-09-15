@@ -2,6 +2,7 @@ package common
 
 import (
 	"errors"
+	"fmt"
 	"github.com/spf13/afero"
 	"sync"
 )
@@ -17,6 +18,30 @@ var NoBlocksFound = errors.New("no blocks found")
 var NoEntriesFound = errors.New("no entries found")
 
 var ErrReadCancelled = errors.New("read cancelled")
+
+var ErrInvalidTopicName = errors.New("invalid topic name")
+
+// MaxTopicNameLength is the longest topic name in bytes. A topic is a directory, and most
+// filesystems limit a name to 255 bytes.
+const MaxTopicNameLength = 255
+
+// ValidateTopicName rejects names that are unsafe as a topic directory: empty or too long
+// names, a leading dot (which covers "." and ".." and would hide the topic from listing),
+// path separators, and control characters.
+func ValidateTopicName(name TopicName) error {
+	if len(name) == 0 || len(name) > MaxTopicNameLength {
+		return fmt.Errorf("%w: length must be 1 to %d bytes", ErrInvalidTopicName, MaxTopicNameLength)
+	}
+	if name[0] == '.' {
+		return fmt.Errorf("%w: %q starts with a dot", ErrInvalidTopicName, name)
+	}
+	for i := 0; i < len(name); i++ {
+		if c := name[i]; c == '/' || c == '\\' || c < 0x20 || c == 0x7f {
+			return fmt.Errorf("%w: %q contains %q", ErrInvalidTopicName, name, c)
+		}
+	}
+	return nil
+}
 
 type LogBlockPosition struct {
 	Block      LogBlock
