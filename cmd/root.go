@@ -198,6 +198,7 @@ var (
 			if err != nil {
 				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
 			}
+			defer client.Close()
 			benchmarkReport := ""
 			if concurrent > 1 {
 				benchmarkReport, err = client.BenchmarkConcurrent(topic, benchEntiesByteSize, benchEntiesInEachBatchWrite, benchWriteBatches, benchReadBatches, concurrent)
@@ -230,6 +231,7 @@ var (
 			if err != nil {
 				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
 			}
+			defer client.Close()
 			result := ""
 
 			if len(args) > 1 {
@@ -258,6 +260,7 @@ var (
 			if err != nil {
 				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
 			}
+			defer client.Close()
 			result, err := client.List()
 			if err != nil {
 				log.Fatal().Err(err).Msg("unable to list topics")
@@ -296,6 +299,7 @@ var (
 			if err != nil {
 				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
 			}
+			defer client.Close()
 			err = client.Read(topic, offset, uint32(batchSize64))
 			if err != nil {
 				log.Fatal().Err(err).Msgf("unable to read topic %s", topic)
