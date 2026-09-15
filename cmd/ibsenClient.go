@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/errore"
 	"google.golang.org/grpc"
@@ -26,7 +25,7 @@ func newIbsenClient(target string) (IbsenClient, error) {
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32),
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
-		log.Fatal().Err(err)
+		return IbsenClient{}, err
 	}
 
 	client := grpcApi.NewIbsenClient(conn)

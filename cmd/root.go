@@ -69,7 +69,7 @@ var (
 				var err error
 				absolutePath, err = filepath.Abs(rootDirectory)
 				if err != nil {
-					log.Fatal().Err(err)
+					log.Fatal().Err(err).Msgf("unable to resolve data directory %s", rootDirectory)
 				}
 				log.Info().Msgf("Data directory: %s", rootDirectory)
 
@@ -105,12 +105,11 @@ var (
 			}
 			lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 			if err != nil {
-				log.Err(err)
-				return
+				log.Fatal().Err(err).Msgf("unable to listen on %s:%d", host, port)
 			}
 			err = ibsenServer.Start(lis)
 			if err != nil {
-				log.Fatal().Err(err)
+				log.Fatal().Err(err).Msg("ibsen server failed")
 			}
 		},
 	}
@@ -151,11 +150,11 @@ var (
 			}
 			file, err := filepath.Abs(args[0])
 			if err != nil {
-				log.Fatal().Err(err)
+				log.Fatal().Err(err).Msgf("unable to resolve log file %s", args[0])
 			}
 			err = ReadLogFile(file, uint32(batchSize))
 			if err != nil {
-				log.Fatal().Err(err)
+				log.Fatal().Err(err).Msgf("unable to read log file %s", file)
 			}
 		},
 	}
@@ -174,11 +173,11 @@ var (
 			}
 			absolutePath, err := filepath.Abs(args[0])
 			if err != nil {
-				log.Fatal().Err(err)
+				log.Fatal().Err(err).Msgf("unable to resolve index file %s", args[0])
 			}
 			err = ReadLogIndexFile(absolutePath)
 			if err != nil {
-				log.Fatal().Err(err)
+				log.Fatal().Err(err).Msgf("unable to read index file %s", absolutePath)
 			}
 		},
 	}
@@ -197,18 +196,18 @@ var (
 			topic := args[0]
 			client, err := newIbsenBench(host + ":" + strconv.Itoa(port))
 			if err != nil {
-				log.Fatal().Err(err)
+				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
 			}
 			benchmarkReport := ""
 			if concurrent > 1 {
 				benchmarkReport, err = client.BenchmarkConcurrent(topic, benchEntiesByteSize, benchEntiesInEachBatchWrite, benchWriteBatches, benchReadBatches, concurrent)
 				if err != nil {
-					log.Fatal().Err(err)
+					log.Fatal().Err(err).Msg("concurrent benchmark failed")
 				}
 			} else {
 				benchmarkReport, err = client.Benchmark(topic, benchEntiesByteSize, benchEntiesInEachBatchWrite, benchWriteBatches, benchReadBatches)
 				if err != nil {
-					log.Fatal().Err(err)
+					log.Fatal().Err(err).Msg("benchmark failed")
 				}
 			}
 			fmt.Println(benchmarkReport)
@@ -229,19 +228,19 @@ var (
 			topic := args[0]
 			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
 			if err != nil {
-				log.Fatal().Err(err)
+				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
 			}
 			result := ""
 
 			if len(args) > 1 {
 				result, err = client.Write(topic, args[1])
 				if err != nil {
-					log.Fatal().Err(err)
+					log.Fatal().Err(err).Msgf("unable to write file %s to topic %s", args[1], topic)
 				}
 			} else {
 				result, err = client.Write(topic)
 				if err != nil {
-					log.Fatal().Err(err)
+					log.Fatal().Err(err).Msgf("unable to write stdin to topic %s", topic)
 				}
 			}
 			fmt.Println(result)
@@ -257,11 +256,11 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
 			if err != nil {
-				log.Fatal().Err(err)
+				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
 			}
 			result, err := client.List()
 			if err != nil {
-				log.Fatal().Err(err)
+				log.Fatal().Err(err).Msg("unable to list topics")
 			}
 			fmt.Println(result)
 		},
@@ -295,11 +294,11 @@ var (
 			}
 			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
 			if err != nil {
-				log.Fatal().Err(err)
+				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
 			}
 			err = client.Read(topic, offset, uint32(batchSize64))
 			if err != nil {
-				log.Fatal().Err(err)
+				log.Fatal().Err(err).Msgf("unable to read topic %s", topic)
 			}
 		},
 	}

@@ -4,8 +4,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/errore"
 	"io"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -15,6 +17,10 @@ type FileLock struct {
 	reclaimLease time.Duration
 	leaseTime    time.Duration
 	uniqueId     string
+	// mu serializes lease renewals with ReleaseLock; stop ends the renewals once released
+	mu       *sync.Mutex
+	stop     chan struct{}
+	stopOnce *sync.Once
 }
 
 func NewFileLock(afero *afero.Afero, lockFile string, leaseTime time.Duration, waitFor time.Duration) FileLock {
@@ -24,6 +30,9 @@ func NewFileLock(afero *afero.Afero, lockFile string, leaseTime time.Duration, w
 		reclaimLease: waitFor,
 		leaseTime:    leaseTime,
 		uniqueId:     uuid.New().String(),
+		mu:           &sync.Mutex{},
+		stop:         make(chan struct{}),
+		stopOnce:     &sync.Once{},
 	}
 }
 
@@ -76,6 +85,11 @@ func (fl FileLock) AcquireLock() bool {
 					return false
 				}
 				_, err = fileLockAdder.Write([]byte(fl.uniqueId))
+				ioErr := fileLockAdder.Close()
+				if err != nil || ioErr != nil {
+					log.Err(errore.WrapError(ioErr, err)).Msgf("failed while claiming expired lock file %s", fl.lockFile)
+					return false
+				}
 				go fl.reclaimer()
 				return true
 			} else {
@@ -110,20 +124,44 @@ func (fl FileLock) AcquireLock() bool {
 }
 
 func (fl FileLock) reclaimer() {
-	time.Sleep(fl.reclaimLease)
-
 	for {
-		fileLock, err := fl.afero.OpenFile(fl.lockFile, os.O_RDWR|os.O_EXCL, 0660)
-		if err != nil {
-			log.Fatal().Err(err)
+		select {
+		case <-fl.stop:
+			return
+		case <-time.After(fl.reclaimLease):
 		}
-		_, err = fileLock.Write([]byte(fl.uniqueId))
-		ioErr := fileLock.Close()
-		if ioErr != nil {
-			log.Printf("failed while closing lock file %s", fl.lockFile)
+		if !fl.renewLease() {
+			return
 		}
-		time.Sleep(fl.reclaimLease)
 	}
+}
+
+// renewLease rewrites the lock file to extend the lease, and reports false once the lock is
+// released. A lease that cannot be renewed exits the process: another instance may claim the
+// lock when the lease expires, and two writers would corrupt the log.
+func (fl FileLock) renewLease() bool {
+	fl.mu.Lock()
+	defer fl.mu.Unlock()
+	select {
+	case <-fl.stop:
+		return false
+	default:
+	}
+	// the lock file must already exist: O_EXCL without O_CREATE is ignored by Linux but
+	// rejects an existing file on other filesystems, so it is not used here
+	fileLock, err := fl.afero.OpenFile(fl.lockFile, os.O_WRONLY|os.O_TRUNC, 0660)
+	if err != nil {
+		log.Fatal().Err(err).Msgf("unable to renew single writer lock %s", fl.lockFile)
+	}
+	_, err = fileLock.Write([]byte(fl.uniqueId))
+	ioErr := fileLock.Close()
+	if err != nil {
+		log.Fatal().Err(err).Msgf("unable to renew single writer lock %s", fl.lockFile)
+	}
+	if ioErr != nil {
+		log.Printf("failed while closing lock file %s", fl.lockFile)
+	}
+	return true
 }
 
 func (fl FileLock) getFileModificationTime() (time.Time, error) {
@@ -135,11 +173,14 @@ func (fl FileLock) getFileModificationTime() (time.Time, error) {
 }
 
 func (fl FileLock) ReleaseLock() bool {
+	fl.mu.Lock()
+	defer fl.mu.Unlock()
+	fl.stopOnce.Do(func() { close(fl.stop) })
 	err := fl.afero.Remove(fl.lockFile)
 	if err != nil {
 		log.Err(err).Msgf("failed to remove lock file [%s]", fl.lockFile)
 		return false
 	}
-	log.Err(err).Msgf("Removed lockfile with id [%s]\n", fl.uniqueId)
+	log.Info().Msgf("Removed lockfile with id [%s]", fl.uniqueId)
 	return true
 }
