@@ -45,6 +45,16 @@ type LogTopicsManager struct {
 	Topics             *sync.Map
 	TerminationChannel chan bool
 	StatusAccess       access.StatusAccess
+	// loads holds a *topicLoad for each topic whose first load is running
+	loads *sync.Map
+}
+
+// topicLoad is the first load of a topic from disk, shared by every request for the topic
+// that arrives while it runs.
+type topicLoad struct {
+	done  chan struct{}
+	topic *access.Topic
+	err   error
 }
 
 var TopicNotFound = errors.New("topic not found")
@@ -54,6 +64,7 @@ func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error)
 		Params:             params,
 		TopicWriteLocker:   &sync.Map{},
 		Topics:             &sync.Map{},
+		loads:              &sync.Map{},
 		TerminationChannel: make(chan bool),
 		StatusAccess: &access.Status{
 			Afs:      params.Afs,
@@ -102,16 +113,33 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 	})
 }
 
+// getOrCreateTopic returns the cached topic, loading it first if needed. A topic is loaded
+// at most once at a time: loading recovers the head block and rewrites its index, so a
+// second load running beside a topic that already accepts writes could truncate
+// acknowledged entries or clobber index pairs. Requests that arrive during a load wait for it.
 func (l *LogTopicsManager) getOrCreateTopic(name common.TopicName) (*access.Topic, error) {
-	topic, ok := l.Topics.Load(string(name))
-	if !ok {
-		loaded, err := l.loadOrCreateNewTopic(name)
-		if err != nil {
-			return nil, err
-		}
-		topic, _ = l.Topics.LoadOrStore(string(name), loaded)
+	if topic, ok := l.Topics.Load(string(name)); ok {
+		return topic.(*access.Topic), nil
 	}
-	return topic.(*access.Topic), nil
+	load := &topicLoad{done: make(chan struct{})}
+	if running, isRunning := l.loads.LoadOrStore(string(name), load); isRunning {
+		load = running.(*topicLoad)
+		<-load.done
+		return load.topic, load.err
+	}
+	// a load that finished after the check above has already cached the topic, because a
+	// load is removed from loads only after its topic is stored
+	if topic, ok := l.Topics.Load(string(name)); ok {
+		load.topic = topic.(*access.Topic)
+	} else {
+		load.topic, load.err = l.loadOrCreateNewTopic(name)
+		if load.err == nil {
+			l.Topics.Store(string(name), load.topic)
+		}
+	}
+	l.loads.Delete(string(name))
+	close(load.done)
+	return load.topic, load.err
 }
 
 // loadOrCreateNewTopic loads a topic from disk or creates it. A topic that fails to load is
