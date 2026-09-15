@@ -120,8 +120,8 @@ func (s *Simulation) stop() {
 }
 
 func (u *User) run(t *testing.T, wg *sync.WaitGroup, cancel chan bool) {
+	wg.Add(1)
 	go func(wg *sync.WaitGroup, cancel chan bool) {
-		wg.Add(1)
 		topics := u.topics.topics
 		readersStarted := false
 

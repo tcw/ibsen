@@ -23,6 +23,7 @@ type TopicAccess interface {
 var _ TopicAccess = &Topic{}
 
 type Topic struct {
+	mu             sync.RWMutex
 	Afs            *afero.Afero
 	RootPath       string
 	TopicName      string
@@ -63,6 +64,8 @@ func (t *Topic) UpdateIndex() (bool, error) {
 	defer func() {
 		t.indexWg.Done()
 	}()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	// index log blocks not already indexed
 	notIndexed, err := t.findBlocksToIndex()
@@ -109,6 +112,8 @@ func (t *Topic) UpdateIndex() (bool, error) {
 }
 
 func (t *Topic) LoadOrCreate() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	created, err := ibsLog.CreateTopicDirectory(t.Afs, t.RootPath, t.TopicName)
 	if created {
 		return nil
@@ -149,6 +154,28 @@ func (t *Topic) LoadOrCreate() error {
 // ReadLog
 // Reads a log from and including the ReadLogParams.From offset until end of log.
 func (t *Topic) Read(params common.ReadLogParams) error {
+	return t.snapshot().read(params)
+}
+
+// snapshot copies the topic state so a read does not hold the lock while
+// blocked on a slow consumer.
+func (t *Topic) snapshot() *Topic {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return &Topic{
+		Afs:            t.Afs,
+		RootPath:       t.RootPath,
+		TopicName:      t.TopicName,
+		MaxBlockSize:   t.MaxBlockSize,
+		NextOffset:     t.NextOffset,
+		HeadBlockSize:  t.HeadBlockSize,
+		LogBlockList:   append([]common.LogBlock(nil), t.LogBlockList...),
+		IndexBlockList: append([]common.IndexBlock(nil), t.IndexBlockList...),
+		IndexPosition:  t.IndexPosition,
+	}
+}
+
+func (t *Topic) read(params common.ReadLogParams) error {
 	// ensures reader will not read partially written log entries from file
 	endOffset, exists := t.findLastConfirmedWrittenEntryOffset(params.From)
 	if !exists {
@@ -231,6 +258,8 @@ func (t *Topic) Read(params common.ReadLogParams) error {
 }
 
 func (t *Topic) Write(entries common.EntriesPtr) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	// if topic is empty create the first log block
 	if t.logBlockIsEmpty() {
@@ -272,7 +301,9 @@ func (t *Topic) Write(entries common.EntriesPtr) error {
 	t.incrementHeadBlockSize(n)
 
 	// update index async if no index is running
+	t.indexWg.Add(1)
 	go func() {
+		defer t.indexWg.Done()
 		wasExecuted, err := t.UpdateIndex()
 		if err != nil {
 			log.Warn().Err(err)
@@ -456,12 +487,16 @@ func (t *Topic) findByteOffsetInLogBlockFile(offset common.Offset) (int64, int, 
 	if err != nil {
 		return 0, 0, errore.Wrap(err)
 	}
-	if !foundIndexBlock {
+	// byte offsets in an index are only valid for its own log block
+	if !foundIndexBlock || uint64(indexBlock) != uint64(logBlock) {
 		return ibsLog.FindByteOffsetFromAndIncludingOffset(t.Afs, logBlockFileName, 0, offset)
 	}
 	idx, err := t.getIndexFromIndexBlock(indexBlock)
 	if err != nil {
 		return 0, 0, errore.Wrap(err)
+	}
+	if idx == nil {
+		return ibsLog.FindByteOffsetFromAndIncludingOffset(t.Afs, logBlockFileName, 0, offset)
 	}
 	indexOffset := idx.FindNearestByteOffset(offset)
 	if indexOffset.Offset > offset {

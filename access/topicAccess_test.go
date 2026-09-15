@@ -6,7 +6,6 @@ import (
 	"github.com/tcw/ibsen/access/common"
 	ibsLog "github.com/tcw/ibsen/access/log"
 	"strconv"
-	"sync"
 	"testing"
 )
 
@@ -59,21 +58,10 @@ func TestTopic_Read_one_batch(t *testing.T) {
 	assert.Nil(t, err)
 	err = topic.LoadOrCreate()
 	assert.Nil(t, err)
-	logChan := make(chan *[]common.LogEntry)
-	var wg sync.WaitGroup
-	go func() {
-		err := topic.Read(common.ReadLogParams{
-			LogChan:   logChan,
-			Wg:        &wg,
-			From:      0,
-			BatchSize: 100,
-		})
-		assert.Nil(t, err)
-		wg.Done()
-	}()
-	wg.Wait()
-	logEntry := <-logChan
-	for i, l := range *logEntry {
+	entries, err := readAllFrom(topic, 0, 100)
+	assert.Nil(t, err)
+	assert.Len(t, entries, 10)
+	for i, l := range entries {
 		assert.Equal(t, uint64(i), l.Offset)
 		assert.Equal(t, "dummy"+strconv.Itoa(i), string(l.Entry))
 	}
@@ -95,23 +83,12 @@ func TestTopic_Read_multiple_batches(t *testing.T) {
 	assert.Nil(t, err)
 	err = topic.LoadOrCreate()
 	assert.Nil(t, err)
-	logChan := make(chan *[]common.LogEntry)
-	var wg sync.WaitGroup
-	go func() {
-		err := topic.Read(common.ReadLogParams{
-			LogChan:   logChan,
-			Wg:        &wg,
-			From:      0,
-			BatchSize: 100,
-		})
-		assert.Nil(t, err)
-		wg.Done()
-	}()
-	wg.Wait()
-	logEntry := <-logChan
-	for i, l := range *logEntry {
+	entries, err := readAllFrom(topic, 0, 100)
+	assert.Nil(t, err)
+	assert.Len(t, entries, 3000)
+	for i, l := range entries {
 		assert.Equal(t, uint64(i), l.Offset)
-		assert.Equal(t, "dummy"+strconv.Itoa(i), string(l.Entry))
+		assert.Equal(t, "dummy"+strconv.Itoa(i%1000), string(l.Entry))
 	}
 }
 

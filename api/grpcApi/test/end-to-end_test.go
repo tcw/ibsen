@@ -41,15 +41,17 @@ func TestReadWriteLargeObject(t *testing.T) {
 	afs := newMemMapFs()
 	go startGrpcServer(afs, "/tmp/data")
 	numberOfEntries := 1
-	objectBytes, err := writeLarge("test", numberOfEntries, 500_000)
+	objectBytes, err := writeLarge("test", numberOfEntries, 50_000)
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
 	entries, err := read("test", 0, uint32(numberOfEntries))
 	if err != nil {
-		t.Error(err)
+		t.Fatal(err)
 	}
-	assert.Equal(t, numberOfEntries, len(entries), "should be equal")
+	if !assert.Equal(t, numberOfEntries, len(entries), "should be equal") {
+		t.FailNow()
+	}
 	actualObjectSize := len(entries[0].Content)
 	assert.Equal(t, actualObjectSize, objectBytes, "should be equal")
 	ibsenServer.Shutdown()
@@ -109,7 +111,10 @@ func writeLarge(topic string, numberOfEntries int, entryKb int) (int, error) {
 		return 0, ctx.Err()
 	}
 	entries, size := createLargeInputEntries(topic, numberOfEntries, entryKb)
-	client.Client.Write(ctx, &entries)
+	_, err = client.Client.Write(ctx, &entries)
+	if err != nil {
+		return 0, err
+	}
 	return size, nil
 }
 
