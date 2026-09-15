@@ -78,10 +78,10 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		var err error
 		ibs.cpuProfileFile, err = os.Create(ibs.CpuProfile)
 		if err != nil {
-			log.Fatal().Err(err)
+			return errore.Wrap(err)
 		}
 		if err := pprof.StartCPUProfile(ibs.cpuProfileFile); err != nil {
-			log.Fatal().Err(err)
+			return errore.WrapError(ibs.cpuProfileFile.Close(), err)
 		}
 		log.Info().Msg(fmt.Sprintf("Started profiling, creating file %s", ibs.CpuProfile))
 	}
@@ -134,20 +134,13 @@ func (ibs *IbsenServer) initSignals() {
 
 func (ibs *IbsenServer) ShutdownCleanly() {
 
+	// profiling failures are logged but do not stop the shutdown, which still has to release the lock
 	if ibs.MemProfile != "" {
-		f, err := os.Create(ibs.MemProfile)
-		if err != nil {
-			log.Fatal().Err(err)
+		if err := writeHeapProfile(ibs.MemProfile); err != nil {
+			log.Error().Err(err).Msgf("unable to write memory profile %s", ibs.MemProfile)
+		} else {
+			log.Info().Msg(fmt.Sprintf("Ended memory profiling, writing to file %s", ibs.MemProfile))
 		}
-		runtime.GC() // get up-to-date statistics
-		if err := pprof.WriteHeapProfile(f); err != nil {
-			ioErr := f.Close()
-			if ioErr != nil {
-				log.Fatal().Err(errore.WrapError(ioErr, err))
-			}
-			log.Fatal().Err(err)
-		}
-		log.Info().Msg(fmt.Sprintf("Ended memory profiling, writing to file %s", ibs.MemProfile))
 	}
 
 	if ibs.CpuProfile != "" {
@@ -155,7 +148,7 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 		pprof.StopCPUProfile()
 		err := ibs.cpuProfileFile.Close()
 		if err != nil {
-			log.Fatal().Err(err)
+			log.Error().Err(err).Msgf("unable to close cpu profile %s", ibs.CpuProfile)
 		}
 	}
 
@@ -184,6 +177,18 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 			log.Info().Msg(fmt.Sprintf("unable to release single writer lock [%s]\n", ibs.RootPath))
 		}
 	}
+}
+
+func writeHeapProfile(fileName string) error {
+	f, err := os.Create(fileName)
+	if err != nil {
+		return err
+	}
+	runtime.GC() // get up-to-date statistics
+	if err := pprof.WriteHeapProfile(f); err != nil {
+		return errore.WrapError(f.Close(), err)
+	}
+	return f.Close()
 }
 
 func (ibs *IbsenServer) signalHandler(signal os.Signal) {

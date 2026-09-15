@@ -24,8 +24,7 @@ func newIbsenBench(target string) (IbsenBench, error) {
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32),
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
-		err := err
-		log.Fatal().Err(err)
+		return IbsenBench{}, err
 	}
 
 	client := grpcApi.NewIbsenClient(conn)

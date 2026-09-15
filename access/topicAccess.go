@@ -340,7 +340,7 @@ func (t *Topic) Write(entries common.EntriesPtr) error {
 		defer t.indexWg.Done()
 		wasExecuted, err := t.UpdateIndex()
 		if err != nil {
-			log.Warn().Err(err)
+			log.Warn().Err(err).Str("topic", t.TopicName).Msg("background index update failed")
 		}
 		log.Trace().Msg(fmt.Sprintf("index update executed: %t", wasExecuted))
 	}()
