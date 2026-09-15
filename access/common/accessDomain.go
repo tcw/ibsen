@@ -16,6 +16,8 @@ var NoBlocksFound = errors.New("no blocks found")
 
 var NoEntriesFound = errors.New("no entries found")
 
+var ErrReadCancelled = errors.New("read cancelled")
+
 type LogBlockPosition struct {
 	Block      LogBlock
 	ByteOffset int64
@@ -28,6 +30,8 @@ type ReadLogParams struct {
 	Wg        *sync.WaitGroup
 	From      Offset
 	BatchSize uint32
+	// Cancel stops the read with ErrReadCancelled when closed; nil never cancels.
+	Cancel <-chan struct{}
 }
 
 type LogEntry struct {

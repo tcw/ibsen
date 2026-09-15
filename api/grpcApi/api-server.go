@@ -130,43 +130,34 @@ func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus,
 }
 
 func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
+	ctx := readServer.Context()
+	topicName := common.TopicName(params.Topic)
+	nextOffset := common.Offset(params.Offset)
 	readTTL := time.Now().Add(s.TTL)
-	var nextOffset = common.Offset(params.Offset)
 	for time.Until(readTTL) > 0 {
-		logChan := make(chan *[]common.LogEntry)
-		terminate := make(chan bool)
-		lastOffset := make(chan common.Offset)
-		// starts a go routine for sending messages over grpc async
-		var wg sync.WaitGroup
-		go sendGRPCMessage(logChan, &wg, readServer, terminate, lastOffset)
-		topicName := common.TopicName(params.Topic)
-		// start reading entries passed to go routine for sending
-		err := s.manager.Read(manager.ReadParams{
-			TopicName: topicName,
-			From:      nextOffset,
-			BatchSize: params.BatchSize,
-			LogChan:   logChan,
-			Wg:        &wg,
-		})
-		if err == manager.TopicNotFound {
-			terminate <- true
+		sentUntil, readErr, sendErr := s.streamFrom(ctx, topicName, nextOffset, params.BatchSize, readServer)
+		if sendErr != nil {
+			return sendErr
+		}
+		if ctx.Err() != nil {
+			return status.FromContextError(ctx.Err()).Err()
+		}
+		if readErr == manager.TopicNotFound {
 			return status.Errorf(codes.NotFound, "Topic %s not found", topicName)
 		}
-		if err == common.NoEntriesFound {
-			terminate <- true
-			time.Sleep(s.CheckForNewEvery)
+		if readErr == common.NoEntriesFound {
+			select {
+			case <-ctx.Done():
+				return status.FromContextError(ctx.Err()).Err()
+			case <-time.After(s.CheckForNewEvery):
+			}
 			continue
 		}
-		if err != nil {
-			terminate <- true
-			log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("read api failed")
+		if readErr != nil {
+			log.Error().Str("stack", errore.SprintStackTraceBd(readErr)).Err(errore.RootCause(readErr)).Msgf("read api failed")
 			return status.Error(codes.Unknown, "error reading streaming")
 		}
-		// wait for all entries in topic to be sent by go routine
-		wg.Wait()
-		// destroy routine
-		terminate <- true
-		nextOffset = <-lastOffset + 1
+		nextOffset = sentUntil
 		// refresh ttl
 		readTTL = time.Now().Add(s.TTL)
 		if params.StopOnCompletion {
@@ -176,35 +167,42 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	return nil
 }
 
-func sendGRPCMessage(logChan chan *[]common.LogEntry,
-	wg *sync.WaitGroup,
-	outStream Ibsen_ReadServer,
-	terminate chan bool,
-	lastOffset chan common.Offset) {
+// streamFrom sends the topic's entries from offset to the end of the log. It returns the
+// offset after the last entry sent, the read error and the send error. A failed send or a
+// departed client cancels the read, and any batch already on its way is drained, so the
+// read never blocks on a batch nobody will receive.
+func (s server) streamFrom(ctx context.Context, topic common.TopicName, from common.Offset, batchSize uint32, out Ibsen_ReadServer) (common.Offset, error, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	logChan := make(chan *[]common.LogEntry)
+	var wg sync.WaitGroup
+	readDone := make(chan error, 1)
+	go func() {
+		readDone <- s.manager.Read(manager.ReadParams{
+			TopicName: topic,
+			From:      from,
+			BatchSize: batchSize,
+			LogChan:   logChan,
+			Wg:        &wg,
+			Cancel:    ctx.Done(),
+		})
+		close(logChan)
+	}()
 
-	var lastReadOffset = common.Offset(0)
-	for {
-		select {
-		case <-terminate:
-			close(logChan)
-			lastOffset <- lastReadOffset
-			return
-		case entryBatch := <-logChan:
-			batch := *entryBatch
-			if len(batch) == 0 {
-				break
+	nextOffset := from
+	var sendErr error
+	for batch := range logChan {
+		if sendErr == nil && len(*batch) > 0 {
+			sendErr = out.Send(&OutputEntries{Entries: convert(batch)})
+			if sendErr != nil {
+				cancel()
+			} else {
+				nextOffset = common.Offset((*batch)[len(*batch)-1].Offset + 1)
 			}
-			lastReadOffset = common.Offset(batch[len(batch)-1].Offset)
-			err := outStream.Send(&OutputEntries{
-				Entries: convert(entryBatch),
-			})
-			if err != nil {
-				log.Err(err)
-				return
-			}
-			wg.Done()
 		}
+		wg.Done()
 	}
+	return nextOffset, <-readDone, sendErr
 }
 
 func convertTopics(topics []common.TopicName) []string {

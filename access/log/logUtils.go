@@ -241,10 +241,12 @@ func scanValidEntries(afs *afero.Afero, blockFileName string, firstOffset common
 }
 
 type ReadFileParams struct {
-	File            afero.File
-	LogChan         chan *[]common.LogEntry
-	Wg              *sync.WaitGroup
-	BatchSize       uint32
+	File      afero.File
+	LogChan   chan *[]common.LogEntry
+	Wg        *sync.WaitGroup
+	BatchSize uint32
+	// Cancel stops the read with common.ErrReadCancelled when closed; nil never cancels.
+	Cancel          <-chan struct{}
 	StartByteOffset int64
 	EndOffset       common.Offset
 }
@@ -292,17 +294,32 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 	}
 	logEntries := make([]common.LogEntry, 0, batchCapacity)
 	currentBatchInBytes := 0
-	sendBatch := func() {
+	// sendBatch hands the batch to the consumer, or gives up if the read is cancelled
+	// so an abandoned read never blocks on a batch nobody will receive.
+	sendBatch := func() error {
+		select {
+		case <-params.Cancel:
+			return common.ErrReadCancelled
+		default:
+		}
 		params.Wg.Add(1)
 		batch := logEntries
-		params.LogChan <- &batch
+		select {
+		case params.LogChan <- &batch:
+		case <-params.Cancel:
+			params.Wg.Done()
+			return common.ErrReadCancelled
+		}
 		logEntries = make([]common.LogEntry, 0, batchCapacity)
 		currentBatchInBytes = 0
+		return nil
 	}
 	for {
 		if currentOffset == params.EndOffset {
 			if len(logEntries) > 0 {
-				sendBatch()
+				if err := sendBatch(); err != nil {
+					return ReadResult{}, errore.Wrap(err)
+				}
 			}
 			return ReadResult{
 				LastLogOffset: offsetFromLogg,
@@ -310,12 +327,16 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 			}, nil
 		}
 		if len(logEntries) == int(params.BatchSize) || currentBatchInBytes > maxBatchBytes {
-			sendBatch()
+			if err := sendBatch(); err != nil {
+				return ReadResult{}, errore.Wrap(err)
+			}
 		}
 		entry, _, err := common.ReadEntry(reader, common.MaxEntrySize)
 		if err == io.EOF {
 			if len(logEntries) > 0 {
-				sendBatch()
+				if err := sendBatch(); err != nil {
+					return ReadResult{}, errore.Wrap(err)
+				}
 			}
 			return ReadResult{
 				LastLogOffset: offsetFromLogg,

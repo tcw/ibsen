@@ -309,3 +309,29 @@ func TestLoadTopicBlocks(t *testing.T) {
 	assert.Len(t, logBlocks, 1)
 	assert.Len(t, indexBlocks, 1)
 }
+
+func TestReadFile_stopsWhenCancelled(t *testing.T) {
+	var content []byte
+	for i := 0; i < 100; i++ {
+		content = append(content, common.CreateByteEntry([]byte("dummy"), common.Offset(i))...)
+	}
+	afs := common.MemAfs()
+	fileName := "tmp/topic1/000.log"
+	assert.Nil(t, afs.WriteFile(fileName, content, 0600))
+	file, err := common.OpenFileForRead(afs, fileName)
+	assert.Nil(t, err)
+	defer file.Close()
+
+	logChan := make(chan *[]common.LogEntry)
+	cancel := make(chan struct{})
+	var wg sync.WaitGroup
+	go func() {
+		// the consumer takes one batch and goes away
+		<-logChan
+		wg.Done()
+		close(cancel)
+	}()
+	_, err = ReadFile(ReadFileParams{File: file, LogChan: logChan, Wg: &wg, Cancel: cancel, BatchSize: 1, EndOffset: math.MaxUint64})
+	assert.True(t, errors.Is(err, common.ErrReadCancelled), "err=%v", err)
+	wg.Wait()
+}

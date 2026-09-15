@@ -18,6 +18,8 @@ type ReadParams struct {
 	Wg        *sync.WaitGroup
 	From      common.Offset
 	BatchSize uint32
+	// Cancel stops the read when closed; nil never cancels.
+	Cancel <-chan struct{}
 }
 
 type LogManager interface {
@@ -90,6 +92,7 @@ func (l *LogTopicsManager) Read(params ReadParams) error {
 		Wg:        params.Wg,
 		From:      readFrom,
 		BatchSize: params.BatchSize,
+		Cancel:    params.Cancel,
 	})
 }
 
