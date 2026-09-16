@@ -8,11 +8,31 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/tcw/ibsen/access/blockstore/memstore"
 	"github.com/tcw/ibsen/access/common"
 )
 
-// Property tests against today's Topic. They use only the stdlib so they can
-// later become the shared conformance suite for BlockStore adapters.
+// Property tests of the core, run against every BlockStore adapter. Only the factory below
+// knows which backend is behind the port; everything else speaks in topics and offsets.
+
+type coreBackend struct {
+	name     string
+	newStore func(t *testing.T) common.BlockStore
+}
+
+// coreBackends are the stores the core is checked against: the filesystem adapter it ships
+// with, and the in-memory one, which offers nothing beyond the port itself.
+func coreBackends() []coreBackend {
+	return []coreBackend{
+		{name: "afero", newStore: func(t *testing.T) common.BlockStore {
+			store, _ := newTestStore(t)
+			return store
+		}},
+		{name: "mem", newStore: func(t *testing.T) common.BlockStore {
+			return memstore.New()
+		}},
+	}
+}
 
 func propertyPayload(offset int) []byte {
 	return []byte(fmt.Sprintf("e%d-%s", offset, strings.Repeat("x", offset%37)))
@@ -83,11 +103,19 @@ func removeIndexBlocks(t *testing.T, store common.BlockStore, topic common.Topic
 }
 
 func TestTopicProperty_ReadFromEveryOffset(t *testing.T) {
+	for _, backend := range coreBackends() {
+		t.Run(backend.name, func(t *testing.T) {
+			readFromEveryOffset(t, backend)
+		})
+	}
+}
+
+func readFromEveryOffset(t *testing.T, backend coreBackend) {
 	const total = 300
 	for _, maxBlockSize := range []int{64, 500, 2000, 1 << 20} {
 		for _, mode := range []string{"live", "reload", "reload-without-index", "reload-without-newest-index"} {
 			t.Run(fmt.Sprintf("block=%d/%s", maxBlockSize, mode), func(t *testing.T) {
-				store, _ := newTestStore(t)
+				store := backend.newStore(t)
 				params := common.TopicParams{Store: store, TopicName: "t", MaxBlockSize: maxBlockSize}
 				topic := NewLogTopic(params)
 				_ = topic.LoadOrCreate()
@@ -138,7 +166,15 @@ func TestTopicProperty_ReadFromEveryOffset(t *testing.T) {
 
 // Run with -race: one writer, the background indexer, and concurrent readers.
 func TestTopicProperty_ConcurrentWriteReadIndex(t *testing.T) {
-	store, _ := newTestStore(t)
+	for _, backend := range coreBackends() {
+		t.Run(backend.name, func(t *testing.T) {
+			concurrentWriteReadIndex(t, backend)
+		})
+	}
+}
+
+func concurrentWriteReadIndex(t *testing.T, backend coreBackend) {
+	store := backend.newStore(t)
 	params := common.TopicParams{Store: store, TopicName: "t", MaxBlockSize: 500}
 	topic := NewLogTopic(params)
 	_ = topic.LoadOrCreate()

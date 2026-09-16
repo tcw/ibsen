@@ -242,6 +242,16 @@ func (s *Store) Open(ref common.BlockRef, byteOffset int64) (io.ReadCloser, erro
 		return nil, errore.Wrap(err)
 	}
 	if byteOffset > 0 {
+		// a byte offset past the end reads as an empty block, which some filesystems
+		// report as a torn read instead of a clean end
+		info, err := file.Stat()
+		if err != nil {
+			closeQuietly(file)
+			return nil, errore.Wrap(err)
+		}
+		if byteOffset > info.Size() {
+			byteOffset = info.Size()
+		}
 		if _, err = file.Seek(byteOffset, io.SeekStart); err != nil {
 			closeQuietly(file)
 			return nil, errore.Wrap(err)
