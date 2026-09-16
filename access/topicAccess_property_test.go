@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/tcw/ibsen/access/blockstore/flashstore"
 	"github.com/tcw/ibsen/access/blockstore/memstore"
 	"github.com/tcw/ibsen/access/common"
 )
@@ -21,7 +22,8 @@ type coreBackend struct {
 }
 
 // coreBackends are the stores the core is checked against: the filesystem adapter it ships
-// with, and the in-memory one, which offers nothing beyond the port itself.
+// with, the in-memory one, which offers nothing beyond the port itself, and the flash one,
+// whose pages, fixed capacity and write-once bytes are as far from a file as the port goes.
 func coreBackends() []coreBackend {
 	return []coreBackend{
 		{name: "afero", newStore: func(t *testing.T) common.BlockStore {
@@ -30,6 +32,13 @@ func coreBackends() []coreBackend {
 		}},
 		{name: "mem", newStore: func(t *testing.T) common.BlockStore {
 			return memstore.New()
+		}},
+		{name: "flash", newStore: func(t *testing.T) common.BlockStore {
+			store, err := flashstore.New(flashstore.NewRAMDevice(4096, 256))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return store
 		}},
 	}
 }

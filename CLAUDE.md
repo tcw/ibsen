@@ -4,11 +4,16 @@
 
 **Keep the core pure. It imports only the standard library, limited to the subset TinyGo supports (no `os`, `net`, or global logger), and speaks only in domain types. Storage, durability, compression, replication, transport, logging, and telemetry are all adapters behind ports, chosen at wiring time in `cmd/`. That one rule is what lets the same log core run on a microcontroller or in a replicated Kubernetes cluster without changing a line of it.**
 
-Enforced in CI (once `core/` exists), must print nothing:
+Enforced in CI, must print nothing. The list grows as packages become pure; `core/` does not exist yet, the pure packages are named directly:
 
 ```sh
-go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./core/... | grep -v '^github.com/tcw/ibsen/core'
+go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
+  ./access/common/... ./access/index/... ./access/log/... \
+  ./access/blockstore/memstore/... ./access/blockstore/flashstore/... ./access/blockstore/conformance/... \
+  | grep -v '^github.com/tcw/ibsen'
 ```
+
+(`errore` and `utils` are stdlib-only and reachable from the pure packages, which is why only `github.com/tcw/ibsen` paths are filtered; anything impure they reached would still show up, since `-deps` is transitive.)
 
 Everything below hangs off that rule: the bugs are the core earning trust, the ports are the discipline, compression/dictionaries/fencing/embedded builds are adapters and build-time choices behind it, and the migration is how we get there without breaking what works.
 
@@ -17,13 +22,16 @@ Everything below hangs off that rule: the bugs are the core earning trust, the p
 A Go append-only log server, Kafka-like: topics you write entries to and read back by offset, over gRPC, with a sparse index and block-based storage on afero.
 
 - Entry wire format (`access/common/fsUtils.go` `CreateByteEntry`): `crc32c(4) | size uint64 LE (8) | entry | offset uint64 LE (8)`; CRC covers size, entry, offset.
-- Blocks: `<root>/<topic>/%020d.log` and `.idx`, named by first offset. Index file = pairs of `(offset uint64, byteOffset uint64)`.
-- Today nothing is pure: `access/*` and `manager` import `afero` and `zerolog`; `access/locking` imports `uuid`. `errore` and `utils` are already stdlib-only.
+- Blocks are named by the offset of their first entry, and carry a log kind and an index kind. Index block = pairs of `(offset uint64, byteOffset uint64)`. Where those bytes live is the adapter's business; the afero one keeps them at `<root>/<topic>/%020d.log` and `.idx`.
+- Pure today: `access/common` (domain types and the `BlockStore` port), `access/index`, `access/log`, and the `memstore`, `flashstore` and `conformance` packages under `access/blockstore`, plus `errore` and `utils`.
+- Not pure yet: `access` itself imports `zerolog`, which is the next port to define. `manager`, `api` and `cmd` are driving adapters and wiring, so they may import anything. `access/locking` imports `uuid`.
 
-## Current baseline (verified 2026-09-15, go1.26.4)
+## Current baseline (verified 2026-09-16, go1.26.4)
 
-- `go test -race ./...` passes (step zero). Run it before and after every migration step.
-- Property tests: `access/topicAccess_property_test.go` (read-from-every-offset across block sizes and reload modes; concurrent write/read/index). Stdlib-only, intended to become the `BlockStore` conformance suite.
+- `go test -race ./...` passes through migration step 5. Run it before and after every migration step.
+- Port conformance suite: `access/blockstore/conformance`, run by every adapter (`aferostore` on an in-memory filesystem and on a real directory, `memstore`, `flashstore`).
+- Core property tests: `access/topicAccess_property_test.go` (read-from-every-offset across block sizes and reload modes; concurrent write/read/index), run against every adapter. Only `coreBackends()` at the top of that file knows which store is behind the port.
+- Crash and torn-write fault injection: `access/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `access/blockstore/aferostore/crash_test.go` and `access/topicAccess_crash_test.go`, on an in-memory filesystem and on a real directory.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
 - `go vet ./...` is clean; keep it that way.
 
@@ -63,11 +71,15 @@ fsync-on-flush policy: flush after N entries or a time interval. Only acknowledg
 
 ## 4. Architecture: hexagonal refactor
 
+Done for storage (`common.BlockStore` in `access/common/blockStore.go`); logging is still to do.
+
 - Pure core, stdlib only, ports in domain terms.
-- Key port: narrow **`BlockStore`**, four verbs: append, read-at, list blocks, remove. Deliberately *not* a filesystem abstraction.
-- Optional **`Syncable`** capability, probed by type assertion.
-- Adapters: afero (one of several), in-memory (tests), raw flash / mmap (embedded).
+- Key port: narrow **`BlockStore`**. Block verbs: `List`, `Append`, `Open` (read at a byte offset), `Remove`. Plus `Truncate`, because crash recovery has to cut a torn tail, and `Topics` / `CreateTopic`, because a log server has to enumerate and create topics. Deliberately *not* a filesystem abstraction: no directories, handles, seeks or permissions.
+- `Append` is all or nothing. A failed append leaves the block as it was; one that could not be rolled back wraps `common.ErrDirtyBlock`, which is how the core learns a block must be recovered before it is appended to again.
+- Optional **`Syncable`** capability, probed by type assertion through `common.Sync`.
+- Adapters, all under `access/blockstore`: `aferostore` (filesystem, the one the server wires), `memstore` (pure in-memory), `flashstore` (a fixed region of raw flash: fixed pages, write-once bytes, page table in RAM).
 - gRPC is a driving adapter; on embedded, skip it and call the log as a library.
+- Still to do: a logging port, so `access` stops importing `zerolog`.
 
 ## 5. Compression
 
@@ -104,11 +116,16 @@ fsync-on-flush policy: flush after N entries or a time interval. Only acknowledg
 
 ## 10. Migration order: strangler, never two changes at once
 
-0. Property tests green against today's code (including `-race`).
-1. Define the port as a thin afero wrapper.
-2. Route the core through the port while afero is still the only backend (the invasive change, against a trusted backend).
-3. Add the in-memory adapter to prove the port's shape.
-4. Add durability and crash tests inside the FS adapter.
-5. Add exotic embedded adapters last, validated by the shared suite.
+0. ~~Property tests green against today's code (including `-race`).~~
+1. ~~Define the port as a thin afero wrapper.~~
+2. ~~Route the core through the port while afero is still the only backend (the invasive change, against a trusted backend).~~
+3. ~~Add the in-memory adapter to prove the port's shape.~~
+4. ~~Add durability and crash tests inside the FS adapter.~~
+5. ~~Add exotic embedded adapters last, validated by the shared suite.~~
 
-Every step ships green.
+Every step ships green. Steps 0 to 5 are done, one commit each.
+
+Next, in the same one-change-at-a-time way: the logging port (§4), the durability
+flush policy (§2), the index work (§3), and then compression (§5) and the embedded
+wiring files (§8). The flash adapter is the proof the port is narrow enough; the
+embedded build still has to be wired and its dependency graph checked.
