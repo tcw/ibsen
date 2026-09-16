@@ -31,7 +31,7 @@ type BlockStore interface {
 	// Append adds data to the end of a block, creating the block, and the topic, if needed.
 	// It is all or nothing: on error the block is left as it was before the call, and the
 	// error wraps ErrDirtyBlock if even that could not be guaranteed. It returns the block
-	// with its new size.
+	// with its new size. Appending no bytes still creates the block.
 	Append(ref BlockRef, data []byte) (Block, error)
 
 	// Open returns a reader over a block, starting at byteOffset. Reading past the end of

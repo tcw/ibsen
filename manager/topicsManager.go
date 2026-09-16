@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access"
 	"github.com/tcw/ibsen/access/common"
 	"github.com/tcw/ibsen/errore"
@@ -32,11 +31,10 @@ var _ LogManager = &LogTopicsManager{}
 
 type LogTopicManagerParams struct {
 	ReadOnly         bool
-	Afs              *afero.Afero
+	Store            common.BlockStore
 	TTL              time.Duration
 	CheckForNewEvery time.Duration
 	MaxBlockSize     int
-	RootPath         string
 }
 
 type LogTopicsManager struct {
@@ -82,10 +80,7 @@ func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error)
 			stopIndexer: make(chan struct{}),
 			indexerDone: make(chan struct{}),
 		},
-		StatusAccess: &access.Status{
-			Afs:      params.Afs,
-			RootPath: params.RootPath,
-		},
+		StatusAccess: &access.Status{Store: params.Store},
 	}
 	go manager.startIndexScheduler()
 	return manager, nil
@@ -205,15 +200,36 @@ func (l *LogTopicsManager) getOrCreateTopic(name common.TopicName) (*access.Topi
 // keep working.
 func (l *LogTopicsManager) loadOrCreateNewTopic(topicName common.TopicName) (*access.Topic, error) {
 	topic := access.NewLogTopic(common.TopicParams{
-		Afs:          l.Params.Afs,
-		RootPath:     l.Params.RootPath,
+		Store:        l.Params.Store,
 		TopicName:    string(topicName),
 		MaxBlockSize: l.Params.MaxBlockSize,
 	})
 	if err := topic.LoadOrCreate(); err != nil {
 		return nil, errore.WrapWithContextF(err, "unable to load topic %s", topicName)
 	}
+	l.warnAboutStrayFiles(topicName)
 	return topic, nil
+}
+
+// strayFileLister is the optional capability of a store to report what it ignored in a
+// topic. The core has no opinion about stray files; an operator does.
+type strayFileLister interface {
+	StrayFiles(topic common.TopicName) ([]string, error)
+}
+
+func (l *LogTopicsManager) warnAboutStrayFiles(topicName common.TopicName) {
+	lister, ok := l.Params.Store.(strayFileLister)
+	if !ok {
+		return
+	}
+	stray, err := lister.StrayFiles(topicName)
+	if err != nil {
+		log.Warn().Err(err).Str("topic", string(topicName)).Msg("unable to check the topic for stray files")
+		return
+	}
+	for _, name := range stray {
+		log.Warn().Str("topic", string(topicName)).Str("file", name).Msg("ignoring file that is not a log or index block")
+	}
 }
 
 func (l *LogTopicsManager) startIndexScheduler() {

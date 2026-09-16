@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access/common"
 )
 
@@ -66,23 +65,18 @@ func writeRandomBatches(t *testing.T, topic *Topic, rng *rand.Rand, total int) i
 	return written
 }
 
-// removeIndexFiles deletes every .idx file in dir, or only the newest one.
-func removeIndexFiles(t *testing.T, afs *afero.Afero, dir string, newestOnly bool) {
-	infos, err := afs.ReadDir(dir)
+// removeIndexBlocks deletes every index block of a topic, or only the newest one.
+func removeIndexBlocks(t *testing.T, store common.BlockStore, topic common.TopicName, newestOnly bool) {
+	t.Helper()
+	blocks, err := store.List(topic, common.Index)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var indexFiles []string
-	for _, info := range infos {
-		if strings.HasSuffix(info.Name(), ".idx") {
-			indexFiles = append(indexFiles, info.Name())
-		}
+	if newestOnly && len(blocks) > 0 {
+		blocks = blocks[len(blocks)-1:]
 	}
-	if newestOnly && len(indexFiles) > 0 {
-		indexFiles = indexFiles[len(indexFiles)-1:]
-	}
-	for _, name := range indexFiles {
-		if err := afs.Remove(dir + common.Sep + name); err != nil {
+	for _, block := range blocks {
+		if err := store.Remove(common.IndexRef(topic, common.IndexBlock(block.Block))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -93,8 +87,8 @@ func TestTopicProperty_ReadFromEveryOffset(t *testing.T) {
 	for _, maxBlockSize := range []int{64, 500, 2000, 1 << 20} {
 		for _, mode := range []string{"live", "reload", "reload-without-index", "reload-without-newest-index"} {
 			t.Run(fmt.Sprintf("block=%d/%s", maxBlockSize, mode), func(t *testing.T) {
-				afs := common.MemAfs()
-				params := common.TopicParams{Afs: afs, RootPath: "tmp", TopicName: "t", MaxBlockSize: maxBlockSize}
+				store, _ := newTestStore(t)
+				params := common.TopicParams{Store: store, TopicName: "t", MaxBlockSize: maxBlockSize}
 				topic := NewLogTopic(params)
 				_ = topic.LoadOrCreate()
 				n := writeRandomBatches(t, topic, rand.New(rand.NewSource(int64(maxBlockSize))), total)
@@ -105,7 +99,7 @@ func TestTopicProperty_ReadFromEveryOffset(t *testing.T) {
 				}
 				if mode != "live" {
 					if mode == "reload-without-index" || mode == "reload-without-newest-index" {
-						removeIndexFiles(t, afs, "tmp"+common.Sep+"t", mode == "reload-without-newest-index")
+						removeIndexBlocks(t, store, "t", mode == "reload-without-newest-index")
 					}
 					topic = NewLogTopic(params)
 					if err := topic.LoadOrCreate(); err != nil {
@@ -144,8 +138,8 @@ func TestTopicProperty_ReadFromEveryOffset(t *testing.T) {
 
 // Run with -race: one writer, the background indexer, and concurrent readers.
 func TestTopicProperty_ConcurrentWriteReadIndex(t *testing.T) {
-	afs := common.MemAfs()
-	params := common.TopicParams{Afs: afs, RootPath: "tmp", TopicName: "t", MaxBlockSize: 500}
+	store, _ := newTestStore(t)
+	params := common.TopicParams{Store: store, TopicName: "t", MaxBlockSize: 500}
 	topic := NewLogTopic(params)
 	_ = topic.LoadOrCreate()
 

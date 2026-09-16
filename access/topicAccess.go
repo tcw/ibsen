@@ -3,14 +3,15 @@ package access
 import (
 	"errors"
 	"fmt"
+	"io"
+	"sync"
+	"sync/atomic"
+
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access/common"
 	"github.com/tcw/ibsen/access/index"
 	ibsLog "github.com/tcw/ibsen/access/log"
 	"github.com/tcw/ibsen/errore"
-	"sync"
-	"sync/atomic"
 )
 
 type TopicAccess interface {
@@ -25,10 +26,15 @@ var _ TopicAccess = &Topic{}
 // ErrTopicClosed is returned by writes to a topic after Close.
 var ErrTopicClosed = errors.New("topic is closed")
 
+// indexSparsity is the number of entries between two index pairs.
+const indexSparsity = 10
+
+// indexPairSize is the bytes one (offset, byteOffset) pair takes in an index block.
+const indexPairSize = 16
+
 type Topic struct {
 	mu             sync.RWMutex
-	Afs            *afero.Afero
-	RootPath       string
+	Store          common.BlockStore
 	TopicName      string
 	indexMutex     int32
 	indexWg        *sync.WaitGroup
@@ -47,8 +53,7 @@ type Topic struct {
 
 func NewLogTopic(params common.TopicParams) *Topic {
 	return &Topic{
-		Afs:            params.Afs,
-		RootPath:       params.RootPath,
+		Store:          params.Store,
 		TopicName:      params.TopicName,
 		indexWg:        &sync.WaitGroup{},
 		NextOffset:     0,
@@ -58,6 +63,19 @@ func NewLogTopic(params common.TopicParams) *Topic {
 		IndexBlockList: []common.IndexBlock{},
 		IndexPosition:  nil,
 	}
+}
+
+// topic is the name the store knows this topic by.
+func (t *Topic) topic() common.TopicName {
+	return common.TopicName(t.TopicName)
+}
+
+func (t *Topic) logRef(block common.LogBlock) common.BlockRef {
+	return common.LogRef(t.topic(), block)
+}
+
+func (t *Topic) indexRef(block common.IndexBlock) common.BlockRef {
+	return common.IndexRef(t.topic(), block)
 }
 
 func (t *Topic) UpdateIndex() (bool, error) {
@@ -116,47 +134,45 @@ func (t *Topic) UpdateIndex() (bool, error) {
 }
 
 func (t *Topic) LoadOrCreate() error {
-	if err := common.ValidateTopicName(common.TopicName(t.TopicName)); err != nil {
+	if err := common.ValidateTopicName(t.topic()); err != nil {
 		return err
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	created, err := ibsLog.CreateTopicDirectory(t.Afs, t.RootPath, t.TopicName)
+	created, err := t.Store.CreateTopic(t.topic())
 	if err != nil {
 		return errore.Wrap(err)
 	}
 	if created {
 		return nil
 	}
-	// Load log and index blocks from file
-	logBlocks, indexBlocks, err := ibsLog.LoadTopicBlocks(t.Afs, t.RootPath, t.TopicName)
-	if err != nil {
-		return err
-	}
-	// a topic directory without blocks belongs to a topic that has never been written to
-	if len(logBlocks) == 0 {
-		return nil
-	}
-	t.IndexBlockList = indexBlocks
-	t.LogBlockList = logBlocks
-
-	// Find the end of the log, truncating a torn tail left by an interrupted write
-	head, hasBlockHead := t.logBlockHead()
-	if !hasBlockHead {
-		return errore.New("Topic " + t.TopicName + " has no block head")
-	}
-	blockFileName, err := t.logBlockFileName(head)
+	// Load log and index blocks from the store
+	logBlocks, err := t.Store.List(t.topic(), common.Log)
 	if err != nil {
 		return errore.Wrap(err)
 	}
-	nextOffset, validSize, truncated, err := ibsLog.RecoverBlock(t.Afs, blockFileName, common.Offset(head))
+	indexBlocks, err := t.Store.List(t.topic(), common.Index)
+	if err != nil {
+		return errore.Wrap(err)
+	}
+	// a topic without blocks has never been written to
+	if len(logBlocks) == 0 {
+		return nil
+	}
+	t.LogBlockList = toLogBlocks(logBlocks)
+	t.IndexBlockList = toIndexBlocks(indexBlocks)
+
+	// Find the end of the log, truncating a torn tail left by an interrupted write
+	head := logBlocks[len(logBlocks)-1]
+	nextOffset, validSize, truncated, err := ibsLog.RecoverBlock(t.Store,
+		t.logRef(common.LogBlock(head.Block)), common.Offset(head.Block), head.Size)
 	if err != nil {
 		return errore.Wrap(err)
 	}
 	if truncated > 0 {
 		log.Warn().
 			Str("topic", t.TopicName).
-			Uint64("logBlock", uint64(head)).
+			Uint64("logBlock", head.Block).
 			Int64("truncatedBytes", truncated).
 			Msg("truncated torn tail of log block")
 	}
@@ -174,10 +190,26 @@ func (t *Topic) LoadOrCreate() error {
 	return nil
 }
 
+func toLogBlocks(blocks []common.Block) []common.LogBlock {
+	list := make([]common.LogBlock, 0, len(blocks))
+	for _, block := range blocks {
+		list = append(list, common.LogBlock(block.Block))
+	}
+	return list
+}
+
+func toIndexBlocks(blocks []common.Block) []common.IndexBlock {
+	list := make([]common.IndexBlock, 0, len(blocks))
+	for _, block := range blocks {
+		list = append(list, common.IndexBlock(block.Block))
+	}
+	return list
+}
+
 // ReadLog
 // Reads a log from and including the ReadLogParams.From offset until end of log.
 func (t *Topic) Read(params common.ReadLogParams) error {
-	if err := common.ValidateTopicName(common.TopicName(t.TopicName)); err != nil {
+	if err := common.ValidateTopicName(t.topic()); err != nil {
 		return err
 	}
 	return t.snapshot().read(params)
@@ -189,8 +221,7 @@ func (t *Topic) snapshot() *Topic {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return &Topic{
-		Afs:            t.Afs,
-		RootPath:       t.RootPath,
+		Store:          t.Store,
 		TopicName:      t.TopicName,
 		MaxBlockSize:   t.MaxBlockSize,
 		NextOffset:     t.NextOffset,
@@ -202,7 +233,7 @@ func (t *Topic) snapshot() *Topic {
 }
 
 func (t *Topic) read(params common.ReadLogParams) error {
-	// ensures reader will not read partially written log entries from file
+	// ensures reader will not read partially written log entries
 	endOffset, exists := t.findLastConfirmedWrittenEntryOffset(params.From)
 	if !exists {
 		return common.NoEntriesFound
@@ -212,8 +243,8 @@ func (t *Topic) read(params common.ReadLogParams) error {
 		return errore.New("offset out of bounds, this should never happen!")
 	}
 
-	// find byte offset in file to set seek point to
-	byteOffset, scanCount, err := t.findByteOffsetInLogBlockFile(params.From)
+	// find byte offset in the block to start reading from
+	byteOffset, scanCount, err := t.findByteOffsetInLogBlock(params.From)
 	if err == ibsLog.NoByteOffsetFound {
 		return common.NoEntriesFound
 	}
@@ -222,71 +253,49 @@ func (t *Topic) read(params common.ReadLogParams) error {
 	}
 	t.debugLogIndexLookup(params.From, byteOffset, scanCount)
 
-	// find log file that contains offset
-	fileName, err := t.logBlockFileName(block)
-	if err != nil {
-		return errore.Wrap(err)
-	}
-	file, err := common.OpenFileForRead(t.Afs, fileName)
-	if err != nil {
+	if err = t.sendBlock(t.logRef(block), byteOffset, params.From, endOffset, params); err != nil {
 		return errore.Wrap(err)
 	}
 
-	// read log file from byte offset position (with seek)
-	_, err = ibsLog.ReadFile(ibsLog.ReadFileParams{
-		File:            file,
-		LogChan:         params.LogChan,
-		Wg:              params.Wg,
-		BatchSize:       params.BatchSize,
-		Cancel:          params.Cancel,
-		StartByteOffset: byteOffset,
-		EndOffset:       endOffset,
-	})
-	if err != nil {
-		closeFile(file)
-		return errore.Wrap(err)
-	}
-	closeFile(file)
-
-	// read remaining log files
+	// read remaining log blocks
 	wasFound, i := t.findBlockArrayIndex(block)
-	if wasFound {
-		if t.logSize()-1 == i {
-			return nil
+	if !wasFound {
+		return nil
+	}
+	for _, b := range t.LogBlockList[i+1:] {
+		endOffset, _ = t.endBoundaryForReadOffset()
+		err = t.sendBlock(t.logRef(b), 0, common.Offset(b), endOffset, params)
+		if errors.Is(err, common.ErrBlockNotFound) {
+			break
 		}
-		for _, b := range t.LogBlockList[i+1:] {
-			fileName, err = t.logBlockFileName(b)
-			file, err = common.OpenFileForRead(t.Afs, fileName)
-			if errors.Is(err, common.FileNotFound) {
-				closeFile(file)
-				break
-			}
-			if err != nil {
-				closeFile(file)
-				return errore.Wrap(err)
-			}
-			endOffset, _ = t.endBoundaryForReadOffset()
-			_, err = ibsLog.ReadFile(ibsLog.ReadFileParams{
-				File:            file,
-				LogChan:         params.LogChan,
-				Wg:              params.Wg,
-				BatchSize:       params.BatchSize,
-				Cancel:          params.Cancel,
-				StartByteOffset: 0,
-				EndOffset:       endOffset,
-			})
-			if err != nil {
-				closeFile(file)
-				return errore.Wrap(err)
-			}
-			closeFile(file)
+		if err != nil {
+			return errore.Wrap(err)
 		}
 	}
 	return nil
 }
 
+// sendBlock reads one log block from byteOffset and sends its entries to the consumer.
+func (t *Topic) sendBlock(ref common.BlockRef, byteOffset int64, from common.Offset, endOffset common.Offset, params common.ReadLogParams) error {
+	blockReader, err := t.Store.Open(ref, byteOffset)
+	if err != nil {
+		return err
+	}
+	_, err = ibsLog.ReadFile(ibsLog.ReadFileParams{
+		Reader:     blockReader,
+		LogChan:    params.LogChan,
+		Wg:         params.Wg,
+		BatchSize:  params.BatchSize,
+		Cancel:     params.Cancel,
+		FromOffset: from,
+		EndOffset:  endOffset,
+	})
+	closeBlock(ref, blockReader)
+	return err
+}
+
 func (t *Topic) Write(entries common.EntriesPtr) error {
-	if err := common.ValidateTopicName(common.TopicName(t.TopicName)); err != nil {
+	if err := common.ValidateTopicName(t.topic()); err != nil {
 		return err
 	}
 	t.mu.Lock()
@@ -307,36 +316,26 @@ func (t *Topic) Write(entries common.EntriesPtr) error {
 		t.addNewLogBlock()
 		t.resetHeadBlockSize()
 	}
-	// create a byte representation of entries and write to disk
+	// create a byte representation of entries and append it to the head block
 	bytes, offsets := t.buildBinaryEntryRepresentation(entries)
 	head, hasBlockHead := t.logBlockHead()
 	if !hasBlockHead {
 		return errors.New("Topic " + t.TopicName + " has no block head")
 	}
-	blockFileName, err := t.logBlockFileName(head)
-	if err != nil {
-		return errore.Wrap(err)
-	}
-	file, err := common.OpenFileForWrite(t.Afs, blockFileName)
-	if err != nil {
-		return errore.Wrap(err)
-	}
 
-	n, err := file.Write(bytes)
+	block, err := t.Store.Append(t.logRef(head), bytes)
 	if err != nil {
-		// remove any partial entry, otherwise the next write would append after it
-		if truncErr := file.Truncate(int64(t.HeadBlockSize)); truncErr != nil {
-			t.writeFailure = errore.WrapError(truncErr, err)
-			closeFile(file)
-			return t.writeFailure
+		// the store could not undo a partial append, so the head block has to be recovered
+		// before anything is written to it again
+		if errors.Is(err, common.ErrDirtyBlock) {
+			t.writeFailure = err
 		}
-		closeFile(file)
 		return errore.Wrap(err)
 	}
 
 	// update internal log state
 	t.incrementOffset(offsets)
-	t.incrementHeadBlockSize(n)
+	t.HeadBlockSize = int(block.Size)
 
 	// update index async if no index is running; Close waits for it. The Add happens under
 	// t.mu before closed is set, so it never races with the Wait in Close.
@@ -349,10 +348,6 @@ func (t *Topic) Write(entries common.EntriesPtr) error {
 		}
 		log.Trace().Msg(fmt.Sprintf("index update executed: %t", wasExecuted))
 	}()
-	ioErr := file.Close()
-	if ioErr != nil {
-		return ioErr
-	}
 	return nil
 }
 
@@ -365,7 +360,7 @@ func (t *Topic) Close() {
 	t.indexWg.Wait()
 }
 
-func (t *Topic) debugLogLoadResult(logBlocks []common.LogBlock, indexBlocks []common.IndexBlock) {
+func (t *Topic) debugLogLoadResult(logBlocks []common.Block, indexBlocks []common.Block) {
 	if e := log.Debug(); e.Enabled() {
 		e.Str("topic", t.TopicName).
 			Int("logBlocks", len(logBlocks)).
@@ -386,14 +381,27 @@ func debugLogIndexing(topicName string, logBlock common.LogBlock, indexUpdated b
 	}
 }
 
-func closeFile(file afero.File) {
-	if file == nil {
+func closeBlock(ref common.BlockRef, block io.Closer) {
+	if block == nil {
 		return
 	}
-	err := file.Close()
-	if err != nil {
-		log.Warn().Str("fileName", file.Name()).Msg("unable to close file")
+	if err := block.Close(); err != nil {
+		log.Warn().Str("block", ref.String()).Msg("unable to close block")
 	}
+}
+
+// readBlock returns everything a block holds.
+func (t *Topic) readBlock(ref common.BlockRef) ([]byte, error) {
+	block, err := t.Store.Open(ref, 0)
+	if err != nil {
+		return nil, err
+	}
+	content, err := io.ReadAll(block)
+	closeBlock(ref, block)
+	if err != nil {
+		return nil, errore.Wrap(err)
+	}
+	return content, nil
 }
 
 func (t *Topic) findLastConfirmedWrittenEntryOffset(from common.Offset) (common.Offset, bool) {
@@ -445,51 +453,19 @@ func (t *Topic) endBoundaryForReadOffset() (common.Offset, bool) {
 	return t.NextOffset, true
 }
 
-func (t *Topic) logBlockFileName(block common.LogBlock) (string, error) {
-	if t.logBlockIsEmpty() {
-		return "", common.NoBlocksFound
-	}
-	return t.RootPath + common.Sep + t.TopicName + common.Sep + fmt.Sprintf("%020d.log", block), nil
-}
-
-func (t *Topic) indexBlockFileName(block common.IndexBlock) (string, error) {
-	if t.logBlockIsEmpty() {
-		return "", common.NoBlocksFound
-	}
-	return t.RootPath + common.Sep + t.TopicName + common.Sep + fmt.Sprintf("%020d.idx", block), nil
-}
-
 func (t *Topic) indexBlock(block common.LogBlock, byteOffset int64) (common.LogBlockPosition, error) {
-	logBlockFilename, err := t.logBlockFileName(block)
+	logBlock, err := t.Store.Open(t.logRef(block), byteOffset)
 	if err != nil {
 		return common.LogBlockPosition{}, errore.Wrap(err)
 	}
-	indexAsBytes, newByteOffset, err := index.CreateBinaryIndexFromLogFile(t.Afs, logBlockFilename, byteOffset, 10)
+	indexAsBytes, newByteOffset, err := index.CreateBinaryIndexFromLog(logBlock, byteOffset, indexSparsity)
+	closeBlock(t.logRef(block), logBlock)
 	if err != nil {
 		return common.LogBlockPosition{}, errore.Wrap(err)
 	}
-	indexBlockFilename, err := t.indexBlockFileName(common.IndexBlock(block))
-	if err != nil {
-		return common.LogBlockPosition{}, errore.Wrap(err)
-	}
-	file, err := common.OpenFileForWrite(t.Afs, indexBlockFilename)
-	if err != nil {
-		return common.LogBlockPosition{}, errore.Wrap(err)
-	}
-	info, err := file.Stat()
-	if err != nil {
-		closeFile(file)
-		return common.LogBlockPosition{}, errore.Wrap(err)
-	}
-	if _, err = file.Write(indexAsBytes); err != nil {
-		// drop a partial pair so later appends stay aligned
-		if truncErr := file.Truncate(info.Size()); truncErr != nil {
-			err = errore.WrapError(truncErr, err)
-		}
-		closeFile(file)
-		return common.LogBlockPosition{}, errore.Wrap(err)
-	}
-	if err = file.Close(); err != nil {
+	// an append of no pairs still creates the index block, so a reload finds it beside its
+	// log block even when the block holds no offset worth indexing yet
+	if _, err = t.Store.Append(t.indexRef(common.IndexBlock(block)), indexAsBytes); err != nil {
 		return common.LogBlockPosition{}, errore.Wrap(err)
 	}
 	return common.LogBlockPosition{
@@ -506,15 +482,8 @@ func (t *Topic) findCurrentIndexLogBlockPosition() (*common.LogBlockPosition, er
 	if !hasBlock {
 		return nil, nil
 	}
-	indexBlockFileName, err := t.indexBlockFileName(indexBlockHead)
-	if err != nil {
-		return nil, errore.Wrap(err)
-	}
-	logBlockFileName, err := t.logBlockFileName(common.LogBlock(indexBlockHead))
-	if err != nil {
-		return nil, errore.Wrap(err)
-	}
-	byteIndex, err := t.Afs.ReadFile(indexBlockFileName)
+	indexRef := t.indexRef(indexBlockHead)
+	byteIndex, err := t.readBlock(indexRef)
 	if err != nil {
 		return nil, errore.Wrap(err)
 	}
@@ -525,7 +494,7 @@ func (t *Topic) findCurrentIndexLogBlockPosition() (*common.LogBlockPosition, er
 	position := &common.LogBlockPosition{Block: common.LogBlock(indexBlockHead)}
 	if len(kept) > 0 {
 		last := kept[len(kept)-1]
-		entry, n, err := ibsLog.ReadEntryAt(t.Afs, logBlockFileName, last.ByteOffset)
+		entry, n, err := ibsLog.ReadEntryAt(t.Store, t.logRef(common.LogBlock(indexBlockHead)), last.ByteOffset)
 		if err != nil || common.Offset(entry.Offset) != last.Offset {
 			// the index does not match the log, rebuild this block's index from the start
 			kept = nil
@@ -533,19 +502,16 @@ func (t *Topic) findCurrentIndexLogBlockPosition() (*common.LogBlockPosition, er
 			position.ByteOffset = last.ByteOffset + int64(n)
 		}
 	}
-	if len(byteIndex) != len(kept)*16 {
-		pairs := make([]uint64, 0, 2*len(kept))
-		for _, pair := range kept {
-			pairs = append(pairs, uint64(pair.Offset), uint64(pair.ByteOffset))
-		}
-		if err = t.Afs.WriteFile(indexBlockFileName, common.Uint64ArrayToBytes(pairs), 0600); err != nil {
+	// the kept pairs are a prefix of the block, so dropping the rest is a truncation
+	if len(byteIndex) != len(kept)*indexPairSize {
+		if err = t.Store.Truncate(indexRef, int64(len(kept)*indexPairSize)); err != nil {
 			return nil, errore.Wrap(err)
 		}
 	}
 	return position, nil
 }
 
-func (t *Topic) findByteOffsetInLogBlockFile(offset common.Offset) (int64, int, error) {
+func (t *Topic) findByteOffsetInLogBlock(offset common.Offset) (int64, int, error) {
 	indexBlock, foundIndexBlock := t.indexBlockContaining(offset)
 	if offset >= t.NextOffset {
 		return 0, 0, errors.New("offset out of bounds")
@@ -557,20 +523,16 @@ func (t *Topic) findByteOffsetInLogBlockFile(offset common.Offset) (int64, int, 
 	if uint64(logBlock) == uint64(offset) {
 		return 0, 0, nil
 	}
-	logBlockFileName, err := t.logBlockFileName(logBlock)
-	if err != nil {
-		return 0, 0, errore.Wrap(err)
-	}
 	// byte offsets in an index are only valid for its own log block
 	if !foundIndexBlock || uint64(indexBlock) != uint64(logBlock) {
-		return ibsLog.FindByteOffsetFromAndIncludingOffset(t.Afs, logBlockFileName, 0, offset)
+		return ibsLog.FindByteOffsetFromAndIncludingOffset(t.Store, t.logRef(logBlock), 0, offset)
 	}
 	idx, err := t.getIndexFromIndexBlock(indexBlock)
 	if err != nil {
 		return 0, 0, errore.Wrap(err)
 	}
 	if idx == nil {
-		return ibsLog.FindByteOffsetFromAndIncludingOffset(t.Afs, logBlockFileName, 0, offset)
+		return ibsLog.FindByteOffsetFromAndIncludingOffset(t.Store, t.logRef(logBlock), 0, offset)
 	}
 	indexOffset := idx.FindNearestByteOffset(offset)
 	if indexOffset.Offset > offset {
@@ -580,38 +542,22 @@ func (t *Topic) findByteOffsetInLogBlockFile(offset common.Offset) (int64, int, 
 		return indexOffset.ByteOffset, 0, nil
 	}
 
-	return ibsLog.FindByteOffsetFromAndIncludingOffset(t.Afs, logBlockFileName, indexOffset.ByteOffset, offset)
+	return ibsLog.FindByteOffsetFromAndIncludingOffset(t.Store, t.logRef(logBlock), indexOffset.ByteOffset, offset)
 }
 
 func (t *Topic) getIndexFromIndexBlock(block common.IndexBlock) (*index.Index, error) {
-	indexBlockFileName, err := t.indexBlockFileName(block)
-	if err != nil {
-		return nil, errore.Wrap(err)
-	}
-	exists, err := t.Afs.Exists(indexBlockFileName)
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
+	bytes, err := t.readBlock(t.indexRef(block))
+	if errors.Is(err, common.ErrBlockNotFound) {
 		return nil, nil
 	}
-	bytes, err := t.Afs.ReadFile(indexBlockFileName)
 	if err != nil {
 		return nil, errore.Wrap(err)
 	}
-	idx := index.NewIndex(bytes)
-	if err != nil {
-		return nil, errore.Wrap(err)
-	}
-	return idx, nil
+	return index.NewIndex(bytes), nil
 }
 
 func (t *Topic) incrementOffset(n int) {
 	t.NextOffset = t.NextOffset + common.Offset(n)
-}
-
-func (t *Topic) incrementHeadBlockSize(n int) {
-	t.HeadBlockSize = t.HeadBlockSize + n
 }
 
 func (t *Topic) resetHeadBlockSize() {
@@ -645,10 +591,6 @@ func (t *Topic) indexBlockHead() (common.IndexBlock, bool) {
 
 func (t *Topic) logBlockIsEmpty() bool {
 	return len(t.LogBlockList) == 0
-}
-
-func (t *Topic) getLogBlock(index int) common.LogBlock {
-	return t.LogBlockList[index]
 }
 
 func (t *Topic) logSize() int {

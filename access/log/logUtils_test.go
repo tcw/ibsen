@@ -5,76 +5,42 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/tcw/ibsen/access/common"
-	"github.com/tcw/ibsen/access/index"
 	"math"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/tcw/ibsen/access/blockstore/aferostore"
+	"github.com/tcw/ibsen/access/common"
 )
 
-func TestCreateTopic(t *testing.T) {
-	afs := common.MemAfs()
-	_, err := CreateTopicDirectory(afs, "tmp", "topic1")
-	assert.Nil(t, err)
-	exists, err := afs.Exists("tmp/topic1")
-	assert.Nil(t, err)
-	assert.True(t, exists)
-}
-
-func TestListAllFilesInTopic(t *testing.T) {
-	afs := common.MemAfs()
-	_, err := CreateTopicDirectory(afs, "tmp", "topic1")
-	assert.Nil(t, err)
-	err = afs.WriteFile("tmp/topic1/001.log", []byte("dummy"), 0600)
-	assert.Nil(t, err)
-	err = afs.WriteFile("tmp/topic1/001.idx", []byte("dummy"), 0600)
-	assert.Nil(t, err)
-	err = afs.WriteFile("tmp/topic1/001.dummy", []byte("dummy"), 0600)
-	assert.Nil(t, err)
-	topics, err := ListAllFilesInTopic(afs, "tmp", "topic1")
-	assert.Nil(t, err)
-	var files []string
-	for _, topic := range topics {
-		files = append(files, topic.Name())
+// blockWith puts content in a log block and returns the store holding it, its reference and
+// the size the store reports. The afero adapter stands in for any BlockStore here.
+func blockWith(t *testing.T, block common.LogBlock, content []byte) (common.BlockStore, common.BlockRef, int64) {
+	t.Helper()
+	store, _ := aferostore.NewMem("tmp")
+	ref := common.LogRef("topic1", block)
+	if _, err := store.Append(ref, content); err != nil {
+		t.Fatal(err)
 	}
-	assert.Contains(t, files, "001.log")
-	assert.Contains(t, files, "001.idx")
-	assert.Contains(t, files, "001.dummy")
-}
-
-func TestListAllTopics(t *testing.T) {
-	afs := common.MemAfs()
-	_, err := CreateTopicDirectory(afs, "tmp", "topic1")
-	assert.Nil(t, err)
-	_, err = CreateTopicDirectory(afs, "tmp", "topic2")
-	assert.Nil(t, err)
-	err = afs.MkdirAll("tmp/.git", 0744)
-	assert.Nil(t, err)
-	topics, err := ListAllTopics(afs, "tmp")
-	assert.Nil(t, err)
-	assert.Contains(t, topics, "topic1")
-	assert.Contains(t, topics, "topic2")
-	assert.NotContains(t, topics, ".git")
+	blocks, err := store.List("topic1", common.Log)
+	if err != nil || len(blocks) != 1 {
+		t.Fatalf("list: %v, %v", blocks, err)
+	}
+	return store, ref, blocks[0].Size
 }
 
 func TestCreateByteEntry(t *testing.T) {
 	entry := common.CreateByteEntry([]byte("dummy"), 0)
-	afs := common.MemAfs()
-	err := afs.WriteFile("tmp/topic1/001.log", entry, 0600)
-	assert.Nil(t, err)
-	file, err := common.OpenFileForRead(afs, "tmp/topic1/001.log")
-	assert.Nil(t, err)
 	logChan := make(chan *[]common.LogEntry)
 	var wg sync.WaitGroup
 	go func() {
 		_, err := ReadFile(ReadFileParams{
-			File:            file,
-			LogChan:         logChan,
-			Wg:              &wg,
-			BatchSize:       10,
-			StartByteOffset: 0,
-			EndOffset:       100,
+			Reader:    bytes.NewReader(entry),
+			LogChan:   logChan,
+			Wg:        &wg,
+			BatchSize: 10,
+			EndOffset: 100,
 		})
 		assert.Nil(t, err)
 	}()
@@ -113,31 +79,27 @@ func TestRecoverBlock(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			afs := common.MemAfs()
-			fileName := "tmp/topic1/100.log"
-			assert.Nil(t, afs.WriteFile(fileName, test.content, 0600))
-			next, size, truncated, err := RecoverBlock(afs, fileName, 100)
+			store, ref, size := blockWith(t, 100, test.content)
+			next, validSize, truncated, err := RecoverBlock(store, ref, 100, size)
 			assert.Nil(t, err)
 			assert.Equal(t, test.wantNext, next)
-			assert.Equal(t, test.wantSize, size)
+			assert.Equal(t, test.wantSize, validSize)
 			assert.Equal(t, test.wantTruncated, truncated)
-			info, err := afs.Stat(fileName)
+			blocks, err := store.List("topic1", common.Log)
 			assert.Nil(t, err)
-			assert.Equal(t, test.wantSize, info.Size())
+			assert.Equal(t, test.wantSize, blocks[0].Size)
 		})
 	}
 }
 
 func TestRecoverBlock_offsetGapIsAnError(t *testing.T) {
-	afs := common.MemAfs()
-	fileName := "tmp/topic1/000.log"
 	content := append(common.CreateByteEntry([]byte("dummy1"), 0), common.CreateByteEntry([]byte("dummy2"), 2)...)
-	assert.Nil(t, afs.WriteFile(fileName, content, 0600))
-	_, _, _, err := RecoverBlock(afs, fileName, 0)
+	store, ref, size := blockWith(t, 0, content)
+	_, _, _, err := RecoverBlock(store, ref, 0, size)
 	assert.NotNil(t, err)
-	info, err := afs.Stat(fileName)
+	blocks, err := store.List("topic1", common.Log)
 	assert.Nil(t, err)
-	assert.Equal(t, int64(len(content)), info.Size(), "must not truncate valid entries")
+	assert.Equal(t, int64(len(content)), blocks[0].Size, "must not truncate valid entries")
 }
 
 func collectBatches(params ReadFileParams) ([][]common.LogEntry, error) {
@@ -162,13 +124,8 @@ func collectBatches(params ReadFileParams) ([][]common.LogEntry, error) {
 }
 
 func readFileContent(t *testing.T, content []byte, batchSize uint32) ([][]common.LogEntry, error) {
-	afs := common.MemAfs()
-	fileName := "tmp/topic1/000.log"
-	assert.Nil(t, afs.WriteFile(fileName, content, 0600))
-	file, err := common.OpenFileForRead(afs, fileName)
-	assert.Nil(t, err)
-	defer file.Close()
-	return collectBatches(ReadFileParams{File: file, BatchSize: batchSize, EndOffset: math.MaxUint64})
+	t.Helper()
+	return collectBatches(ReadFileParams{Reader: bytes.NewReader(content), BatchSize: batchSize, EndOffset: math.MaxUint64})
 }
 
 func TestReadFile_splitsBatchesAtByteLimit(t *testing.T) {
@@ -209,75 +166,43 @@ func TestReadFile_hugeBatchSize(t *testing.T) {
 	assert.Len(t, batches[0], 3)
 }
 
-func Test(t *testing.T) {
-	afs := common.MemAfs()
-	fileName := "tmp/topic1/001.log"
-	file, err := common.OpenFileForWrite(afs, fileName)
-	assert.Nil(t, err)
-	_, err = file.Write(common.CreateByteEntry([]byte("dummy1"), 0))
-	assert.Nil(t, err)
-	_, err = file.Write(common.CreateByteEntry([]byte("dummy2"), 1))
-	assert.Nil(t, err)
-	_, err = file.Write(common.CreateByteEntry([]byte("dummy3"), 2))
-	assert.Nil(t, err)
+// TestReadFile_rejectsUnexpectedFirstOffset guards the assertion that replaced the look back
+// a seekable file allowed: the caller says which offset the reader starts at.
+func TestReadFile_rejectsUnexpectedFirstOffset(t *testing.T) {
+	content := common.CreateByteEntry([]byte("dummy1"), 7)
+	_, err := collectBatches(ReadFileParams{
+		Reader:     bytes.NewReader(content),
+		BatchSize:  10,
+		FromOffset: 5,
+		EndOffset:  math.MaxUint64,
+	})
+	assert.NotNil(t, err)
+}
+
+func TestFindByteOffsetFromAndIncludingOffset(t *testing.T) {
+	var content []byte
+	for i, payload := range []string{"dummy1", "dummy2", "dummy3"} {
+		content = append(content, common.CreateByteEntry([]byte(payload), common.Offset(i))...)
+	}
+	store, ref, _ := blockWith(t, 0, content)
 	tests := []struct {
 		offsetInput        int
 		byteOffsetInput    int64
 		expectedByteOffset int64
 		expectedScanned    int
 	}{
-		{
-			offsetInput:        0,
-			byteOffsetInput:    0,
-			expectedByteOffset: 0,
-			expectedScanned:    0,
-		},
-		{
-			offsetInput:        1,
-			byteOffsetInput:    0,
-			expectedByteOffset: 26,
-			expectedScanned:    1,
-		},
-		{
-			offsetInput:        2,
-			byteOffsetInput:    0,
-			expectedByteOffset: 52,
-			expectedScanned:    2,
-		},
-		{
-			offsetInput:        1,
-			byteOffsetInput:    26,
-			expectedByteOffset: 26,
-			expectedScanned:    0,
-		},
-		{
-			offsetInput:        2,
-			byteOffsetInput:    26,
-			expectedByteOffset: 52,
-			expectedScanned:    1,
-		},
-		{
-			offsetInput:        2,
-			byteOffsetInput:    52,
-			expectedByteOffset: 52,
-			expectedScanned:    0,
-		},
-		{
-			offsetInput:        3,
-			byteOffsetInput:    52,
-			expectedByteOffset: 78,
-			expectedScanned:    1,
-		},
-		{
-			offsetInput:        3,
-			byteOffsetInput:    78,
-			expectedByteOffset: 78,
-			expectedScanned:    0,
-		},
+		{offsetInput: 0, byteOffsetInput: 0, expectedByteOffset: 0, expectedScanned: 0},
+		{offsetInput: 1, byteOffsetInput: 0, expectedByteOffset: 26, expectedScanned: 1},
+		{offsetInput: 2, byteOffsetInput: 0, expectedByteOffset: 52, expectedScanned: 2},
+		{offsetInput: 1, byteOffsetInput: 26, expectedByteOffset: 26, expectedScanned: 0},
+		{offsetInput: 2, byteOffsetInput: 26, expectedByteOffset: 52, expectedScanned: 1},
+		{offsetInput: 2, byteOffsetInput: 52, expectedByteOffset: 52, expectedScanned: 0},
+		{offsetInput: 3, byteOffsetInput: 52, expectedByteOffset: 78, expectedScanned: 1},
+		{offsetInput: 3, byteOffsetInput: 78, expectedByteOffset: 78, expectedScanned: 0},
 	}
 	for _, test := range tests {
 		t.Run(fmt.Sprintf("byteOffset %d and offset %d", test.byteOffsetInput, test.offsetInput), func(t *testing.T) {
-			byteOffset, scanned, err := FindByteOffsetFromAndIncludingOffset(afs, fileName, test.byteOffsetInput, common.Offset(test.offsetInput))
+			byteOffset, scanned, err := FindByteOffsetFromAndIncludingOffset(store, ref, test.byteOffsetInput, common.Offset(test.offsetInput))
 			assert.Nil(t, err)
 			assert.Equal(t, test.expectedByteOffset, byteOffset)
 			assert.Equal(t, test.expectedScanned, scanned)
@@ -285,29 +210,17 @@ func Test(t *testing.T) {
 	}
 }
 
-func TestLoadTopicBlocks(t *testing.T) {
-	afs := common.MemAfs()
-	logFileName := "tmp/topic1/00000000000000000000.log"
-	indexFileName := "tmp/topic1/00000000000000000000.idx"
-	file, err := common.OpenFileForWrite(afs, logFileName)
-	if err != nil {
-		t.Error(err)
+func TestReadEntryAt(t *testing.T) {
+	var content []byte
+	for i, payload := range []string{"dummy1", "dummy2", "dummy3"} {
+		content = append(content, common.CreateByteEntry([]byte(payload), common.Offset(i))...)
 	}
-	_, err = file.Write(common.CreateByteEntry([]byte("dummy1"), 0))
+	store, ref, _ := blockWith(t, 0, content)
+	entry, n, err := ReadEntryAt(store, ref, 26)
 	assert.Nil(t, err)
-	_, err = file.Write(common.CreateByteEntry([]byte("dummy2"), 1))
-	assert.Nil(t, err)
-	_, err = file.Write(common.CreateByteEntry([]byte("dummy3"), 2))
-	assert.Nil(t, err)
-
-	idx, _, err := index.CreateBinaryIndexFromLogFile(afs, logFileName, 0, 1)
-	assert.Nil(t, err)
-	err = afs.WriteFile(indexFileName, idx, 0600)
-	assert.Nil(t, err)
-	logBlocks, indexBlocks, err := LoadTopicBlocks(afs, "tmp", "topic1")
-	assert.Nil(t, err)
-	assert.Len(t, logBlocks, 1)
-	assert.Len(t, indexBlocks, 1)
+	assert.Equal(t, 26, n)
+	assert.Equal(t, uint64(1), entry.Offset)
+	assert.Equal(t, "dummy2", string(entry.Entry))
 }
 
 func TestReadFile_stopsWhenCancelled(t *testing.T) {
@@ -315,13 +228,6 @@ func TestReadFile_stopsWhenCancelled(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		content = append(content, common.CreateByteEntry([]byte("dummy"), common.Offset(i))...)
 	}
-	afs := common.MemAfs()
-	fileName := "tmp/topic1/000.log"
-	assert.Nil(t, afs.WriteFile(fileName, content, 0600))
-	file, err := common.OpenFileForRead(afs, fileName)
-	assert.Nil(t, err)
-	defer file.Close()
-
 	logChan := make(chan *[]common.LogEntry)
 	cancel := make(chan struct{})
 	var wg sync.WaitGroup
@@ -331,32 +237,7 @@ func TestReadFile_stopsWhenCancelled(t *testing.T) {
 		wg.Done()
 		close(cancel)
 	}()
-	_, err = ReadFile(ReadFileParams{File: file, LogChan: logChan, Wg: &wg, Cancel: cancel, BatchSize: 1, EndOffset: math.MaxUint64})
+	_, err := ReadFile(ReadFileParams{Reader: bytes.NewReader(content), LogChan: logChan, Wg: &wg, Cancel: cancel, BatchSize: 1, EndOffset: math.MaxUint64})
 	assert.True(t, errors.Is(err, common.ErrReadCancelled), "err=%v", err)
 	wg.Wait()
-}
-
-func TestLoadTopicBlocks_ignoresUnexpectedFiles(t *testing.T) {
-	afs := common.MemAfs()
-	for _, name := range []string{
-		"00000000000000000000.log", "00000000000000000000.idx", "00000000000000000042.log",
-		".DS_Store", "README", "notes.txt", "123.log", "1.2.log", "00000000000000000042.log.swp", "99999999999999999999.log",
-	} {
-		assert.Nil(t, afs.WriteFile("tmp/topic1/"+name, []byte("x"), 0600))
-	}
-	assert.Nil(t, afs.MkdirAll("tmp/topic1/backup", 0744))
-	logBlocks, indexBlocks, err := LoadTopicBlocks(afs, "tmp", "topic1")
-	assert.Nil(t, err)
-	assert.Equal(t, []common.LogBlock{0, 42}, logBlocks)
-	assert.Equal(t, []common.IndexBlock{0}, indexBlocks)
-}
-
-func TestListAllTopics_ignoresFiles(t *testing.T) {
-	afs := common.MemAfs()
-	_, err := CreateTopicDirectory(afs, "tmp", "topic1")
-	assert.Nil(t, err)
-	assert.Nil(t, afs.WriteFile("tmp/notes.txt", []byte("x"), 0600))
-	topics, err := ListAllTopics(afs, "tmp")
-	assert.Nil(t, err)
-	assert.Equal(t, []string{"topic1"}, topics)
 }
