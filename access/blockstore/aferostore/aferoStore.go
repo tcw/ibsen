@@ -301,9 +301,10 @@ func (s *Store) Remove(ref common.BlockRef) error {
 	return nil
 }
 
-// Sync flushes a block to durable media. It syncs the block's bytes, not the directory
-// entry: a block that was created but never synced can still be lost by a crash, which
-// recovery handles as a missing tail.
+// Sync flushes a block to durable media, and then the topic directory so a block created
+// by this append is found again after a crash. The directory flush is best effort: not
+// every filesystem afero runs on can do it, and a lost directory entry looks to recovery
+// like a block that was never written.
 func (s *Store) Sync(ref common.BlockRef) error {
 	file, err := s.afs.OpenFile(s.blockPath(ref), os.O_WRONLY, blockPerm)
 	if err != nil {
@@ -319,7 +320,17 @@ func (s *Store) Sync(ref common.BlockRef) error {
 	if err = file.Close(); err != nil {
 		return errore.Wrap(err)
 	}
+	s.syncTopicDir(ref.Topic)
 	return nil
+}
+
+func (s *Store) syncTopicDir(topic common.TopicName) {
+	dir, err := s.afs.Open(s.topicPath(topic))
+	if err != nil {
+		return
+	}
+	_ = dir.Sync()
+	_ = dir.Close()
 }
 
 func closeQuietly(file afero.File) {
