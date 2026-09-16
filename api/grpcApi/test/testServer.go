@@ -4,6 +4,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access/blockstore/aferostore"
 	"github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/manager"
 	"net"
@@ -34,11 +35,10 @@ func startTestServer(t *testing.T) {
 	}
 	params := manager.LogTopicManagerParams{
 		ReadOnly:         false,
-		Afs:              afs,
+		Store:            aferostore.New(afs, rootPath),
 		TTL:              5 * time.Second,
 		CheckForNewEvery: 100 * time.Millisecond,
 		MaxBlockSize:     10,
-		RootPath:         rootPath,
 	}
 	topicsManager, err := manager.NewLogTopicsManager(params)
 	if err != nil {

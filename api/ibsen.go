@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access/blockstore/aferostore"
 	"github.com/tcw/ibsen/api/grpcApi"
 	"github.com/tcw/ibsen/consensus"
 	"github.com/tcw/ibsen/errore"
@@ -96,11 +97,10 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 
 	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
 		ReadOnly:         ibs.Readonly,
-		Afs:              ibs.Afs,
+		Store:            aferostore.New(ibs.Afs, ibs.RootPath),
 		TTL:              ibs.TTL,
 		CheckForNewEvery: time.Second * 2,
 		MaxBlockSize:     ibs.MaxBlockSize,
-		RootPath:         ibs.RootPath,
 	})
 	if err != nil {
 		return errore.Wrap(err)

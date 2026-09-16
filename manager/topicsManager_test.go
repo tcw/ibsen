@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access/blockstore/aferostore"
 	"github.com/tcw/ibsen/access/common"
 )
 
@@ -21,9 +22,13 @@ func newTestAfs(t *testing.T) *afero.Afero {
 
 func newTestManager(t *testing.T, afs *afero.Afero) *LogTopicsManager {
 	t.Helper()
+	return newTestManagerWithStore(t, aferostore.New(afs, "data"))
+}
+
+func newTestManagerWithStore(t *testing.T, store common.BlockStore) *LogTopicsManager {
+	t.Helper()
 	m, err := NewLogTopicsManager(LogTopicManagerParams{
-		Afs:              afs,
-		RootPath:         "data",
+		Store:            store,
 		MaxBlockSize:     1000,
 		TTL:              time.Second,
 		CheckForNewEvery: time.Millisecond,

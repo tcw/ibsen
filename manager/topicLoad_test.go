@@ -2,56 +2,52 @@ package manager
 
 import (
 	"fmt"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access/blockstore/aferostore"
 	"github.com/tcw/ibsen/access/common"
 )
 
-// loadGateFs counts how often a topic directory is opened, which happens once per topic
-// load. The first open waits until a second one arrives or a timeout passes, so two
-// concurrent loads are both in progress at the same time.
-type loadGateFs struct {
-	afero.Fs
-	dir      string
-	opens    atomic.Int32
+// gatedLoadStore counts how often a topic's log blocks are listed, which happens once per
+// topic load. The first listing waits until a second one arrives or a timeout passes, so
+// two concurrent loads would both be in progress at the same time.
+type gatedLoadStore struct {
+	common.BlockStore
+	topic    common.TopicName
+	lists    atomic.Int32
 	second   chan struct{}
 	gateOnce sync.Once
 }
 
-func (f *loadGateFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
-	if name == f.dir {
-		switch f.opens.Add(1) {
+func (g *gatedLoadStore) List(topic common.TopicName, kind common.BlockKind) ([]common.Block, error) {
+	if topic == g.topic && kind == common.Log {
+		switch g.lists.Add(1) {
 		case 1:
 			select {
-			case <-f.second:
+			case <-g.second:
 			case <-time.After(200 * time.Millisecond):
 			}
 		case 2:
-			f.gateOnce.Do(func() { close(f.second) })
+			g.gateOnce.Do(func() { close(g.second) })
 		}
 	}
-	return f.Fs.OpenFile(name, flag, perm)
+	return g.BlockStore.List(topic, kind)
 }
 
 func TestManager_concurrentFirstRequestsLoadTopicOnce(t *testing.T) {
-	fs := &loadGateFs{Fs: afero.NewMemMapFs(), dir: "data/topic", second: make(chan struct{})}
-	afs := &afero.Afero{Fs: fs}
+	afs := newTestAfs(t)
+	store := &gatedLoadStore{BlockStore: aferostore.New(afs, "data"), topic: "topic", second: make(chan struct{})}
 	var block []byte
 	for i := 0; i < 30; i++ {
 		block = append(block, common.CreateByteEntry([]byte(fmt.Sprintf("topic-%d", i)), common.Offset(i))...)
 	}
-	if err := afs.MkdirAll("data/topic", 0744); err != nil {
+	if _, err := store.Append(common.LogRef("topic", 0), block); err != nil {
 		t.Fatal(err)
 	}
-	if err := afs.WriteFile("data/topic/00000000000000000000.log", block, 0600); err != nil {
-		t.Fatal(err)
-	}
-	m := newTestManager(t, afs)
+	m := newTestManagerWithStore(t, store)
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
@@ -70,8 +66,8 @@ func TestManager_concurrentFirstRequestsLoadTopicOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if opens := fs.opens.Load(); opens != 1 {
-		t.Fatalf("topic was loaded %d times, want 1", opens)
+	if lists := store.lists.Load(); lists != 1 {
+		t.Fatalf("topic was loaded %d times, want 1", lists)
 	}
 	got, err := readTopic(m, "topic")
 	if err != nil {

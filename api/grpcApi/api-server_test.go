@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/access/blockstore/aferostore"
 	"github.com/tcw/ibsen/manager"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -44,8 +45,7 @@ func newTestServer(t *testing.T, entries int) server {
 		t.Fatal(err)
 	}
 	logManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
-		Afs:          afs,
-		RootPath:     "data",
+		Store:        aferostore.New(afs, "data"),
 		MaxBlockSize: 2000,
 	})
 	if err != nil {

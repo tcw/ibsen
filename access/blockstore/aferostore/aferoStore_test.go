@@ -264,3 +264,75 @@ func TestStore_SyncIsTheOptionalCapability(t *testing.T) {
 		t.Fatalf("sync of an unknown block: err=%v", err)
 	}
 }
+
+// TestStore_ListIgnoresUnexpectedNames covers the names the store must not mistake for
+// blocks, which used to be checked when a topic was loaded.
+func TestStore_ListIgnoresUnexpectedNames(t *testing.T) {
+	store, afs := newStore(t)
+	for _, name := range []string{
+		"00000000000000000000.log", "00000000000000000000.idx", "00000000000000000042.log",
+		".DS_Store", "README", "notes.txt", "123.log", "1.2.log", "00000000000000000042.log.swp", "99999999999999999999.log",
+	} {
+		if err := afs.WriteFile("data/topic/"+name, []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := afs.MkdirAll("data/topic/backup", 0744); err != nil {
+		t.Fatal(err)
+	}
+	logs, err := store.List("topic", common.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 2 || logs[0].Block != 0 || logs[1].Block != 42 {
+		t.Fatalf("log blocks=%v, want 0 and 42", logs)
+	}
+	indexes, err := store.List("topic", common.Index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(indexes) != 1 || indexes[0].Block != 0 {
+		t.Fatalf("index blocks=%v, want 0", indexes)
+	}
+}
+
+func TestStore_TopicsIgnoresFilesAndHiddenDirectories(t *testing.T) {
+	store, afs := newStore(t)
+	if _, err := store.CreateTopic("topic1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateTopic("topic2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := afs.MkdirAll("data/.git", 0744); err != nil {
+		t.Fatal(err)
+	}
+	if err := afs.WriteFile("data/notes.txt", []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	topics, err := store.Topics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topics) != 2 {
+		t.Fatalf("topics=%v, want topic1 and topic2", topics)
+	}
+}
+
+// TestStore_AppendOfNoBytesCreatesTheBlock matters for index blocks: a log block whose
+// entries hold no offset worth indexing still gets an index block beside it, so a reload
+// finds the pair.
+func TestStore_AppendOfNoBytesCreatesTheBlock(t *testing.T) {
+	store, _ := newStore(t)
+	ref := common.IndexRef("topic", 0)
+	if _, err := store.Append(ref, nil); err != nil {
+		t.Fatal(err)
+	}
+	blocks, err := store.List("topic", common.Index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 || blocks[0].Size != 0 {
+		t.Fatalf("index blocks=%v, want one empty block", blocks)
+	}
+}

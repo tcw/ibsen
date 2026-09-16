@@ -3,32 +3,31 @@ package cmd
 import (
 	"fmt"
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/access/common"
 	"github.com/tcw/ibsen/access/index"
 	ibsLog "github.com/tcw/ibsen/access/log"
 	"math"
+	"os"
 	"sync"
 )
 
 func ReadLogFile(fileName string, batchSize uint32) error {
 	logChan := make(chan *[]common.LogEntry)
 	var wg sync.WaitGroup
-	var fs = afero.NewOsFs()
-	afs := &afero.Afero{Fs: fs}
 	terminate := make(chan bool)
 	go sendBatchMessage(logChan, &wg, terminate)
-	file, err := common.OpenFileForRead(afs, fileName)
+	// a log block named on the command line is read as a plain file, outside any store
+	file, err := os.Open(fileName)
 	if err != nil {
 		return err
 	}
+	defer file.Close()
 	_, err = ibsLog.ReadFile(ibsLog.ReadFileParams{
-		File:            file,
-		LogChan:         logChan,
-		Wg:              &wg,
-		BatchSize:       batchSize,
-		StartByteOffset: 0,
-		EndOffset:       math.MaxUint64,
+		Reader:    file,
+		LogChan:   logChan,
+		Wg:        &wg,
+		BatchSize: batchSize,
+		EndOffset: math.MaxUint64,
 	})
 	if err != nil {
 		return err
@@ -39,9 +38,7 @@ func ReadLogFile(fileName string, batchSize uint32) error {
 }
 
 func ReadLogIndexFile(fileName string) error {
-	var fs = afero.NewOsFs()
-	afs := &afero.Afero{Fs: fs}
-	file, err := afs.ReadFile(fileName)
+	file, err := os.ReadFile(fileName)
 	if err != nil {
 		log.Fatal().Err(err).Str("file", fileName).Msg("reading file failed")
 	}

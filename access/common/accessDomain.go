@@ -3,7 +3,6 @@ package common
 import (
 	"errors"
 	"fmt"
-	"github.com/spf13/afero"
 	"sync"
 )
 
@@ -67,8 +66,7 @@ type LogEntry struct {
 }
 
 type TopicParams struct {
-	Afs          *afero.Afero
-	RootPath     string
+	Store        BlockStore
 	TopicName    string
 	MaxBlockSize int
 }

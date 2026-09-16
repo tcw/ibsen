@@ -1,20 +1,16 @@
+// Package log reads and recovers log blocks through the common.BlockStore port. It knows
+// the entry format and nothing about where the bytes live.
 package log
 
 import (
 	"bufio"
 	"encoding/binary"
 	"errors"
-	"github.com/rs/zerolog/log"
-	"github.com/spf13/afero"
+	"io"
+	"sync"
+
 	"github.com/tcw/ibsen/access/common"
 	"github.com/tcw/ibsen/errore"
-	"io"
-	"os"
-	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
-	"sync"
 )
 
 type BlockSizeInBytes uint64
@@ -27,125 +23,32 @@ const maxBatchBytes = 10 * 1024 * 1024
 // maxBatchPrealloc caps the entries preallocated for a batch, since the batch size comes from clients.
 const maxBatchPrealloc = 1024
 
+// offsetFieldSize is the trailing offset of an entry, which is also what a look back reads.
+const offsetFieldSize = 8
+
 var NoByteOffsetFound = errors.New("no byte offset found")
 
-func CreateTopicDirectory(afs *afero.Afero, rootPath string, topic string) (bool, error) {
-	path := rootPath + common.Sep + topic
-	exists, err := afero.Exists(afs, path)
-	if err != nil {
-		return false, errore.Wrap(err)
-	}
-	if exists {
-		return false, nil
-	}
-	err = afs.Mkdir(path, 0744)
-	if err != nil {
-		// another caller may have created it after the check
-		if exists, _ := afero.DirExists(afs, path); exists {
-			return false, nil
-		}
-		return false, errore.Wrap(err)
-	}
-	return true, nil
-}
-
-func ListAllFilesInTopic(afs *afero.Afero, rootPath string, topic string) ([]os.FileInfo, error) {
-	dir, err := common.OpenFileForRead(afs, rootPath+common.Sep+topic)
-	if err != nil {
-		return nil, errore.Wrap(err)
-	}
-	defer dir.Close()
-	return dir.Readdir(0)
-}
-
-func LoadTopicBlocks(afs *afero.Afero, rootPath string, topic string) ([]common.LogBlock, []common.IndexBlock, error) {
-	filesInTopic, err := ListAllFilesInTopic(afs, rootPath, topic)
-	if err != nil {
-		return nil, nil, errore.Wrap(err)
-	}
-	var indexBlocks []common.IndexBlock
-	var logBlocks []common.LogBlock
-	for _, info := range filesInTopic {
-		if info.IsDir() {
-			continue
-		}
-		block, extension, ok := parseBlockFileName(info.Name())
-		if !ok {
-			log.Warn().Str("topic", topic).Str("file", info.Name()).Msg("ignoring file that is not a log or index block")
-			continue
-		}
-		if extension == ".log" {
-			logBlocks = append(logBlocks, common.LogBlock(block))
-		}
-		if extension == ".idx" {
-			indexBlocks = append(indexBlocks, common.IndexBlock(block))
-		}
-	}
-	sort.Slice(indexBlocks, func(i, j int) bool { return indexBlocks[i] < indexBlocks[j] })
-	sort.Slice(logBlocks, func(i, j int) bool { return logBlocks[i] < logBlocks[j] })
-	return logBlocks, indexBlocks, nil
-}
-
-// parseBlockFileName parses a block file name as the topic writes it, such as
-// 00000000000000000042.log. ok is false for any other name.
-func parseBlockFileName(name string) (block uint64, extension string, ok bool) {
-	extension = filepath.Ext(name)
-	if extension != ".log" && extension != ".idx" {
-		return 0, "", false
-	}
-	digits := strings.TrimSuffix(name, extension)
-	if len(digits) != 20 {
-		return 0, "", false
-	}
-	for _, c := range digits {
-		if c < '0' || c > '9' {
-			return 0, "", false
-		}
-	}
-	block, err := strconv.ParseUint(digits, 10, 64)
-	if err != nil {
-		return 0, "", false
-	}
-	return block, extension, true
-}
-
-func ListAllTopics(afs *afero.Afero, dir string) ([]string, error) {
-	var filenames []string
-	file, err := common.OpenFileForRead(afs, dir)
-	if err != nil {
-		return nil, errore.Wrap(err)
-	}
-	defer file.Close()
-	infos, err := file.Readdir(0)
-	if err != nil {
-		return nil, errore.Wrap(err)
-	}
-	for _, info := range infos {
-		// topics are directories; hidden entries and stray files are not topics
-		if info.IsDir() && !strings.HasPrefix(info.Name(), ".") {
-			filenames = append(filenames, info.Name())
-		}
-	}
-	return filenames, nil
-}
-
-func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, startAtByteOffset int64, offset common.Offset) (int64, int, error) {
+// FindByteOffsetFromAndIncludingOffset scans a log block for the entry with the given
+// offset and returns where it starts. startAtByteOffset must be an entry boundary; the
+// entry ending there is used to skip the scan when it is already the one before offset.
+func FindByteOffsetFromAndIncludingOffset(store common.BlockStore, ref common.BlockRef, startAtByteOffset int64, offset common.Offset) (int64, int, error) {
 	scanCount := 0
 	if offset == 0 {
 		return 0, 0, nil
 	}
-	file, err := common.OpenFileForRead(afs, fileName)
+	openAt := startAtByteOffset
+	if startAtByteOffset > 0 {
+		openAt = startAtByteOffset - offsetFieldSize
+	}
+	block, err := store.Open(ref, openAt)
 	if err != nil {
 		return 0, scanCount, errore.Wrap(err)
 	}
-	defer file.Close()
+	defer block.Close()
+	reader := bufio.NewReader(block)
 
 	if startAtByteOffset > 0 {
-		_, err = file.Seek(startAtByteOffset, io.SeekStart)
-		if err != nil {
-			return 0, scanCount, errore.Wrap(err)
-		}
-		lastOffset, err := offsetLookBack(file)
+		lastOffset, err := offsetLookBack(reader)
 		if err != nil {
 			return 0, 0, errore.Wrap(err)
 		}
@@ -154,7 +57,6 @@ func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, sta
 		}
 	}
 
-	reader := bufio.NewReader(file)
 	byteOffset := startAtByteOffset
 	for {
 		entry, n, err := common.ReadEntry(reader, common.MaxEntrySize)
@@ -172,30 +74,24 @@ func FindByteOffsetFromAndIncludingOffset(afs *afero.Afero, fileName string, sta
 	}
 }
 
-func offsetLookBack(file afero.File) (common.Offset, error) {
-	_, err := file.Seek(-8, io.SeekCurrent)
-	if err != nil {
-		return 0, errore.Wrap(err)
-	}
-	bytes := make([]byte, 8)
-	_, err = io.ReadFull(file, bytes)
-	if err != nil {
+// offsetLookBack reads the offset field an entry ends with, so a reader opened right after
+// an entry can tell which offset comes next.
+func offsetLookBack(r io.Reader) (common.Offset, error) {
+	bytes := make([]byte, offsetFieldSize)
+	if _, err := io.ReadFull(r, bytes); err != nil {
 		return 0, errore.Wrap(err)
 	}
 	return common.Offset(binary.LittleEndian.Uint64(bytes)), nil
 }
 
-// ReadEntryAt reads and verifies the entry starting at byteOffset in a log block file.
-func ReadEntryAt(afs *afero.Afero, fileName string, byteOffset int64) (common.LogEntry, int, error) {
-	file, err := common.OpenFileForRead(afs, fileName)
+// ReadEntryAt reads and verifies the entry starting at byteOffset in a log block.
+func ReadEntryAt(store common.BlockStore, ref common.BlockRef, byteOffset int64) (common.LogEntry, int, error) {
+	block, err := store.Open(ref, byteOffset)
 	if err != nil {
 		return common.LogEntry{}, 0, errore.Wrap(err)
 	}
-	defer file.Close()
-	if _, err = file.Seek(byteOffset, io.SeekStart); err != nil {
-		return common.LogEntry{}, 0, errore.Wrap(err)
-	}
-	entry, n, err := common.ReadEntry(file, common.MaxEntrySize)
+	defer block.Close()
+	entry, n, err := common.ReadEntry(block, common.MaxEntrySize)
 	if err != nil {
 		return common.LogEntry{}, 0, errore.Wrap(err)
 	}
@@ -203,62 +99,50 @@ func ReadEntryAt(afs *afero.Afero, fileName string, byteOffset int64) (common.Lo
 }
 
 // RecoverBlock verifies every entry of a log block from the start and truncates a torn
-// tail left by an interrupted write. It returns the offset following the last valid entry,
-// the valid size of the block in bytes, and the number of bytes truncated. A valid entry
-// with an unexpected offset is corruption rather than a torn write and is returned as an
-// error without truncating.
-func RecoverBlock(afs *afero.Afero, blockFileName string, firstOffset common.Offset) (common.Offset, int64, int64, error) {
-	nextOffset, validSize, fileSize, err := scanValidEntries(afs, blockFileName, firstOffset)
+// tail left by an interrupted write. blockSize is the size the store reports for the block.
+// It returns the offset following the last valid entry, the valid size of the block in
+// bytes, and the number of bytes truncated. A valid entry with an unexpected offset is
+// corruption rather than a torn write and is returned as an error without truncating.
+func RecoverBlock(store common.BlockStore, ref common.BlockRef, firstOffset common.Offset, blockSize int64) (common.Offset, int64, int64, error) {
+	nextOffset, validSize, err := scanValidEntries(store, ref, firstOffset, blockSize)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	truncated := fileSize - validSize
+	truncated := blockSize - validSize
 	if truncated == 0 {
 		return nextOffset, validSize, 0, nil
 	}
-	file, err := afs.OpenFile(blockFileName, os.O_WRONLY, 0600)
-	if err != nil {
-		return 0, 0, 0, errore.Wrap(err)
-	}
-	if err = file.Truncate(validSize); err != nil {
-		_ = file.Close()
-		return 0, 0, 0, errore.Wrap(err)
-	}
-	if err = file.Close(); err != nil {
+	if err = store.Truncate(ref, validSize); err != nil {
 		return 0, 0, 0, errore.Wrap(err)
 	}
 	return nextOffset, validSize, truncated, nil
 }
 
-func scanValidEntries(afs *afero.Afero, blockFileName string, firstOffset common.Offset) (common.Offset, int64, int64, error) {
-	file, err := common.OpenFileForRead(afs, blockFileName)
+func scanValidEntries(store common.BlockStore, ref common.BlockRef, firstOffset common.Offset, blockSize int64) (common.Offset, int64, error) {
+	block, err := store.Open(ref, 0)
 	if err != nil {
-		return 0, 0, 0, errore.Wrap(err)
+		return 0, 0, errore.Wrap(err)
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return 0, 0, 0, errore.Wrap(err)
-	}
-	reader := bufio.NewReader(file)
+	defer block.Close()
+	reader := bufio.NewReader(block)
 	nextOffset := firstOffset
 	var validSize int64
 	for {
-		// a payload cannot be larger than what is left of the file
+		// a payload cannot be larger than what is left of the block
 		var maxSize uint64
-		if remaining := info.Size() - validSize; remaining >= common.EntryOverhead {
+		if remaining := blockSize - validSize; remaining >= common.EntryOverhead {
 			maxSize = uint64(remaining - common.EntryOverhead)
 		}
 		entry, n, err := common.ReadEntry(reader, maxSize)
 		if err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, common.ErrCorruptEntry) {
-			return nextOffset, validSize, info.Size(), nil
+			return nextOffset, validSize, nil
 		}
 		if err != nil {
-			return 0, 0, 0, errore.Wrap(err)
+			return 0, 0, errore.Wrap(err)
 		}
 		if common.Offset(entry.Offset) != nextOffset {
-			return 0, 0, 0, errore.NewF("log block %s: entry at byte %d has offset %d, expected %d",
-				blockFileName, validSize, entry.Offset, nextOffset)
+			return 0, 0, errore.NewF("log block %s: entry at byte %d has offset %d, expected %d",
+				ref, validSize, entry.Offset, nextOffset)
 		}
 		nextOffset = nextOffset + 1
 		validSize = validSize + int64(n)
@@ -266,14 +150,17 @@ func scanValidEntries(afs *afero.Afero, blockFileName string, firstOffset common
 }
 
 type ReadFileParams struct {
-	File      afero.File
+	// Reader holds the log block, positioned at the entry FromOffset names.
+	Reader    io.Reader
 	LogChan   chan *[]common.LogEntry
 	Wg        *sync.WaitGroup
 	BatchSize uint32
 	// Cancel stops the read with common.ErrReadCancelled when closed; nil never cancels.
-	Cancel          <-chan struct{}
-	StartByteOffset int64
-	EndOffset       common.Offset
+	Cancel <-chan struct{}
+	// FromOffset is the offset the first entry must have. Zero takes the offset of the
+	// first entry as the start, for a reader whose first offset the caller does not know.
+	FromOffset common.Offset
+	EndOffset  common.Offset
 }
 
 type ReadResult struct {
@@ -294,25 +181,13 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 	if params.BatchSize == 0 {
 		return ReadResult{}, errore.New("batch size must be greater than zero")
 	}
-	var currentOffset common.Offset = 0
+	currentOffset := params.FromOffset
 	var offsetFromLogg common.Offset = 0
-	var entriesRead uint64 = 0
-	log.Debug().
-		Str("filename", params.File.Name()).
-		Int64("byteOffset", params.StartByteOffset).
-		Msg("read file")
-	if params.StartByteOffset > 0 {
-		_, err := params.File.Seek(params.StartByteOffset, io.SeekStart)
-		if err != nil {
-			return ReadResult{}, errore.Wrap(err)
-		}
-		offsetFromLogg, err = offsetLookBack(params.File)
-		if err != nil {
-			return ReadResult{}, errore.Wrap(err)
-		}
-		currentOffset = offsetFromLogg + 1
+	if currentOffset > 0 {
+		offsetFromLogg = currentOffset - 1
 	}
-	reader := bufio.NewReader(params.File)
+	var entriesRead uint64 = 0
+	reader := bufio.NewReader(params.Reader)
 	batchCapacity := params.BatchSize
 	if batchCapacity > maxBatchPrealloc {
 		batchCapacity = maxBatchPrealloc
