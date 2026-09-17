@@ -3,7 +3,6 @@ package test
 import (
 	"net"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -55,8 +54,7 @@ func startTestServer(t *testing.T) {
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		var wg sync.WaitGroup
-		if err := server.StartGRPC(lis, &wg, ""); err != nil {
+		if err := server.StartGRPC(lis); err != nil {
 			log.Error().Err(err).Msg("test server failed")
 		}
 	}()

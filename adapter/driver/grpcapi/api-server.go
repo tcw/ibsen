@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"github.com/tcw/ibsen/adapter/driven/telemetry"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/manager"
 	"github.com/tcw/ibsen/core/port/driver"
@@ -71,10 +70,7 @@ func NewSecureIbsenGrpcServer(
 	}
 }
 
-func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener, wg *sync.WaitGroup, OTELExporterAddr string) error {
-	if OTELExporterAddr != "" {
-		go telemetry.ConnectToOTELExporter(wg, OTELExporterAddr)
-	}
+func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener) error {
 	var opts []grpc.ServerOption
 	opts = []grpc.ServerOption{
 		grpc.ConnectionTimeout(time.Hour * 1),
