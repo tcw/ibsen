@@ -40,8 +40,13 @@ type IbsenGrpcServer struct {
 	UseTLS           bool
 	ConnectionTTL    time.Duration
 	CheckForNewEvery time.Duration
-	IbsenServer      *grpc.Server
 	Manager          driver.LogManager
+
+	// mu guards grpcServer and stopRequested. StartGRPC creates the server while another
+	// goroutine may already be trying to stop it.
+	mu            sync.Mutex
+	grpcServer    *grpc.Server
+	stopRequested bool
 }
 
 func NewUnsecureIbsenGrpcServer(
@@ -88,7 +93,15 @@ func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener) error {
 	}
 	grpcServer := grpc.NewServer(opts...)
 
-	igs.IbsenServer = grpcServer
+	igs.mu.Lock()
+	stopped := igs.stopRequested
+	igs.grpcServer = grpcServer
+	igs.mu.Unlock()
+	// a stop that arrived before the server existed still has to be honoured, or the server
+	// would start serving with nothing left to stop it
+	if stopped {
+		return nil
+	}
 
 	RegisterIbsenServer(grpcServer, &server{
 		manager:          igs.Manager,
@@ -108,8 +121,34 @@ func serverCredentials(sec GRPCSecurity) (credentials.TransportCredentials, erro
 	return creds, nil
 }
 
+// Shutdown stops the server immediately, dropping in-flight calls.
 func (igs *IbsenGrpcServer) Shutdown() {
-	igs.IbsenServer.Stop()
+	igs.Stop()
+}
+
+// Stop stops the server immediately. It is safe before StartGRPC has created it, and safe
+// to call more than once.
+func (igs *IbsenGrpcServer) Stop() {
+	if server := igs.markStopped(); server != nil {
+		server.Stop()
+	}
+}
+
+// GracefulStop stops the server once its in-flight calls have finished. It is safe before
+// StartGRPC has created it, and safe to call more than once.
+func (igs *IbsenGrpcServer) GracefulStop() {
+	if server := igs.markStopped(); server != nil {
+		server.GracefulStop()
+	}
+}
+
+// markStopped records that a stop was asked for and returns the server to stop, or nil if
+// StartGRPC has not created one yet.
+func (igs *IbsenGrpcServer) markStopped() *grpc.Server {
+	igs.mu.Lock()
+	defer igs.mu.Unlock()
+	igs.stopRequested = true
+	return igs.grpcServer
 }
 
 var _ IbsenServer = &server{}

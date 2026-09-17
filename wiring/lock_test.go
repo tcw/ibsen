@@ -102,3 +102,38 @@ func TestStartReturnsWhenAnotherInstanceHoldsTheLock(t *testing.T) {
 		t.Errorf("AcquireLock was called %d times, want 1", lock.acquireCalls)
 	}
 }
+
+// A read-only server writes nothing, so it never takes the lease and a held lock does not
+// stop it starting.
+func TestReadonlyStartDoesNotTakeTheLock(t *testing.T) {
+	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
+	if err := afs.MkdirAll("/data", 0700); err != nil {
+		t.Fatal(err)
+	}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock := &refusingLock{}
+	ibs := &IbsenServer{Readonly: true, Lock: lock, Afs: afs, RootPath: "/data", TTL: time.Minute, MaxBlockSize: 1000}
+
+	started := make(chan error, 1)
+	go func() { started <- ibs.Start(lis) }()
+
+	// it got past the lock check if it is still serving
+	select {
+	case err := <-started:
+		t.Fatalf("a read-only Start returned early: %v", err)
+	case <-time.After(250 * time.Millisecond):
+	}
+	ibs.ShutdownCleanly()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Start did not return after a clean shutdown")
+	}
+
+	if lock.acquireCalls != 0 {
+		t.Errorf("a read-only server took the write lock %d times", lock.acquireCalls)
+	}
+}
