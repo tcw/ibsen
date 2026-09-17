@@ -69,7 +69,7 @@ errore/ utils/              stdlib-only, shared by both sides
 - Pure today: all of `core/`, plus the `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
 - Not pure, by design: everything under `adapter/` and `wiring/`. `adapter/driven/locking` imports `uuid` and `afero`; `adapter/driven/logging/zerologger` imports `zerolog`; the driving adapters import gRPC and cobra.
 
-## Current baseline (verified 2026-09-16, go1.26.4)
+## Current baseline (verified 2026-09-17, go1.26.4)
 
 - `go test -race ./...` passes through migration step 5. Run it before and after every migration step.
 - Port conformance suite: `adapter/driven/blockstore/conformance`, run by every adapter (`aferostore` on an in-memory filesystem and on a real directory, `memstore`, `flashstore`).
@@ -77,7 +77,8 @@ errore/ utils/              stdlib-only, shared by both sides
 - Crash and torn-write fault injection: `adapter/driven/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `adapter/driven/blockstore/aferostore/crash_test.go` and `core/topic/topicAccess_crash_test.go`, on an in-memory filesystem and on a real directory.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
 - `go vet ./...` is clean; keep it that way.
-- CI (`.github/workflows/ci.yml`) runs gofmt, `go vet`, `scripts/check-architecture.sh` and `go test -race ./...` on every push.
+- CI (`.github/workflows/ci.yml`) runs gofmt, `go vet`, `scripts/check-architecture.sh` and `go test -race ./...` on every push. It takes its Go version from the `go` directive in `go.mod`, which is `1.26.4`.
+- Dependencies are current as of 2026-09-17 (OTEL 1.46, gRPC 1.84, zerolog 1.35, cobra 1.10, afero 1.15). Still on deprecated-but-working APIs: `grpc.Dial`/`grpc.DialContext`/`grpc.WithBlock` in the CLI clients and test helpers, which `grpc.NewClient` replaces. Switching is a behaviour change, not a rename: `NewClient` connects lazily, so `newIbsenClient` would stop returning a dial error for a server that is down and fail at the first call instead.
 - `Start` and `shutdown` can run on different goroutines, so what `Start` builds is guarded: `IbsenServer.mu` covers `topicsManager`, `grpcServer` and the lifecycle channels (`lifecycle()` makes the pair once), and `grpcapi.IbsenGrpcServer` guards its `*grpc.Server` behind `Stop`/`GracefulStop`, which are safe before `StartGRPC` has created it and record the request so it is honoured.
 - `Start` returns its failures instead of exiting: a refused single-writer lock is `wiring.ErrWriteLockUnavailable`, matchable with `errors.Is`, so a program embedding the log decides what to do. The CLI reports it and exits.
 - Composition: `wiring.IbsenServer` builds every adapter. `Lock` is an optional injection point — `defaults()` builds a `FileLock` at `<root>/.writeLock` when none is given, which `wiring/lock_test.go` pins — and the OTEL exporter's lifetime is held by `Start`, not by `grpcapi.StartGRPC`.

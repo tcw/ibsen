@@ -7,21 +7,27 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	"go.opentelemetry.io/otel/metric/global"
 	"go.opentelemetry.io/otel/propagation"
-	controller "go.opentelemetry.io/otel/sdk/metric/controller/basic"
-	processor "go.opentelemetry.io/otel/sdk/metric/processor/basic"
-	"go.opentelemetry.io/otel/sdk/metric/selector/simple"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
-	"google.golang.org/grpc"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
 
+// collectPeriod is how often metrics are pushed to the collector.
+const collectPeriod = 2 * time.Second
+
+// ConnectToOTELExporter sets up the OTLP providers and keeps them alive until wg says the
+// server has stopped serving, then flushes and shuts them down.
+//
+// The exporters connect lazily: the trace client used to be given grpc.WithBlock(), so
+// initProvider failed and this loop retried every ten seconds while the collector was down.
+// Both that dial option and its grpc counterpart are no-ops now, and the OTLP exporters
+// buffer and retry on their own, so setup succeeds even with no collector listening and the
+// retry here only covers genuine configuration failures.
 func ConnectToOTELExporter(wg *sync.WaitGroup, OTELExporterAddr string) {
 	for {
 		provider, err := initProvider(OTELExporterAddr)
@@ -39,45 +45,16 @@ func initProvider(OTELExporterAddr string) (func(), error) {
 	ctx := context.Background()
 
 	log.Info().Msgf("Connecting to OTEL exporter %s ...", OTELExporterAddr)
-	metricClient := otlpmetricgrpc.NewClient(
+	metricExp, err := otlpmetricgrpc.New(ctx,
 		otlpmetricgrpc.WithInsecure(),
 		otlpmetricgrpc.WithEndpoint(OTELExporterAddr),
 	)
-	metricExp, err := otlpmetric.New(ctx, metricClient)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to create the collector metric exporter")
 		return nil, err
 	}
 
-	pusher := controller.New(
-		processor.NewFactory(
-			simple.NewWithHistogramDistribution(),
-			metricExp,
-		),
-		controller.WithExporter(metricExp),
-		controller.WithCollectPeriod(2*time.Second),
-	)
-	global.SetMeterProvider(pusher)
-
-	err = pusher.Start(ctx)
-	if err != nil {
-		log.Warn().Err(err).Msg("Failed to start metric pusher")
-		return nil, err
-	}
-
-	traceClient := otlptracegrpc.NewClient(
-		otlptracegrpc.WithInsecure(),
-		otlptracegrpc.WithEndpoint(OTELExporterAddr),
-		otlptracegrpc.WithDialOption(grpc.WithBlock()))
-	traceExp, err := otlptrace.New(ctx, traceClient)
-	if err != nil {
-		log.Warn().Err(err).Msg("Failed to create the collector trace exporter")
-		return nil, err
-	}
-
 	res, err := resource.New(ctx,
-		//resource.WithFromEnv(),
-		//resource.WithProcess(),
 		resource.WithTelemetrySDK(),
 		resource.WithHost(),
 		resource.WithAttributes(
@@ -86,6 +63,22 @@ func initProvider(OTELExporterAddr string) (func(), error) {
 	)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to create the resource")
+		return nil, err
+	}
+
+	meterProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithResource(res),
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp,
+			sdkmetric.WithInterval(collectPeriod))),
+	)
+	otel.SetMeterProvider(meterProvider)
+
+	traceClient := otlptracegrpc.NewClient(
+		otlptracegrpc.WithInsecure(),
+		otlptracegrpc.WithEndpoint(OTELExporterAddr))
+	traceExp, err := otlptrace.New(ctx, traceClient)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to create the collector trace exporter")
 		return nil, err
 	}
 
@@ -108,7 +101,7 @@ func initProvider(OTELExporterAddr string) (func(), error) {
 			otel.Handle(err)
 		}
 		// pushes any last exports to the receiver
-		if err := pusher.Stop(cxt); err != nil {
+		if err := meterProvider.Shutdown(cxt); err != nil {
 			otel.Handle(err)
 		}
 	}, nil
