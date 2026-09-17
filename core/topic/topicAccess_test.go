@@ -4,17 +4,11 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/logfmt"
 	"github.com/tcw/ibsen/core/port/driven"
 )
-
-func init() {
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMicro
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
-}
 
 func TestTopic_Write(t *testing.T) {
 	store, _ := newTestStore(t)

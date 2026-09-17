@@ -1,7 +1,6 @@
 package topic
 
 import (
-	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/port/driven"
 )
@@ -14,12 +13,15 @@ var _ StatusAccess = &Status{}
 
 type Status struct {
 	Store driven.BlockStore
+	Log   driven.Logger
 }
 
 func (s *Status) List() []domain.TopicName {
 	topics, err := s.Store.Topics()
 	if err != nil {
-		log.Err(err).Msg("failed listing topics")
+		if s.Log != nil {
+			s.Log.Log(driven.LevelError, "failed listing topics", driven.Err(err))
+		}
 	}
 	return topics
 }
