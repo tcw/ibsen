@@ -58,8 +58,8 @@ func TestShutdown_closesLogBeforeReleasingLockAndStartWaitsForIt(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	conn, err := grpc.DialContext(ctx, lis.Addr().String(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	conn, err := grpcapi.DialContext(ctx, lis.Addr().String(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("server did not start: %v", err)
 	}
