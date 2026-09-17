@@ -114,9 +114,8 @@ func TestSecureServer_loadsCertificateFromRelativePaths(t *testing.T) {
 	var dialErr error
 	go func() {
 		defer close(dialed)
-		conn, dialErr = grpc.DialContext(ctx, lis.Addr().String(),
-			grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(pool, "localhost")),
-			grpc.WithBlock())
+		conn, dialErr = DialContext(ctx, lis.Addr().String(),
+			grpc.WithTransportCredentials(credentials.NewClientTLSFromCert(pool, "localhost")))
 	}()
 	select {
 	case err := <-served:

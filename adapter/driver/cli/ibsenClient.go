@@ -16,6 +16,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// connectTimeout bounds how long a CLI command waits for the server to answer. grpc.Dial
+// with WithBlock was given no context, so an unreachable server used to hang the command
+// instead of reporting that it could not connect.
+const connectTimeout = 10 * time.Second
+
 type IbsenClient struct {
 	Client grpcapi.IbsenClient
 	Ctx    context.Context
@@ -24,7 +29,10 @@ type IbsenClient struct {
 }
 
 func newIbsenClient(target string) (IbsenClient, error) {
-	conn, err := grpc.Dial(target, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock(),
+	connectCtx, cancelConnect := context.WithTimeout(context.Background(), connectTimeout)
+	defer cancelConnect()
+	conn, err := grpcapi.DialContext(connectCtx, target,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32),
 			grpc.MaxCallSendMsgSize(math.MaxInt32)))
 	if err != nil {
