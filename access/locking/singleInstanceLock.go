@@ -4,12 +4,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/consensus"
 	"github.com/tcw/ibsen/errore"
 	"io"
 	"os"
 	"sync"
 	"time"
 )
+
+// FileLock is the driven adapter satisfying the coordination port with a lease kept in a
+// file on the shared filesystem.
+var _ consensus.SingleIbsenWriterLock = &FileLock{}
 
 type FileLock struct {
 	afero        *afero.Afero
