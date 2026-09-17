@@ -26,7 +26,6 @@ import (
 	"github.com/tcw/ibsen/errore"
 )
 
-var ibsenGrpcServer *grpcapi.IbsenGrpcServer
 var ibsenFiglet = `
                            _____ _                    
                           |_   _| |                   
@@ -55,9 +54,11 @@ type IbsenServer struct {
 	CpuProfile       string
 	MemProfile       string
 	cpuProfileFile   *os.File
-	// mu guards topicsManager, which Start sets while the signal handler may read it
+	// mu guards topicsManager, grpcServer and the lifecycle channels, which Start sets while
+	// a shutdown on another goroutine may read them
 	mu            sync.Mutex
 	topicsManager *manager.LogTopicsManager
+	grpcServer    *grpcapi.IbsenGrpcServer
 	shutdownOnce  sync.Once
 	stopping      chan struct{} // closed when a shutdown begins
 	stopped       chan struct{} // closed when the shutdown has finished
@@ -77,6 +78,20 @@ const (
 	writeLockReclaim  = 5 * time.Second
 )
 
+// lifecycle returns the channels tracking this server's shutdown, creating them on first
+// use. Start and ShutdownCleanly are called from different goroutines and either can be
+// first, so the pair is made once under the mutex rather than assigned by whichever runs
+// first. shutdownOnce keeps them from being closed twice.
+func (ibs *IbsenServer) lifecycle() (stopping, stopped chan struct{}) {
+	ibs.mu.Lock()
+	defer ibs.mu.Unlock()
+	if ibs.stopping == nil {
+		ibs.stopping = make(chan struct{})
+		ibs.stopped = make(chan struct{})
+	}
+	return ibs.stopping, ibs.stopped
+}
+
 // defaults fills in the adapters the caller did not inject. It runs before Start begins
 // anything that reads them, so the signal handler never races the assignment. A test injects
 // its own Lock and keeps it.
@@ -89,8 +104,7 @@ func (ibs *IbsenServer) defaults() {
 
 func (ibs *IbsenServer) Start(listener net.Listener) error {
 	ibs.defaults()
-	ibs.stopping = make(chan struct{})
-	ibs.stopped = make(chan struct{})
+	stopping, stopped := ibs.lifecycle()
 	go ibs.initSignals()
 	log.Info().Msg(fmt.Sprintf("Using listener: %s", listener.Addr().String()))
 	if ibs.Readonly {
@@ -147,8 +161,8 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	// gRPC stops serving early in a shutdown, and the process exits once Start returns, so
 	// wait until the shutdown has closed the log and released the lock
 	select {
-	case <-ibs.stopping:
-		<-ibs.stopped
+	case <-stopping:
+		<-stopped
 	default:
 	}
 	if err != nil {
@@ -158,15 +172,19 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 }
 
 func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager driver.LogManager) error {
+	var server *grpcapi.IbsenGrpcServer
 	if ibs.GRPCPrivateKey == "" && ibs.GRPCCertKey == "" {
 		log.Warn().Msg("ibsen server is starting in UNSECURE mode")
-		ibsenGrpcServer = grpcapi.NewUnsecureIbsenGrpcServer(manager, ibs.TTL, time.Second*2)
+		server = grpcapi.NewUnsecureIbsenGrpcServer(manager, ibs.TTL, time.Second*2)
 	} else {
-		ibsenGrpcServer = grpcapi.NewSecureIbsenGrpcServer(manager, grpcapi.GRPCSecurity{
+		server = grpcapi.NewSecureIbsenGrpcServer(manager, grpcapi.GRPCSecurity{
 			CertKeyFile:   ibs.GRPCCertKey,
 			PrivteKeyFile: ibs.GRPCPrivateKey,
 		}, ibs.TTL, time.Second*2)
 	}
+	ibs.mu.Lock()
+	ibs.grpcServer = server
+	ibs.mu.Unlock()
 	log.Info().Msg(fmt.Sprintf("Started ibsen server on: [%s]", lis.Addr().String()))
 	fmt.Print(ibsenFiglet)
 	// The exporter keeps its provider alive until the server stops serving, which is what
@@ -177,7 +195,7 @@ func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager driver.LogMana
 	if ibs.OTELExporterAddr != "" {
 		go telemetry.ConnectToOTELExporter(&serving, ibs.OTELExporterAddr)
 	}
-	err := ibsenGrpcServer.StartGRPC(lis)
+	err := server.StartGRPC(lis)
 	serving.Done()
 	if err != nil {
 		return errore.Wrap(err)
@@ -198,10 +216,9 @@ func (ibs *IbsenServer) ShutdownCleanly() {
 }
 
 func (ibs *IbsenServer) shutdown() {
-	if ibs.stopping != nil {
-		close(ibs.stopping)
-		defer close(ibs.stopped)
-	}
+	stopping, stopped := ibs.lifecycle()
+	close(stopping)
+	defer close(stopped)
 
 	// profiling failures are logged but do not stop the shutdown, which still has to release the lock
 	if ibs.MemProfile != "" {
@@ -221,21 +238,27 @@ func (ibs *IbsenServer) shutdown() {
 		}
 	}
 
-	log.Info().Msg("gracefully stopping grpc server...")
+	ibs.mu.Lock()
+	server := ibs.grpcServer
+	ibs.mu.Unlock()
 
-	stopped := make(chan struct{})
-	go func() {
-		ibsenGrpcServer.IbsenServer.GracefulStop()
-		close(stopped)
-	}()
+	if server != nil {
+		log.Info().Msg("gracefully stopping grpc server...")
 
-	t := time.NewTimer(5 * time.Second)
-	select {
-	case <-t.C:
-		log.Info().Msg("stopped gRPC server forcefully")
-		ibsenGrpcServer.IbsenServer.Stop()
-	case <-stopped:
-		t.Stop()
+		grpcStopped := make(chan struct{})
+		go func() {
+			server.GracefulStop()
+			close(grpcStopped)
+		}()
+
+		t := time.NewTimer(5 * time.Second)
+		select {
+		case <-t.C:
+			log.Info().Msg("stopped gRPC server forcefully")
+			server.Stop()
+		case <-grpcStopped:
+			t.Stop()
+		}
 	}
 
 	// gRPC does not wait for the handlers of a forced stop, and writes still index in the
