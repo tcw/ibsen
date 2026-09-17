@@ -15,9 +15,6 @@ import (
 // read the same way: a pair either verifies or it is not there.
 const PairSize = 20
 
-// pairBodySize is the two values a pair's checksum covers.
-const pairBodySize = 16
-
 var crcTable = crc32.MakeTable(crc32.Castagnoli)
 
 // AppendPair encodes pair onto dst and returns the result, the way append does.
@@ -111,12 +108,4 @@ func (idx *Index) FindNearestByteOffset(offset domain.Offset) domain.OffsetFileP
 
 func (idx *Index) add(pair domain.OffsetFilePtr) {
 	idx.IndexOffsets = append(idx.IndexOffsets, pair)
-}
-
-func (idx *Index) addAll(pair []domain.OffsetFilePtr) {
-	idx.IndexOffsets = append(idx.IndexOffsets, pair...)
-}
-
-func (idx *Index) addIndex(index Index) {
-	idx.addAll(index.IndexOffsets)
 }

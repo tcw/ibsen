@@ -76,7 +76,7 @@ errore/ utils/              stdlib-only, shared by both sides
 - Core property tests: `core/topic/topicAccess_property_test.go` (read-from-every-offset across block sizes and reload modes; concurrent write/read/index), run against every adapter. Only `coreBackends()` at the top of that file knows which store is behind the port.
 - Crash and torn-write fault injection: `adapter/driven/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `adapter/driven/blockstore/aferostore/crash_test.go` and `core/topic/topicAccess_crash_test.go`, on an in-memory filesystem and on a real directory.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
-- `go vet ./...` is clean; keep it that way.
+- `go vet ./...` is clean; keep it that way. `staticcheck -checks U1000 ./...` prints nothing, so there is no unused code; CI does not run it.
 - CI (`.github/workflows/ci.yml`) runs gofmt, `go vet`, `scripts/check-architecture.sh` and `go test -race ./...` on every push. It takes its Go version from the `go` directive in `go.mod`, which is `1.26.4`.
 - Dependencies are current as of 2026-09-17 (OTEL 1.46, gRPC 1.84, zerolog 1.35, cobra 1.10, afero 1.15). No deprecated gRPC dialling left: `grpcapi.DialContext` wraps `grpc.NewClient` and waits for the connection the way `grpc.WithBlock` used to, since `NewClient` connects lazily and would otherwise hand back a healthy-looking client for a server that is not there. Every client — CLI, bench and test helpers — goes through it, and `adapter/driver/grpcapi/client_test.go` pins that an unreachable address is an error rather than a client. CLI commands now bound that wait with `connectTimeout` (10s); `grpc.Dial` with `WithBlock` was given no context, so an unreachable server hung the command.
 - `Start` and `shutdown` can run on different goroutines, so what `Start` builds is guarded: `IbsenServer.mu` covers `topicsManager`, `grpcServer` and the lifecycle channels (`lifecycle()` makes the pair once), and `grpcapi.IbsenGrpcServer` guards its `*grpc.Server` behind `Stop`/`GracefulStop`, which are safe before `StartGRPC` has created it and record the request so it is honoured.
@@ -147,7 +147,6 @@ them has returned, so a reader never sees an entry a power cut could take back.
 - ~~Make sparsity configurable.~~ `topic.Params.IndexSparsity` (0 means `topic.DefaultIndexSparsity`, 10), threaded through `manager.LogTopicManagerParams` and `wiring.IbsenServer` to the CLI's `--indexSparsity`/`-i` and `IBSEN_INDEX_SPARSITY`. It is per-topic state, copied by `snapshot()`. Changing it between runs is safe and tested: the pairs already written stay valid and sorted, and the block ends up indexed at two densities. `index.CreateBinaryIndexFromLog` returns `index.ErrInvalidSparsity` for 0 rather than reaching `offset % 0`, which panics.
 - ~~Checksum index files.~~ Each pair carries a crc32c over its two values, so a pair either verifies or is not there, the same rule a log entry follows. `NewIndex` stops at the first pair that is torn or fails its checksum and returns the good prefix, which the existing truncation drops the rest of and rebuilds from the log. Without this a corrupt pair pointed at a byte that is not an entry boundary and a read from it failed on EOF; the test for it fails that way when the check is removed.
 - The format change needs no migration: an index written as bare 16-byte pairs fails at its first pair and is rebuilt whole. The index says nothing the log does not.
-- Dead code: `Index.addAll` and `Index.addIndex` are unexported with no callers, and `domain.Uint64ArrayToBytes` lost its only caller to this change.
 
 ## 4. Architecture: hexagonal refactor
 
@@ -218,8 +217,9 @@ the core is pure.
 13. ~~Make the index sparsity configurable instead of a constant.~~
 14. ~~Acknowledge a write only once it is on durable media (§2).~~
 15. ~~Checksum index pairs (§3).~~
+16. ~~Remove the dead code the earlier steps left behind.~~
 
-Every step ships green. Steps 0 to 15 are done, one commit each.
+Every step ships green. Steps 0 to 16 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: the rest of the
 index work (§3), and then compression (§5) and the embedded wiring files (§8). The flash adapter is the

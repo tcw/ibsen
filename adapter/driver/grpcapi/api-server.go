@@ -13,7 +13,6 @@ import (
 	"github.com/tcw/ibsen/core/manager"
 	"github.com/tcw/ibsen/core/port/driver"
 	"github.com/tcw/ibsen/errore"
-	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -21,8 +20,6 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 )
-
-var tracer = otel.Tracer("ibsen-server")
 
 type server struct {
 	manager          driver.LogManager

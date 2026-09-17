@@ -69,10 +69,3 @@ type OffsetFilePtr struct {
 	Offset     Offset
 	ByteOffset int64
 }
-
-type OffsetPosition struct {
-	logBlock       LogBlock
-	byteOffset     int64
-	entriesScanned int
-	indexEntryUsed OffsetFilePtr
-}

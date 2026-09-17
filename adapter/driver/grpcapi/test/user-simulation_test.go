@@ -1,16 +1,10 @@
 package test
 
 import (
-	"fmt"
-	"os"
-	"runtime"
-	"runtime/pprof"
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
-	"github.com/tcw/ibsen/errore"
 )
 
 func TestName(t *testing.T) {
@@ -36,41 +30,4 @@ func TestName(t *testing.T) {
 	simulation, err := newSimulation(params)
 	assert.Nil(t, err)
 	simulation.start(t)
-	//stopCpuPprof(err, file)
-	//memProfile()
-}
-
-func stopCpuPprof(err error, file *os.File) {
-	pprof.StopCPUProfile()
-	err = file.Close()
-	if err != nil {
-		log.Fatal().Err(err)
-	}
-}
-
-func startCpuPprof() (*os.File, error) {
-	file, err := os.Create("cpu.pprof")
-	if err != nil {
-		log.Fatal().Err(err)
-	}
-	if err := pprof.StartCPUProfile(file); err != nil {
-		log.Fatal().Err(err)
-	}
-	return file, err
-}
-
-func memProfile() {
-	f, err := os.Create("mem.pprof")
-	if err != nil {
-		log.Fatal().Err(err)
-	}
-	runtime.GC() // get up-to-date statistics
-	if err := pprof.WriteHeapProfile(f); err != nil {
-		ioErr := f.Close()
-		if ioErr != nil {
-			log.Fatal().Err(errore.WrapError(ioErr, err))
-		}
-		log.Fatal().Err(err)
-	}
-	log.Info().Msg(fmt.Sprintf("Ended memory profiling, writing to file mem.pprof"))
 }

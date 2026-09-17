@@ -67,14 +67,6 @@ func ReadEntry(r io.Reader, maxSize uint64) (entry LogEntry, n int, err error) {
 	}, int(size) + EntryOverhead, nil
 }
 
-func Uint64ArrayToBytes(uintArray []uint64) []byte {
-	var bytes []byte
-	for _, value := range uintArray {
-		bytes = append(bytes, Uint64ToLittleEndian(value)...)
-	}
-	return bytes
-}
-
 func Uint64ToLittleEndian(offset uint64) []byte {
 	bytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(bytes, offset)
