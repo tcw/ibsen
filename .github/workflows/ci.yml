@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l core adapter wiring main.go errore utils)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # The north star: the core imports only the standard library, and dependencies point
+      # inward. See scripts/check-architecture.sh for the three rules.
+      - name: architecture
+        run: ./scripts/check-architecture.sh
+
+      - name: go test -race
+        run: go test -race ./...
