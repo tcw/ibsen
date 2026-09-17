@@ -33,7 +33,7 @@ Everything below hangs off that rule: the bugs are the core earning trust, the p
 A Go append-only log server, Kafka-like: topics you write entries to and read back by offset, over gRPC, with a sparse index and block-based storage on afero.
 
 - Entry wire format (`core/domain/fsUtils.go` `CreateByteEntry`): `crc32c(4) | size uint64 LE (8) | entry | offset uint64 LE (8)`; CRC covers size, entry, offset.
-- Blocks are named by the offset of their first entry, and carry a log kind and an index kind. Index block = pairs of `(offset uint64, byteOffset uint64)`. Where those bytes live is the adapter's business; the afero one keeps them at `<root>/<topic>/%020d.log` and `.idx`.
+- Blocks are named by the offset of their first entry, and carry a log kind and an index kind. Index block = checksummed pairs, `crc32c(4) | offset uint64 LE (8) | byteOffset uint64 LE (8)`, `index.PairSize` bytes each, the CRC covering the two values. Where those bytes live is the adapter's business; the afero one keeps them at `<root>/<topic>/%020d.log` and `.idx`.
 ### Layout
 
 The tree names which side of the hexagon everything is on. Dependencies point inward only:
@@ -82,6 +82,7 @@ errore/ utils/              stdlib-only, shared by both sides
 - `Start` and `shutdown` can run on different goroutines, so what `Start` builds is guarded: `IbsenServer.mu` covers `topicsManager`, `grpcServer` and the lifecycle channels (`lifecycle()` makes the pair once), and `grpcapi.IbsenGrpcServer` guards its `*grpc.Server` behind `Stop`/`GracefulStop`, which are safe before `StartGRPC` has created it and record the request so it is honoured.
 - `Start` returns its failures instead of exiting: a refused single-writer lock is `wiring.ErrWriteLockUnavailable`, matchable with `errors.Is`, so a program embedding the log decides what to do. The CLI reports it and exits.
 - Composition: `wiring.IbsenServer` builds every adapter. `Lock` is an optional injection point — `defaults()` builds a `FileLock` at `<root>/.writeLock` when none is given, which `wiring/lock_test.go` pins — and the OTEL exporter's lifetime is held by `Start`, not by `grpcapi.StartGRPC`.
+- Index checksums: `core/index/checksum_test.go` covers the round trip, every byte of a pair being covered by its CRC, parsing stopping at a corrupt pair, torn trailing pairs, and the old format being rejected; `core/topic/indexChecksum_test.go` shows a corrupted pair and an unchecksummed block both being rebuilt into exactly what a clean scan of the log gives, with every offset still readable.
 - Durability: `core/topic/flush_test.go` drives a `Syncable` store whose `Sync` the test gates, and covers the guarantee itself (a reader sees nothing until the flush returns, and `Write` does not return either), a failed flush being reported and leaving nothing readable, those entries appearing once a later flush succeeds, concurrent writers sharing one sync, the interval releasing a writer that never reaches the threshold, a non-syncable store never waiting, and a reloaded topic counting its recovered block as durable.
 - Logging port: `adapter/driven/logging/zerologger` has its own tests (level mapping, every field kind, `Enabled` agreeing with what is emitted, nil error dropped); `core/topic/logging_test.go` proves the core reaches its logger only through the port.
 
@@ -144,8 +145,9 @@ them has returned, so a reader never sees an entry a power cut could take back.
 
 - ~~Binary search over the already-sorted offsets instead of the linear scan.~~ `Index.FindNearestByteOffset` is a `sort.Search` for the first pair past the offset, returning the one before it. The pairs are appended in scan order, so they are already sorted; a zero pair still means "nothing at or before this, scan from the start of the block", which is reachable for a block that does not begin on a multiple of the sparsity. `core/index/find_test.go` holds the scan it replaced and asserts the two agree for every query across seven index shapes.
 - ~~Make sparsity configurable.~~ `topic.Params.IndexSparsity` (0 means `topic.DefaultIndexSparsity`, 10), threaded through `manager.LogTopicManagerParams` and `wiring.IbsenServer` to the CLI's `--indexSparsity`/`-i` and `IBSEN_INDEX_SPARSITY`. It is per-topic state, copied by `snapshot()`. Changing it between runs is safe and tested: the pairs already written stay valid and sorted, and the block ends up indexed at two densities. `index.CreateBinaryIndexFromLog` returns `index.ErrInvalidSparsity` for 0 rather than reaching `offset % 0`, which panics.
-- Checksum index files.
-- Dead code: `Index.addAll` and `Index.addIndex` are unexported with no callers.
+- ~~Checksum index files.~~ Each pair carries a crc32c over its two values, so a pair either verifies or is not there, the same rule a log entry follows. `NewIndex` stops at the first pair that is torn or fails its checksum and returns the good prefix, which the existing truncation drops the rest of and rebuilds from the log. Without this a corrupt pair pointed at a byte that is not an entry boundary and a read from it failed on EOF; the test for it fails that way when the check is removed.
+- The format change needs no migration: an index written as bare 16-byte pairs fails at its first pair and is rebuilt whole. The index says nothing the log does not.
+- Dead code: `Index.addAll` and `Index.addIndex` are unexported with no callers, and `domain.Uint64ArrayToBytes` lost its only caller to this change.
 
 ## 4. Architecture: hexagonal refactor
 
@@ -215,8 +217,9 @@ the core is pure.
 12. ~~Binary search in the index instead of the scan back from the end.~~
 13. ~~Make the index sparsity configurable instead of a constant.~~
 14. ~~Acknowledge a write only once it is on durable media (§2).~~
+15. ~~Checksum index pairs (§3).~~
 
-Every step ships green. Steps 0 to 14 are done, one commit each.
+Every step ships green. Steps 0 to 15 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: the rest of the
 index work (§3), and then compression (§5) and the embedded wiring files (§8). The flash adapter is the

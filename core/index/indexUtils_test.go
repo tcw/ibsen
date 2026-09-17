@@ -56,7 +56,7 @@ func TestSparsityOneIndexesEveryEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(pairs) / 16; got != entries {
+	if got := len(pairs) / PairSize; got != entries {
 		t.Errorf("indexed %d of %d entries at sparsity 1", got, entries)
 	}
 }

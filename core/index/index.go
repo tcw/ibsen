@@ -3,27 +3,67 @@ package index
 import (
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"sort"
 
 	"github.com/tcw/ibsen/core/domain"
 )
 
+// PairSize is the bytes one pair takes in an index block. A pair on disk is
+// crc32c(4) | offset uint64 LE (8) | byteOffset uint64 LE (8), where the checksum covers the
+// sixteen bytes after it. That is the shape a log entry already has, so an index block is
+// read the same way: a pair either verifies or it is not there.
+const PairSize = 20
+
+// pairBodySize is the two values a pair's checksum covers.
+const pairBodySize = 16
+
+var crcTable = crc32.MakeTable(crc32.Castagnoli)
+
+// AppendPair encodes pair onto dst and returns the result, the way append does.
+func AppendPair(dst []byte, pair domain.OffsetFilePtr) []byte {
+	var encoded [PairSize]byte
+	body := encoded[4:]
+	binary.LittleEndian.PutUint64(body[:8], uint64(pair.Offset))
+	binary.LittleEndian.PutUint64(body[8:], uint64(pair.ByteOffset))
+	binary.LittleEndian.PutUint32(encoded[:4], crc32.Checksum(body, crcTable))
+	return append(dst, encoded[:]...)
+}
+
+// decodePair reads one pair, reporting false when it is short or fails its checksum.
+func decodePair(src []byte) (domain.OffsetFilePtr, bool) {
+	if len(src) < PairSize {
+		return domain.OffsetFilePtr{}, false
+	}
+	body := src[4:PairSize]
+	if binary.LittleEndian.Uint32(src[:4]) != crc32.Checksum(body, crcTable) {
+		return domain.OffsetFilePtr{}, false
+	}
+	return domain.OffsetFilePtr{
+		Offset:     domain.Offset(binary.LittleEndian.Uint64(body[:8])),
+		ByteOffset: int64(binary.LittleEndian.Uint64(body[8:])),
+	}, true
+}
+
 type Index struct {
 	IndexOffsets []domain.OffsetFilePtr
 }
 
+// NewIndex parses the pairs an index block holds, stopping at the first one that is torn or
+// fails its checksum. What comes back is the longest good prefix, which is what the caller
+// keeps: the bytes after it are truncated away and rebuilt from the log, since the index
+// says nothing the log does not.
+//
+// A block written before pairs carried a checksum fails at its first pair and is rebuilt
+// whole, so the format change needs no migration.
 func NewIndex(bytes []byte) *Index {
-	batchSize := 16
 	index := Index{IndexOffsets: make([]domain.OffsetFilePtr, 0)}
-	for i := 0; i < len(bytes); i += batchSize {
-		end := i + batchSize
-		if end > len(bytes) {
-			return &index
+	for i := 0; i+PairSize <= len(bytes); i += PairSize {
+		pair, ok := decodePair(bytes[i : i+PairSize])
+		if !ok {
+			break
 		}
-		index.add(domain.OffsetFilePtr{
-			Offset:     domain.Offset(binary.LittleEndian.Uint64(bytes[i : end-8])),
-			ByteOffset: int64(binary.LittleEndian.Uint64(bytes[i+8 : end])),
-		})
+		index.add(pair)
 	}
 	return &index
 }

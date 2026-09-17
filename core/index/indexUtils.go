@@ -21,19 +21,22 @@ func CreateBinaryIndexFromLog(logBlock io.Reader, fromByteOffset int64, oneEntry
 	if oneEntryForEvery == 0 {
 		return nil, fromByteOffset, errore.Wrap(ErrInvalidSparsity)
 	}
-	var index []uint64
+	var pairs []byte
 	byteOffset := fromByteOffset
 	reader := bufio.NewReader(logBlock)
 	for {
 		entry, n, err := domain.ReadEntry(reader, domain.MaxEntrySize)
 		if err == io.EOF {
-			return domain.Uint64ArrayToBytes(index), byteOffset, nil
+			return pairs, byteOffset, nil
 		}
 		if err != nil {
 			return nil, byteOffset, errore.Wrap(err)
 		}
 		if entry.Offset%uint64(oneEntryForEvery) == 0 {
-			index = append(index, entry.Offset, uint64(byteOffset))
+			pairs = AppendPair(pairs, domain.OffsetFilePtr{
+				Offset:     domain.Offset(entry.Offset),
+				ByteOffset: byteOffset,
+			})
 		}
 		byteOffset = byteOffset + int64(n)
 	}

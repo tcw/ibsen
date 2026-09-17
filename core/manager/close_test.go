@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/core/domain"
+	"github.com/tcw/ibsen/core/index"
 )
 
 // gatedWriteFs holds every write to a file with the given suffix until release is closed,
@@ -124,13 +125,13 @@ func TestManager_closeWaitsForBackgroundIndexing(t *testing.T) {
 	close(fs.release)
 	waitForClose(t, closed)
 
-	// entries 0, 10 and 20 are indexed, as (offset, byteOffset) pairs of 16 bytes
+	// entries 0, 10 and 20 are indexed, as checksummed (offset, byteOffset) pairs
 	idx, err := afs.ReadFile("data/topic/00000000000000000000.idx")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(idx) != 3*16 {
-		t.Fatalf("index has %d bytes after Close, want %d", len(idx), 3*16)
+	if len(idx) != 3*index.PairSize {
+		t.Fatalf("index has %d bytes after Close, want %d", len(idx), 3*index.PairSize)
 	}
 	var entries = [][]byte{[]byte("late")}
 	if err := m.Write(domain.TopicName("topic"), &entries); !errors.Is(err, ErrClosed) {
