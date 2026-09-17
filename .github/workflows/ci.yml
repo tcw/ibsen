@@ -13,7 +13,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          # the go directive in go.mod is the single source of truth for the version
+          go-version-file: go.mod
           cache: true
 
       - name: gofmt

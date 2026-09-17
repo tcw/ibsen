@@ -81,8 +81,9 @@ func (igs *IbsenGrpcServer) StartGRPC(listener net.Listener) error {
 		grpc.ConnectionTimeout(time.Hour * 1),
 		grpc.MaxRecvMsgSize(math.MaxInt32),
 		grpc.MaxSendMsgSize(math.MaxInt32),
-		grpc.UnaryInterceptor(otelgrpc.UnaryServerInterceptor()),
-		grpc.StreamInterceptor(otelgrpc.StreamServerInterceptor()),
+		// otelgrpc replaced its unary and stream interceptors with one stats handler, which
+		// covers both kinds of call
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 	}
 	if igs.UseTLS {
 		creds, err := serverCredentials(igs.GRPCSecurity)
