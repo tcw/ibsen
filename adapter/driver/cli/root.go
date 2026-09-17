@@ -12,7 +12,6 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
-	"github.com/tcw/ibsen/adapter/driven/locking"
 	"github.com/tcw/ibsen/wiring"
 )
 
@@ -88,11 +87,8 @@ var (
 					log.Fatal().Msgf("data root path [%s] does not exist", rootDirectory)
 				}
 			}
-			writeLock := absolutePath + string(os.PathSeparator) + ".writeLock"
-			lock := locking.NewFileLock(afs, writeLock, time.Second*10, time.Second*5)
 			ibsenServer := wiring.IbsenServer{
 				Readonly:         readOnly,
-				Lock:             lock,
 				InMemory:         inMemory,
 				Afs:              afs,
 				RootPath:         absolutePath,

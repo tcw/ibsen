@@ -40,20 +40,11 @@ fi
 # 3. A driving adapter drives the core through its port; it must not reach a driven adapter
 #    directly, which would route around the hexagon.
 #
-#    Two edges are grandfathered in, each a piece of composition that ended up in the wrong
-#    place rather than a port being bypassed. Both should move into wiring/; until they do,
-#    they are named here so the rule stays enforced for everything else:
-#
-#      cli -> locking    the CLI builds the FileLock it injects into wiring.IbsenServer
-#      grpcapi -> telemetry  StartGRPC launches the OTEL exporter goroutine
-#
 #    Test-support packages are exempt: a test is its own composition root and wires the
 #    adapters it needs.
 crosswise=$(edges ./adapter/driver/... |
 	{ grep -E -- '-> github\.com/tcw/ibsen/adapter/driven' || true; } |
-	{ grep -v -E '^github\.com/tcw/ibsen/adapter/driver/[^ ]*/test ' || true; } |
-	{ grep -v -F 'adapter/driver/cli -> github.com/tcw/ibsen/adapter/driven/locking' || true; } |
-	{ grep -v -F 'adapter/driver/grpcapi -> github.com/tcw/ibsen/adapter/driven/telemetry' || true; })
+	{ grep -v -E '^github\.com/tcw/ibsen/adapter/driver/[^ ]*/test ' || true; })
 if [ -n "$crosswise" ]; then
 	fail "a driving adapter imports a driven adapter directly" "$crosswise"
 fi

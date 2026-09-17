@@ -12,7 +12,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -105,8 +104,7 @@ func TestSecureServer_loadsCertificateFromRelativePaths(t *testing.T) {
 	igs := NewSecureIbsenGrpcServer(&logManager, sec, time.Minute, time.Millisecond)
 	served := make(chan error, 1)
 	go func() {
-		var wg sync.WaitGroup
-		served <- igs.StartGRPC(lis, &wg, "")
+		served <- igs.StartGRPC(lis)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

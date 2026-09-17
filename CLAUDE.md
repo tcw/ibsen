@@ -23,10 +23,8 @@ inward:
 2. No package under `core/` may import `adapter/` or `wiring/`. A port that names one of its
    adapters is a port nothing else can implement.
 3. No driving adapter may import a driven adapter directly, which would route around the
-   hexagon. Test-support packages are exempt, since a test composes its own adapters. Two
-   edges are grandfathered in and named in the script: `cli` builds the `FileLock` it injects
-   into `wiring.IbsenServer`, and `grpcapi.StartGRPC` launches the OTEL exporter goroutine.
-   Both are composition that ended up in the wrong place; both should move into `wiring/`.
+   hexagon. Test-support packages are exempt, since a test composes its own adapters. There
+   are no other exceptions.
 
 Everything below hangs off that rule: the bugs are the core earning trust, the ports are the discipline, compression/dictionaries/fencing/embedded builds are adapters and build-time choices behind it, and the migration is how we get there without breaking what works.
 
@@ -80,6 +78,7 @@ errore/ utils/              stdlib-only, shared by both sides
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
 - `go vet ./...` is clean; keep it that way.
 - CI (`.github/workflows/ci.yml`) runs gofmt, `go vet`, `scripts/check-architecture.sh` and `go test -race ./...` on every push.
+- Composition: `wiring.IbsenServer` builds every adapter. `Lock` is an optional injection point — `defaults()` builds a `FileLock` at `<root>/.writeLock` when none is given, which `wiring/lock_test.go` pins — and the OTEL exporter's lifetime is held by `Start`, not by `grpcapi.StartGRPC`.
 - Logging port: `adapter/driven/logging/zerologger` has its own tests (level mapping, every field kind, `Enabled` agreeing with what is emitted, nil error dropped); `core/topic/logging_test.go` proves the core reaches its logger only through the port.
 
 ## 1. Correctness bugs
@@ -174,18 +173,16 @@ the core is pure.
 4. ~~Add durability and crash tests inside the FS adapter.~~
 5. ~~Add exotic embedded adapters last, validated by the shared suite.~~
 
-Every step ships green. Steps 0 to 7 are done, one commit each.
+Every step ships green. Steps 0 to 8 are done, one commit each.
 
 6. ~~Restructure the tree into `core/` + `adapter/{driver,driven}` + `wiring/`, so the layout
    states the architecture instead of only the dependency graph implying it.~~
 
 7. ~~Define the logging port and take `zerolog` out of the core.~~
+8. ~~Move the lock and OTEL exporter construction into `wiring/`, so no driving adapter
+   reaches a driven one.~~
 
 Next, in the same one-change-at-a-time way: the durability
 flush policy (§2), the index work (§3), and then compression (§5) and the embedded
 wiring files (§8). The flash adapter is the proof the port is narrow enough; the
 embedded build still has to be wired and its dependency graph checked.
-
-Known architecture debt, both grandfathered into rule 3 above: the CLI constructs the
-`FileLock` rather than letting `wiring/` do it, and `grpcapi.StartGRPC` starts the OTEL
-exporter. Moving both into `wiring/` would let those exceptions be deleted.

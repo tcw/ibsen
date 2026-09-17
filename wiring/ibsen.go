@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"sync"
@@ -14,7 +15,9 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	"github.com/tcw/ibsen/adapter/driven/locking"
 	"github.com/tcw/ibsen/adapter/driven/logging/zerologger"
+	"github.com/tcw/ibsen/adapter/driven/telemetry"
 	"github.com/tcw/ibsen/adapter/driver/grpcapi"
 	"github.com/tcw/ibsen/core/manager"
 	"github.com/tcw/ibsen/core/port/driven"
@@ -37,7 +40,8 @@ var ibsenFiglet = `
 `
 
 type IbsenServer struct {
-	Readonly         bool
+	Readonly bool
+	// Lock is optional: Start builds a file lease over RootPath when none is injected.
 	Lock             driven.SingleIbsenWriterLock
 	InMemory         bool
 	Afs              *afero.Afero
@@ -58,7 +62,27 @@ type IbsenServer struct {
 	stopped       chan struct{} // closed when the shutdown has finished
 }
 
+// The single-writer lease lives in the data directory. These are the values the server has
+// always used; they belong here rather than in the CLI, because picking the adapter behind a
+// port is the composition root's job.
+const (
+	writeLockFileName = ".writeLock"
+	writeLockLease    = 10 * time.Second
+	writeLockReclaim  = 5 * time.Second
+)
+
+// defaults fills in the adapters the caller did not inject. It runs before Start begins
+// anything that reads them, so the signal handler never races the assignment. A test injects
+// its own Lock and keeps it.
+func (ibs *IbsenServer) defaults() {
+	if ibs.Lock == nil {
+		ibs.Lock = locking.NewFileLock(ibs.Afs,
+			filepath.Join(ibs.RootPath, writeLockFileName), writeLockLease, writeLockReclaim)
+	}
+}
+
 func (ibs *IbsenServer) Start(listener net.Listener) error {
+	ibs.defaults()
 	ibs.stopping = make(chan struct{})
 	ibs.stopped = make(chan struct{})
 	go ibs.initSignals()
@@ -138,10 +162,16 @@ func (ibs *IbsenServer) startGRPCServer(lis net.Listener, manager driver.LogMana
 	}
 	log.Info().Msg(fmt.Sprintf("Started ibsen server on: [%s]", lis.Addr().String()))
 	fmt.Print(ibsenFiglet)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	err := ibsenGrpcServer.StartGRPC(lis, &wg, ibs.OTELExporterAddr)
-	wg.Done()
+	// The exporter keeps its provider alive until the server stops serving, which is what
+	// serving signals. Starting it is the composition root's job: the gRPC adapter should
+	// not know that telemetry exists.
+	var serving sync.WaitGroup
+	serving.Add(1)
+	if ibs.OTELExporterAddr != "" {
+		go telemetry.ConnectToOTELExporter(&serving, ibs.OTELExporterAddr)
+	}
+	err := ibsenGrpcServer.StartGRPC(lis)
+	serving.Done()
 	if err != nil {
 		return errore.Wrap(err)
 	}
@@ -212,7 +242,7 @@ func (ibs *IbsenServer) shutdown() {
 		topicsManager.Close()
 	}
 
-	if !ibs.InMemory {
+	if !ibs.InMemory && ibs.Lock != nil {
 		isReleased := ibs.Lock.ReleaseLock()
 		if isReleased {
 			log.Info().Msg(fmt.Sprintf("single writer lock [%s] was released!\n", ibs.RootPath))
