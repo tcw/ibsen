@@ -1,10 +1,11 @@
 package main
 
 import (
+	"os"
+
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/tcw/ibsen/cmd"
-	"os"
+	"github.com/tcw/ibsen/adapter/driver/cli"
 )
 
 func main() {
@@ -20,5 +21,5 @@ func main() {
 	consoleWriter := zerolog.ConsoleWriter{Out: os.Stderr}
 	multi := zerolog.MultiLevelWriter(consoleWriter)
 	log.Logger = zerolog.New(multi).With().Timestamp().Logger()
-	cmd.Execute()
+	cli.Execute()
 }
