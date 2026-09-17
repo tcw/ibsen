@@ -32,8 +32,9 @@ var ErrTopicClosed = errors.New("topic is closed")
 // write; sparser ones the other way round.
 const DefaultIndexSparsity uint32 = 10
 
-// indexPairSize is the bytes one (offset, byteOffset) pair takes in an index block.
-const indexPairSize = 16
+// indexPairSize is the bytes one pair takes in an index block. The index package owns the
+// encoding; this is here so the truncation arithmetic reads in terms of pairs.
+const indexPairSize = index.PairSize
 
 type Topic struct {
 	mu            sync.RWMutex
