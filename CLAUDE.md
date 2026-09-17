@@ -174,17 +174,17 @@ the core is pure.
 3. ~~Add the in-memory adapter to prove the port's shape.~~
 4. ~~Add durability and crash tests inside the FS adapter.~~
 5. ~~Add exotic embedded adapters last, validated by the shared suite.~~
-
-Every step ships green. Steps 0 to 8 are done, one commit each.
-
 6. ~~Restructure the tree into `core/` + `adapter/{driver,driven}` + `wiring/`, so the layout
    states the architecture instead of only the dependency graph implying it.~~
-
 7. ~~Define the logging port and take `zerolog` out of the core.~~
 8. ~~Move the lock and OTEL exporter construction into `wiring/`, so no driving adapter
    reaches a driven one.~~
+9. ~~Return a refused write lock from `Start` instead of exiting the process.~~
+10. ~~Guard what `Start` builds against a shutdown on another goroutine.~~
 
-Next, in the same one-change-at-a-time way: the durability
-flush policy (§2), the index work (§3), and then compression (§5) and the embedded
-wiring files (§8). The flash adapter is the proof the port is narrow enough; the
-embedded build still has to be wired and its dependency graph checked.
+Every step ships green. Steps 0 to 10 are done, one commit each.
+
+Next, in the same one-change-at-a-time way: the durability flush policy (§2), the index work
+(§3), and then compression (§5) and the embedded wiring files (§8). The flash adapter is the
+proof the port is narrow enough; the embedded build still has to be wired and its dependency
+graph checked.
