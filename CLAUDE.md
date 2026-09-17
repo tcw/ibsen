@@ -4,8 +4,9 @@
 
 **Keep the core pure. It imports only the standard library, limited to the subset TinyGo supports (no `os`, `net`, or global logger), and speaks only in domain types. Storage, durability, compression, replication, transport, logging, and telemetry are all adapters behind ports, chosen at wiring time in `wiring/`. That one rule is what lets the same log core run on a microcontroller or in a replicated Kubernetes cluster without changing a line of it.**
 
-Must print nothing. All of `core/` is pure, so the whole hexagon is covered by one pattern;
-the three stdlib-only adapters are named beside it:
+Enforced by `scripts/check-architecture.sh`, which CI runs on every push. Its first rule is
+this command; it must print nothing. All of `core/` is pure, so the whole hexagon is covered
+by one pattern, with the three stdlib-only adapters named beside it:
 
 ```sh
 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
@@ -15,6 +16,17 @@ go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
 ```
 
 (`errore` and `utils` are stdlib-only and reachable from the pure packages, which is why only `github.com/tcw/ibsen` paths are filtered; anything impure they reached would still show up, since `-deps` is transitive.)
+
+The script checks two more rules, because purity alone does not make the dependencies point
+inward:
+
+2. No package under `core/` may import `adapter/` or `wiring/`. A port that names one of its
+   adapters is a port nothing else can implement.
+3. No driving adapter may import a driven adapter directly, which would route around the
+   hexagon. Test-support packages are exempt, since a test composes its own adapters. Two
+   edges are grandfathered in and named in the script: `cli` builds the `FileLock` it injects
+   into `wiring.IbsenServer`, and `grpcapi.StartGRPC` launches the OTEL exporter goroutine.
+   Both are composition that ended up in the wrong place; both should move into `wiring/`.
 
 Everything below hangs off that rule: the bugs are the core earning trust, the ports are the discipline, compression/dictionaries/fencing/embedded builds are adapters and build-time choices behind it, and the migration is how we get there without breaking what works.
 
@@ -67,6 +79,7 @@ errore/ utils/              stdlib-only, shared by both sides
 - Crash and torn-write fault injection: `adapter/driven/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `adapter/driven/blockstore/aferostore/crash_test.go` and `core/topic/topicAccess_crash_test.go`, on an in-memory filesystem and on a real directory.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
 - `go vet ./...` is clean; keep it that way.
+- CI (`.github/workflows/ci.yml`) runs gofmt, `go vet`, `scripts/check-architecture.sh` and `go test -race ./...` on every push.
 - Logging port: `adapter/driven/logging/zerologger` has its own tests (level mapping, every field kind, `Enabled` agreeing with what is emitted, nil error dropped); `core/topic/logging_test.go` proves the core reaches its logger only through the port.
 
 ## 1. Correctness bugs
@@ -171,5 +184,8 @@ Every step ships green. Steps 0 to 7 are done, one commit each.
 Next, in the same one-change-at-a-time way: the durability
 flush policy (§2), the index work (§3), and then compression (§5) and the embedded
 wiring files (§8). The flash adapter is the proof the port is narrow enough; the
-embedded build still has to be wired and its dependency graph checked. The purity
-check is still not enforced anywhere: there is no CI config in the repo.
+embedded build still has to be wired and its dependency graph checked.
+
+Known architecture debt, both grandfathered into rule 3 above: the CLI constructs the
+`FileLock` rather than letting `wiring/` do it, and `grpcapi.StartGRPC` starts the OTEL
+exporter. Moving both into `wiring/` would let those exceptions be deleted.
