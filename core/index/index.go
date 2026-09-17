@@ -3,6 +3,7 @@ package index
 import (
 	"encoding/binary"
 	"fmt"
+	"sort"
 
 	"github.com/tcw/ibsen/core/domain"
 )
@@ -50,15 +51,22 @@ func (idx *Index) ToString() string {
 	return indexToString
 }
 
-// Todo: this is linear search, should use range tree for large indices
+// FindNearestByteOffset returns the last pair at or before offset, which is where a read
+// starts scanning for it. A zero pair means the index holds nothing at or before offset, so
+// the scan starts at the beginning of the block.
+//
+// The pairs are appended in the order the log was scanned, so they are sorted by offset and
+// the answer is one before the first pair past offset. A block holds at most
+// MaxBlockSize/indexSparsity pairs, so this is a binary search over a sorted slice rather
+// than the scan back from the end it replaced.
 func (idx *Index) FindNearestByteOffset(offset domain.Offset) domain.OffsetFilePtr {
-	for i := len(idx.IndexOffsets) - 1; i >= 0; i-- {
-		if offset >= idx.IndexOffsets[i].Offset {
-			byteOffset := idx.IndexOffsets[i]
-			return byteOffset
-		}
+	past := sort.Search(len(idx.IndexOffsets), func(i int) bool {
+		return idx.IndexOffsets[i].Offset > offset
+	})
+	if past == 0 {
+		return domain.OffsetFilePtr{}
 	}
-	return domain.OffsetFilePtr{}
+	return idx.IndexOffsets[past-1]
 }
 
 func (idx *Index) add(pair domain.OffsetFilePtr) {

@@ -114,9 +114,10 @@ fsync-on-flush policy: flush after N entries or a time interval. Only acknowledg
 
 ## 3. Index
 
-- Binary search over the already-sorted offsets instead of the linear scan (`core/index/index.go:53`).
+- ~~Binary search over the already-sorted offsets instead of the linear scan.~~ `Index.FindNearestByteOffset` is a `sort.Search` for the first pair past the offset, returning the one before it. The pairs are appended in scan order, so they are already sorted; a zero pair still means "nothing at or before this, scan from the start of the block", which is reachable for a block that does not begin on a multiple of the sparsity. `core/index/find_test.go` holds the scan it replaced and asserts the two agree for every query across seven index shapes.
 - Make sparsity configurable (hardcoded `10` in `Topic.indexBlock`).
 - Checksum index files.
+- Dead code: `Index.addAll` and `Index.addIndex` are unexported with no callers.
 
 ## 4. Architecture: hexagonal refactor
 
@@ -182,10 +183,12 @@ the core is pure.
    reaches a driven one.~~
 9. ~~Return a refused write lock from `Start` instead of exiting the process.~~
 10. ~~Guard what `Start` builds against a shutdown on another goroutine.~~
+11. ~~Update every dependency, build with go 1.26.4, and move off the deprecated gRPC dialling.~~
+12. ~~Binary search in the index instead of the scan back from the end.~~
 
-Every step ships green. Steps 0 to 10 are done, one commit each.
+Every step ships green. Steps 0 to 12 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: the durability flush policy (§2), the index work
-(§3), and then compression (§5) and the embedded wiring files (§8). The flash adapter is the
+Next, in the same one-change-at-a-time way: the durability flush policy (§2), the rest of the
+index work (§3), and then compression (§5) and the embedded wiring files (§8). The flash adapter is the
 proof the port is narrow enough; the embedded build still has to be wired and its dependency
 graph checked.
