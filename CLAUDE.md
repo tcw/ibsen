@@ -115,7 +115,7 @@ fsync-on-flush policy: flush after N entries or a time interval. Only acknowledg
 ## 3. Index
 
 - ~~Binary search over the already-sorted offsets instead of the linear scan.~~ `Index.FindNearestByteOffset` is a `sort.Search` for the first pair past the offset, returning the one before it. The pairs are appended in scan order, so they are already sorted; a zero pair still means "nothing at or before this, scan from the start of the block", which is reachable for a block that does not begin on a multiple of the sparsity. `core/index/find_test.go` holds the scan it replaced and asserts the two agree for every query across seven index shapes.
-- Make sparsity configurable (hardcoded `10` in `Topic.indexBlock`).
+- ~~Make sparsity configurable.~~ `topic.Params.IndexSparsity` (0 means `topic.DefaultIndexSparsity`, 10), threaded through `manager.LogTopicManagerParams` and `wiring.IbsenServer` to the CLI's `--indexSparsity`/`-i` and `IBSEN_INDEX_SPARSITY`. It is per-topic state, copied by `snapshot()`. Changing it between runs is safe and tested: the pairs already written stay valid and sorted, and the block ends up indexed at two densities. `index.CreateBinaryIndexFromLog` returns `index.ErrInvalidSparsity` for 0 rather than reaching `offset % 0`, which panics.
 - Checksum index files.
 - Dead code: `Index.addAll` and `Index.addIndex` are unexported with no callers.
 
@@ -185,8 +185,9 @@ the core is pure.
 10. ~~Guard what `Start` builds against a shutdown on another goroutine.~~
 11. ~~Update every dependency, build with go 1.26.4, and move off the deprecated gRPC dialling.~~
 12. ~~Binary search in the index instead of the scan back from the end.~~
+13. ~~Make the index sparsity configurable instead of a constant.~~
 
-Every step ships green. Steps 0 to 12 are done, one commit each.
+Every step ships green. Steps 0 to 13 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: the durability flush policy (§2), the rest of the
 index work (§3), and then compression (§5) and the embedded wiring files (§8). The flash adapter is the

@@ -20,6 +20,9 @@ type LogTopicManagerParams struct {
 	TTL              time.Duration
 	CheckForNewEvery time.Duration
 	MaxBlockSize     int
+	// IndexSparsity is the number of entries between two index pairs; zero means
+	// topic.DefaultIndexSparsity.
+	IndexSparsity uint32
 	// Logger is optional: a core built without one logs nothing rather than crashing.
 	Logger driven.Logger
 }
@@ -190,10 +193,11 @@ func (l *LogTopicsManager) getOrCreateTopic(name domain.TopicName) (*topic.Topic
 // keep working.
 func (l *LogTopicsManager) loadOrCreateNewTopic(topicName domain.TopicName) (*topic.Topic, error) {
 	loaded := topic.NewLogTopic(topic.Params{
-		Logger:       l.Params.Logger,
-		Store:        l.Params.Store,
-		TopicName:    string(topicName),
-		MaxBlockSize: l.Params.MaxBlockSize,
+		Logger:        l.Params.Logger,
+		IndexSparsity: l.Params.IndexSparsity,
+		Store:         l.Params.Store,
+		TopicName:     string(topicName),
+		MaxBlockSize:  l.Params.MaxBlockSize,
 	})
 	if err := loaded.LoadOrCreate(); err != nil {
 		return nil, errore.WrapWithContextF(err, "unable to load topic %s", topicName)

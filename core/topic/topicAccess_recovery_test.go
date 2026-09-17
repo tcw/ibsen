@@ -173,7 +173,7 @@ func assertIndexMatchesFullScan(t *testing.T, topic *Topic) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, _, err := index.CreateBinaryIndexFromLog(logBlock, 0, indexSparsity)
+		want, _, err := index.CreateBinaryIndexFromLog(logBlock, 0, topic.IndexSparsity)
 		logBlock.Close()
 		if err != nil {
 			t.Fatal(err)
