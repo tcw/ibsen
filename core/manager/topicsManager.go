@@ -23,6 +23,12 @@ type LogTopicManagerParams struct {
 	// IndexSparsity is the number of entries between two index pairs; zero means
 	// topic.DefaultIndexSparsity.
 	IndexSparsity uint32
+	// FlushEntries is how many entries may wait before a flush is forced; zero means
+	// topic.DefaultFlushEntries, which flushes every write before acknowledging it.
+	FlushEntries uint32
+	// FlushInterval is how long a batch may be held back hoping for more entries; zero
+	// never holds one back.
+	FlushInterval time.Duration
 	// Logger is optional: a core built without one logs nothing rather than crashing.
 	Logger driven.Logger
 }
@@ -195,6 +201,8 @@ func (l *LogTopicsManager) loadOrCreateNewTopic(topicName domain.TopicName) (*to
 	loaded := topic.NewLogTopic(topic.Params{
 		Logger:        l.Params.Logger,
 		IndexSparsity: l.Params.IndexSparsity,
+		FlushEntries:  l.Params.FlushEntries,
+		FlushInterval: l.Params.FlushInterval,
 		Store:         l.Params.Store,
 		TopicName:     string(topicName),
 		MaxBlockSize:  l.Params.MaxBlockSize,

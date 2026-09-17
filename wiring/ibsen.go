@@ -50,7 +50,12 @@ type IbsenServer struct {
 	MaxBlockSize int
 	// IndexSparsity is the number of entries between two index pairs; zero means
 	// topic.DefaultIndexSparsity.
-	IndexSparsity    uint32
+	IndexSparsity uint32
+	// FlushEntries and FlushInterval are the durability policy: how many entries may wait
+	// for a flush, and how long a batch may be held back hoping for more. Zero entries means
+	// topic.DefaultFlushEntries, which makes every write durable before it is acknowledged.
+	FlushEntries     uint32
+	FlushInterval    time.Duration
 	OTELExporterAddr string
 	GRPCPrivateKey   string
 	GRPCCertKey      string
@@ -153,6 +158,8 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		CheckForNewEvery: time.Second * 2,
 		MaxBlockSize:     ibs.MaxBlockSize,
 		IndexSparsity:    ibs.IndexSparsity,
+		FlushEntries:     ibs.FlushEntries,
+		FlushInterval:    ibs.FlushInterval,
 		Logger:           zerologger.New(log.Logger),
 	})
 	if err != nil {
