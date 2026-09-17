@@ -82,6 +82,7 @@ errore/ utils/              stdlib-only, shared by both sides
 - `Start` and `shutdown` can run on different goroutines, so what `Start` builds is guarded: `IbsenServer.mu` covers `topicsManager`, `grpcServer` and the lifecycle channels (`lifecycle()` makes the pair once), and `grpcapi.IbsenGrpcServer` guards its `*grpc.Server` behind `Stop`/`GracefulStop`, which are safe before `StartGRPC` has created it and record the request so it is honoured.
 - `Start` returns its failures instead of exiting: a refused single-writer lock is `wiring.ErrWriteLockUnavailable`, matchable with `errors.Is`, so a program embedding the log decides what to do. The CLI reports it and exits.
 - Composition: `wiring.IbsenServer` builds every adapter. `Lock` is an optional injection point — `defaults()` builds a `FileLock` at `<root>/.writeLock` when none is given, which `wiring/lock_test.go` pins — and the OTEL exporter's lifetime is held by `Start`, not by `grpcapi.StartGRPC`.
+- Durability: `core/topic/flush_test.go` drives a `Syncable` store whose `Sync` the test gates, and covers the guarantee itself (a reader sees nothing until the flush returns, and `Write` does not return either), a failed flush being reported and leaving nothing readable, those entries appearing once a later flush succeeds, concurrent writers sharing one sync, the interval releasing a writer that never reaches the threshold, a non-syncable store never waiting, and a reloaded topic counting its recovered block as durable.
 - Logging port: `adapter/driven/logging/zerologger` has its own tests (level mapping, every field kind, `Enabled` agreeing with what is emitted, nil error dropped); `core/topic/logging_test.go` proves the core reaches its logger only through the port.
 
 ## 1. Correctness bugs
@@ -110,7 +111,34 @@ Known, not yet fixed: none.
 
 ## 2. Durability
 
-fsync-on-flush policy: flush after N entries or a time interval. Only acknowledge a write and advance the visible offset once its flush completes, so readers never see unflushed data. (Today `NextOffset` advances right after `file.Write`, with no sync.)
+Done. A write is acknowledged, and its offsets become readable, only once the flush covering
+them has returned, so a reader never sees an entry a power cut could take back.
+
+- `NextOffset` is still the next offset to assign. The read boundary is now the *durable*
+  offset, which trails it by whatever is appended but not yet flushed:
+  `endBoundaryForReadOffset` returns that, and `snapshot()` carries the flusher so a read is
+  bounded by it.
+- Policy: `Params.FlushEntries` (how many entries may wait; 0 means `DefaultFlushEntries`,
+  which is 1, so every write is flushed before it is acknowledged) and `Params.FlushInterval`
+  (how long a batch may be held back hoping for more; 0 never holds one back). Threaded
+  through the manager params and `wiring.IbsenServer` to `--flushEntries`/`-f`,
+  `--flushIntervalMs`, `IBSEN_FLUSH_ENTRIES` and `IBSEN_FLUSH_INTERVAL_MS`.
+- **No background goroutine.** The writer that needs its entries durable drives the flush;
+  writers whose entries joined the same batch wait on it. The core starts no timers it does
+  not own and no goroutine outlives a topic. Once driving, a driver takes each batch as it
+  finds it rather than re-applying the policy: the next batch formed while the previous one
+  was syncing, so it has already waited.
+- A store that is not `Syncable` has nothing to push, so its entries are durable when
+  `Append` returns and none of the waiting applies. That is why `memstore` and `flashstore`
+  pay nothing for this.
+- A failed flush is returned to every writer waiting on it, leaves the durable offset where
+  it was, and puts its blocks back into the next batch. The entries are written but their
+  durability is unknown, so nothing may read them as committed; a later flush covers them and
+  then they appear. A failure does not retry inside the same driver, which would spin.
+  `Topic.Close` makes one last attempt at whatever a failed flush left behind.
+- **Index blocks are deliberately not flushed.** The index is derivable from the log, and
+  recovery already drops torn pairs and re-indexes, so paying an fsync for it would buy
+  nothing.
 
 ## 3. Index
 
@@ -186,10 +214,11 @@ the core is pure.
 11. ~~Update every dependency, build with go 1.26.4, and move off the deprecated gRPC dialling.~~
 12. ~~Binary search in the index instead of the scan back from the end.~~
 13. ~~Make the index sparsity configurable instead of a constant.~~
+14. ~~Acknowledge a write only once it is on durable media (§2).~~
 
-Every step ships green. Steps 0 to 13 are done, one commit each.
+Every step ships green. Steps 0 to 14 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: the durability flush policy (§2), the rest of the
+Next, in the same one-change-at-a-time way: the rest of the
 index work (§3), and then compression (§5) and the embedded wiring files (§8). The flash adapter is the
 proof the port is narrow enough; the embedded build still has to be wired and its dependency
 graph checked.

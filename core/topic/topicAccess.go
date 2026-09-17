@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/index"
@@ -35,14 +36,16 @@ const DefaultIndexSparsity uint32 = 10
 const indexPairSize = 16
 
 type Topic struct {
-	mu             sync.RWMutex
-	Store          driven.BlockStore
-	Log            driven.Logger
-	TopicName      string
-	indexMutex     int32
-	indexWg        *sync.WaitGroup
-	MaxBlockSize   int
-	IndexSparsity  uint32
+	mu            sync.RWMutex
+	Store         driven.BlockStore
+	Log           driven.Logger
+	TopicName     string
+	indexMutex    int32
+	indexWg       *sync.WaitGroup
+	MaxBlockSize  int
+	IndexSparsity uint32
+	// flush decides when appended entries are durable, and is what a read is bounded by
+	flush          *flusher
 	NextOffset     domain.Offset
 	HeadBlockSize  int
 	LogBlockList   []domain.LogBlock
@@ -65,6 +68,12 @@ type Params struct {
 	// DefaultIndexSparsity. Changing it between runs is safe: the pairs already written stay
 	// valid and sorted, and the block simply ends up indexed at two densities.
 	IndexSparsity uint32
+	// FlushEntries is how many entries may wait before a flush is forced. Zero means
+	// DefaultFlushEntries, which is 1: every write is durable before it is acknowledged.
+	FlushEntries uint32
+	// FlushInterval is how long a batch may be held back hoping for more entries. Zero
+	// never holds one back. A store that cannot sync ignores both.
+	FlushInterval time.Duration
 	// Logger is optional: a core built without one logs nothing rather than crashing.
 	Logger driven.Logger
 }
@@ -82,6 +91,7 @@ func NewLogTopic(params Params) *Topic {
 		Store:          params.Store,
 		Log:            logger,
 		IndexSparsity:  sparsity,
+		flush:          newFlusher(params.Store, params.FlushEntries, params.FlushInterval),
 		TopicName:      params.TopicName,
 		indexWg:        &sync.WaitGroup{},
 		NextOffset:     0,
@@ -204,6 +214,7 @@ func (t *Topic) LoadOrCreate() error {
 			driven.Int64("truncatedBytes", truncated))
 	}
 	t.NextOffset = nextOffset
+	t.flush.reset(nextOffset)
 	t.HeadBlockSize = int(validSize)
 	t.writeFailure = nil
 
@@ -253,6 +264,7 @@ func (t *Topic) snapshot() *Topic {
 		TopicName:      t.TopicName,
 		MaxBlockSize:   t.MaxBlockSize,
 		IndexSparsity:  t.IndexSparsity,
+		flush:          t.flush,
 		NextOffset:     t.NextOffset,
 		HeadBlockSize:  t.HeadBlockSize,
 		LogBlockList:   append([]domain.LogBlock(nil), t.LogBlockList...),
@@ -323,17 +335,31 @@ func (t *Topic) sendBlock(ref driven.BlockRef, byteOffset int64, from domain.Off
 	return err
 }
 
+// Write appends entries and returns once they are on durable media. The offsets it wrote
+// only become readable at that point, so an acknowledged write and a readable write are the
+// same thing.
 func (t *Topic) Write(entries domain.EntriesPtr) error {
 	if err := domain.ValidateTopicName(t.topic()); err != nil {
 		return err
 	}
+	pending, err := t.append(entries)
+	if err != nil {
+		return err
+	}
+	// waiting happens outside t.mu: a sync can be slow, and readers take that lock
+	return t.flush.wait(pending)
+}
+
+// append writes entries into the head block and returns the flush that will make them
+// durable, or nil when the store has nothing to flush.
+func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.writeFailure != nil {
-		return errore.Wrap(t.writeFailure)
+		return nil, errore.Wrap(t.writeFailure)
 	}
 	if t.closed {
-		return ErrTopicClosed
+		return nil, ErrTopicClosed
 	}
 
 	// if topic is empty create the first log block
@@ -349,7 +375,7 @@ func (t *Topic) Write(entries domain.EntriesPtr) error {
 	bytes, offsets := t.buildBinaryEntryRepresentation(entries)
 	head, hasBlockHead := t.logBlockHead()
 	if !hasBlockHead {
-		return errors.New("Topic " + t.TopicName + " has no block head")
+		return nil, errors.New("Topic " + t.TopicName + " has no block head")
 	}
 
 	block, err := t.Store.Append(t.logRef(head), bytes)
@@ -359,12 +385,13 @@ func (t *Topic) Write(entries domain.EntriesPtr) error {
 		if errors.Is(err, driven.ErrDirtyBlock) {
 			t.writeFailure = err
 		}
-		return errore.Wrap(err)
+		return nil, errore.Wrap(err)
 	}
 
 	// update internal log state
 	t.incrementOffset(offsets)
 	t.HeadBlockSize = int(block.Size)
+	pending := t.flush.appended(t.logRef(head), t.NextOffset, offsets)
 
 	// update index async if no index is running; Close waits for it. The Add happens under
 	// t.mu before closed is set, so it never races with the Wait in Close.
@@ -378,7 +405,7 @@ func (t *Topic) Write(entries domain.EntriesPtr) error {
 		}
 		t.Log.Log(driven.LevelTrace, "index update executed", driven.Bool("executed", wasExecuted))
 	}()
-	return nil
+	return pending, nil
 }
 
 // Close refuses further writes and waits for the background indexing started by earlier
@@ -388,6 +415,9 @@ func (t *Topic) Close() {
 	t.closed = true
 	t.mu.Unlock()
 	t.indexWg.Wait()
+	// every writer waits for its own batch, so the only entries left unflushed are those a
+	// failed flush put back; try once more before the topic goes away
+	t.flush.flushRemaining()
 }
 
 func (t *Topic) debugLogLoadResult(logBlocks []driven.Block, indexBlocks []driven.Block) {
@@ -478,11 +508,24 @@ func (t *Topic) buildBinaryEntryRepresentation(entries domain.EntriesPtr) ([]byt
 	return bytes, entriesWritten
 }
 
+// endBoundaryForReadOffset is where a read stops: the newest entry known to be on durable
+// media, which trails NextOffset by whatever has been appended but not yet flushed. Readers
+// never see an entry a power cut could take back.
 func (t *Topic) endBoundaryForReadOffset() (domain.Offset, bool) {
-	if t.NextOffset == 0 {
+	durable := t.durableOffset()
+	if durable == 0 {
 		return 0, false
 	}
-	return t.NextOffset, true
+	return durable, true
+}
+
+// durableOffset is the offset after the newest durable entry. A topic built without a
+// flusher has nothing buffered, so everything written counts as durable.
+func (t *Topic) durableOffset() domain.Offset {
+	if t.flush == nil {
+		return t.NextOffset
+	}
+	return t.flush.durableOffset()
 }
 
 func (t *Topic) indexBlock(block domain.LogBlock, byteOffset int64) (domain.LogBlockPosition, error) {
