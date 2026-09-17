@@ -7,7 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/index"
 	"github.com/tcw/ibsen/core/logfmt"
@@ -36,6 +35,7 @@ const indexPairSize = 16
 type Topic struct {
 	mu             sync.RWMutex
 	Store          driven.BlockStore
+	Log            driven.Logger
 	TopicName      string
 	indexMutex     int32
 	indexWg        *sync.WaitGroup
@@ -58,11 +58,18 @@ type Params struct {
 	Store        driven.BlockStore
 	TopicName    string
 	MaxBlockSize int
+	// Logger is optional: a core built without one logs nothing rather than crashing.
+	Logger driven.Logger
 }
 
 func NewLogTopic(params Params) *Topic {
+	logger := params.Logger
+	if logger == nil {
+		logger = driven.NopLogger{}
+	}
 	return &Topic{
 		Store:          params.Store,
+		Log:            logger,
 		TopicName:      params.TopicName,
 		indexWg:        &sync.WaitGroup{},
 		NextOffset:     0,
@@ -91,7 +98,7 @@ func (t *Topic) UpdateIndex() (bool, error) {
 
 	// Check if an index is currently running
 	if !atomic.CompareAndSwapInt32(&t.indexMutex, 0, 1) {
-		log.Debug().Msg("competing indices")
+		t.Log.Log(driven.LevelDebug, "competing indices")
 		return false, nil
 	}
 	defer atomic.CompareAndSwapInt32(&t.indexMutex, 1, 0)
@@ -114,7 +121,7 @@ func (t *Topic) UpdateIndex() (bool, error) {
 			if err != nil {
 				return true, errore.Wrap(err)
 			}
-			debugLogIndexing(t.TopicName, pos.Block, true, "first block")
+			t.debugLogIndexing(pos.Block, true, "first block")
 			t.addNewIndexBlock(block)
 			t.IndexPosition = &pos
 			continue
@@ -126,13 +133,13 @@ func (t *Topic) UpdateIndex() (bool, error) {
 			if err != nil {
 				return true, errore.Wrap(err)
 			}
-			debugLogIndexing(t.TopicName, pos.Block, pos.ByteOffset == position.ByteOffset, "existing block")
+			t.debugLogIndexing(pos.Block, pos.ByteOffset == position.ByteOffset, "existing block")
 			t.IndexPosition = &pos
 			continue
 		}
 		// indexing a new block after start block
 		pos, err := t.indexBlock(block, 0)
-		debugLogIndexing(t.TopicName, pos.Block, true, "new block")
+		t.debugLogIndexing(pos.Block, true, "new block")
 		if err != nil {
 			return true, errore.Wrap(err)
 		}
@@ -179,11 +186,10 @@ func (t *Topic) LoadOrCreate() error {
 		return errore.Wrap(err)
 	}
 	if truncated > 0 {
-		log.Warn().
-			Str("topic", t.TopicName).
-			Uint64("logBlock", head.Block).
-			Int64("truncatedBytes", truncated).
-			Msg("truncated torn tail of log block")
+		t.Log.Log(driven.LevelWarn, "truncated torn tail of log block",
+			driven.Str("topic", t.TopicName),
+			driven.Uint64("logBlock", head.Block),
+			driven.Int64("truncatedBytes", truncated))
 	}
 	t.NextOffset = nextOffset
 	t.HeadBlockSize = int(validSize)
@@ -231,6 +237,7 @@ func (t *Topic) snapshot() *Topic {
 	defer t.mu.RUnlock()
 	return &Topic{
 		Store:          t.Store,
+		Log:            t.Log,
 		TopicName:      t.TopicName,
 		MaxBlockSize:   t.MaxBlockSize,
 		NextOffset:     t.NextOffset,
@@ -299,7 +306,7 @@ func (t *Topic) sendBlock(ref driven.BlockRef, byteOffset int64, from domain.Off
 		FromOffset: from,
 		EndOffset:  endOffset,
 	})
-	closeBlock(ref, blockReader)
+	t.closeBlock(ref, blockReader)
 	return err
 }
 
@@ -353,9 +360,10 @@ func (t *Topic) Write(entries domain.EntriesPtr) error {
 		defer t.indexWg.Done()
 		wasExecuted, err := t.UpdateIndex()
 		if err != nil {
-			log.Warn().Err(err).Str("topic", t.TopicName).Msg("background index update failed")
+			t.Log.Log(driven.LevelWarn, "background index update failed",
+				driven.Err(err), driven.Str("topic", t.TopicName))
 		}
-		log.Trace().Msg(fmt.Sprintf("index update executed: %t", wasExecuted))
+		t.Log.Log(driven.LevelTrace, "index update executed", driven.Bool("executed", wasExecuted))
 	}()
 	return nil
 }
@@ -370,32 +378,34 @@ func (t *Topic) Close() {
 }
 
 func (t *Topic) debugLogLoadResult(logBlocks []driven.Block, indexBlocks []driven.Block) {
-	if e := log.Debug(); e.Enabled() {
-		e.Str("topic", t.TopicName).
-			Int("logBlocks", len(logBlocks)).
-			Int("indexBlocks", len(indexBlocks)).
-			Int("nextOffset", int(t.NextOffset)).
-			Int("headBlockSize", t.HeadBlockSize).
-			Msg("loaded topic")
+	if !t.Log.Enabled(driven.LevelDebug) {
+		return
 	}
+	t.Log.Log(driven.LevelDebug, "loaded topic",
+		driven.Str("topic", t.TopicName),
+		driven.Int("logBlocks", len(logBlocks)),
+		driven.Int("indexBlocks", len(indexBlocks)),
+		driven.Int("nextOffset", int(t.NextOffset)),
+		driven.Int("headBlockSize", t.HeadBlockSize))
 }
 
-func debugLogIndexing(topicName string, logBlock domain.LogBlock, indexUpdated bool, posDesc string) {
-	if d := log.Debug(); d.Enabled() {
-		d.Str("topic", topicName).
-			Uint64("logBlock", uint64(logBlock)).
-			Int64("byteOffset", 0).
-			Bool("index_updated", indexUpdated).
-			Msgf("index on %s", posDesc)
+func (t *Topic) debugLogIndexing(logBlock domain.LogBlock, indexUpdated bool, posDesc string) {
+	if !t.Log.Enabled(driven.LevelDebug) {
+		return
 	}
+	t.Log.Log(driven.LevelDebug, "index on "+posDesc,
+		driven.Str("topic", t.TopicName),
+		driven.Uint64("logBlock", uint64(logBlock)),
+		driven.Int64("byteOffset", 0),
+		driven.Bool("index_updated", indexUpdated))
 }
 
-func closeBlock(ref driven.BlockRef, block io.Closer) {
+func (t *Topic) closeBlock(ref driven.BlockRef, block io.Closer) {
 	if block == nil {
 		return
 	}
 	if err := block.Close(); err != nil {
-		log.Warn().Str("block", ref.String()).Msg("unable to close block")
+		t.Log.Log(driven.LevelWarn, "unable to close block", driven.Str("block", ref.String()))
 	}
 }
 
@@ -406,7 +416,7 @@ func (t *Topic) readBlock(ref driven.BlockRef) ([]byte, error) {
 		return nil, err
 	}
 	content, err := io.ReadAll(block)
-	closeBlock(ref, block)
+	t.closeBlock(ref, block)
 	if err != nil {
 		return nil, errore.Wrap(err)
 	}
@@ -468,7 +478,7 @@ func (t *Topic) indexBlock(block domain.LogBlock, byteOffset int64) (domain.LogB
 		return domain.LogBlockPosition{}, errore.Wrap(err)
 	}
 	indexAsBytes, newByteOffset, err := index.CreateBinaryIndexFromLog(logBlock, byteOffset, indexSparsity)
-	closeBlock(t.logRef(block), logBlock)
+	t.closeBlock(t.logRef(block), logBlock)
 	if err != nil {
 		return domain.LogBlockPosition{}, errore.Wrap(err)
 	}
@@ -661,11 +671,12 @@ func (t *Topic) findBlockArrayIndex(block domain.LogBlock) (bool, int) {
 }
 
 func (t *Topic) debugLogIndexLookup(from domain.Offset, byteOffset int64, scanCount int) {
-	if e := log.Debug(); e.Enabled() {
-		e.Str("topic", t.TopicName).
-			Uint64("fromOffset", uint64(from)).
-			Int64("FoundByteOffset", byteOffset).
-			Int("scanned", scanCount).
-			Msg("read log - index scan count")
+	if !t.Log.Enabled(driven.LevelDebug) {
+		return
 	}
+	t.Log.Log(driven.LevelDebug, "read log - index scan count",
+		driven.Str("topic", t.TopicName),
+		driven.Uint64("fromOffset", uint64(from)),
+		driven.Int64("FoundByteOffset", byteOffset),
+		driven.Int("scanned", scanCount))
 }

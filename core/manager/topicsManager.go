@@ -2,11 +2,9 @@ package manager
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/port/driven"
 	"github.com/tcw/ibsen/core/port/driver"
@@ -22,6 +20,8 @@ type LogTopicManagerParams struct {
 	TTL              time.Duration
 	CheckForNewEvery time.Duration
 	MaxBlockSize     int
+	// Logger is optional: a core built without one logs nothing rather than crashing.
+	Logger driven.Logger
 }
 
 type LogTopicsManager struct {
@@ -58,6 +58,9 @@ type topicLoad struct {
 var TopicNotFound = errors.New("topic not found")
 
 func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error) {
+	if params.Logger == nil {
+		params.Logger = driven.NopLogger{}
+	}
 	manager := LogTopicsManager{
 		Params:           params,
 		TopicWriteLocker: &sync.Map{},
@@ -67,7 +70,7 @@ func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error)
 			stopIndexer: make(chan struct{}),
 			indexerDone: make(chan struct{}),
 		},
-		StatusAccess: &topic.Status{Store: params.Store},
+		StatusAccess: &topic.Status{Store: params.Store, Log: params.Logger},
 	}
 	go manager.startIndexScheduler()
 	return manager, nil
@@ -187,6 +190,7 @@ func (l *LogTopicsManager) getOrCreateTopic(name domain.TopicName) (*topic.Topic
 // keep working.
 func (l *LogTopicsManager) loadOrCreateNewTopic(topicName domain.TopicName) (*topic.Topic, error) {
 	loaded := topic.NewLogTopic(topic.Params{
+		Logger:       l.Params.Logger,
 		Store:        l.Params.Store,
 		TopicName:    string(topicName),
 		MaxBlockSize: l.Params.MaxBlockSize,
@@ -211,11 +215,13 @@ func (l *LogTopicsManager) warnAboutStrayFiles(topicName domain.TopicName) {
 	}
 	stray, err := lister.StrayFiles(topicName)
 	if err != nil {
-		log.Warn().Err(err).Str("topic", string(topicName)).Msg("unable to check the topic for stray files")
+		l.Params.Logger.Log(driven.LevelWarn, "unable to check the topic for stray files",
+			driven.Err(err), driven.Str("topic", string(topicName)))
 		return
 	}
 	for _, name := range stray {
-		log.Warn().Str("topic", string(topicName)).Str("file", name).Msg("ignoring file that is not a log or index block")
+		l.Params.Logger.Log(driven.LevelWarn, "ignoring file that is not a log or index block",
+			driven.Str("topic", string(topicName)), driven.Str("file", name))
 	}
 }
 
@@ -231,7 +237,8 @@ func (l *LogTopicsManager) startIndexScheduler() {
 			l.Topics.Range(func(key, value any) bool {
 				_, err := value.(*topic.Topic).UpdateIndex()
 				if err != nil {
-					log.Err(err).Msg(fmt.Sprintf("index builder for topic %s has failed", key.(string)))
+					l.Params.Logger.Log(driven.LevelError, "index builder for topic has failed",
+						driven.Err(err), driven.Str("topic", key.(string)))
 				}
 				return true
 			})

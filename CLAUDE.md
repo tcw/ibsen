@@ -4,13 +4,12 @@
 
 **Keep the core pure. It imports only the standard library, limited to the subset TinyGo supports (no `os`, `net`, or global logger), and speaks only in domain types. Storage, durability, compression, replication, transport, logging, and telemetry are all adapters behind ports, chosen at wiring time in `wiring/`. That one rule is what lets the same log core run on a microcontroller or in a replicated Kubernetes cluster without changing a line of it.**
 
-Must print nothing. `core/` now exists, but `core/topic` and `core/manager` still import
-`zerolog`, so the pure packages are still named directly. Once the logging port lands this
-collapses to `./core/...`:
+Must print nothing. All of `core/` is pure, so the whole hexagon is covered by one pattern;
+the three stdlib-only adapters are named beside it:
 
 ```sh
 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
-  ./core/domain/... ./core/port/... ./core/index/... ./core/logfmt/... \
+  ./core/... \
   ./adapter/driven/blockstore/memstore/... ./adapter/driven/blockstore/flashstore/... ./adapter/driven/blockstore/conformance/... \
   | grep -v '^github.com/tcw/ibsen'
 ```
@@ -49,6 +48,7 @@ adapter/
   driven/                   things the core drives
     blockstore/{aferostore,memstore,flashstore,faultfs,conformance}
     locking/                file-lease adapter for driven.SingleIbsenWriterLock
+    logging/zerologger/     zerolog adapter for driven.Logger
     telemetry/              OTEL
 
 wiring/                     composition root: builds adapters, owns lifecycle
@@ -56,8 +56,8 @@ main.go                     entry point
 errore/ utils/              stdlib-only, shared by both sides
 ```
 
-- Pure today: all of `core/` except `core/topic` and `core/manager`, plus the `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`.
-- Not pure yet: `core/topic` and `core/manager` import `zerolog`, which is the next port to define. Adapters and `wiring` may import anything. `adapter/driven/locking` imports `uuid` and `afero`.
+- Pure today: all of `core/`, plus the `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
+- Not pure, by design: everything under `adapter/` and `wiring/`. `adapter/driven/locking` imports `uuid` and `afero`; `adapter/driven/logging/zerologger` imports `zerolog`; the driving adapters import gRPC and cobra.
 
 ## Current baseline (verified 2026-09-16, go1.26.4)
 
@@ -67,6 +67,7 @@ errore/ utils/              stdlib-only, shared by both sides
 - Crash and torn-write fault injection: `adapter/driven/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `adapter/driven/blockstore/aferostore/crash_test.go` and `core/topic/topicAccess_crash_test.go`, on an in-memory filesystem and on a real directory.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
 - `go vet ./...` is clean; keep it that way.
+- Logging port: `adapter/driven/logging/zerologger` has its own tests (level mapping, every field kind, `Enabled` agreeing with what is emitted, nil error dropped); `core/topic/logging_test.go` proves the core reaches its logger only through the port.
 
 ## 1. Correctness bugs
 
@@ -105,8 +106,8 @@ fsync-on-flush policy: flush after N entries or a time interval. Only acknowledg
 ## 4. Architecture: hexagonal refactor
 
 The tree is hexagonal: `core/` is the hexagon, `adapter/driver/*` drives it, `adapter/driven/*`
-is driven by it, `wiring/` assembles them. Storage and coordination are ports; logging is
-still to do.
+is driven by it, `wiring/` assembles them. Storage, coordination and logging are ports, and
+the core is pure.
 
 - Pure core, stdlib only, ports in domain terms.
 - Key port: narrow **`BlockStore`**. Block verbs: `List`, `Append`, `Open` (read at a byte offset), `Remove`. Plus `Truncate`, because crash recovery has to cut a torn tail, and `Topics` / `CreateTopic`, because a log server has to enumerate and create topics. Deliberately *not* a filesystem abstraction: no directories, handles, seeks or permissions.
@@ -115,7 +116,8 @@ still to do.
 - Adapters, all under `adapter/driven/blockstore`: `aferostore` (filesystem, the one the server wires), `memstore` (pure in-memory), `flashstore` (a fixed region of raw flash: fixed pages, write-once bytes, page table in RAM).
 - gRPC is a driving adapter; on embedded, skip it and call the log as a library.
 - Coordination port: `driven.SingleIbsenWriterLock`, satisfied by `adapter/driven/locking` (file lease) and by `driven.NoFileLock` for a single-process or embedded deployment. The port names none of its adapters; each adapter asserts it satisfies the port.
-- Still to do: a logging port, so `core/topic` and `core/manager` stop importing `zerolog` and `core/` becomes pure end to end.
+- Driving port: `driver.LogManager` (`List`, `Write`, `Read`), implemented by `core/manager` and consumed by `adapter/driver/grpcapi`. A driving adapter names the port, never the implementation.
+- Logging port: `driven.Logger`, two methods. `Log(level, msg, fields...)` takes typed `Field` values (`Str`, `Int`, `Int64`, `Uint64`, `Bool`, `Err`), so an adapter switches on `FieldKind` exhaustively and never reaches for reflection; `Enabled(level)` lets the core skip building a payload that would be discarded. `driven.NopLogger` is the default when no adapter is wired, which is what lets an embedded build carry no logging code at all. Adapter: `adapter/driven/logging/zerologger`.
 
 ## 5. Compression
 
@@ -159,12 +161,14 @@ still to do.
 4. ~~Add durability and crash tests inside the FS adapter.~~
 5. ~~Add exotic embedded adapters last, validated by the shared suite.~~
 
-Every step ships green. Steps 0 to 6 are done, one commit each.
+Every step ships green. Steps 0 to 7 are done, one commit each.
 
 6. ~~Restructure the tree into `core/` + `adapter/{driver,driven}` + `wiring/`, so the layout
    states the architecture instead of only the dependency graph implying it.~~
 
-Next, in the same one-change-at-a-time way: the logging port (§4), the durability
+7. ~~Define the logging port and take `zerolog` out of the core.~~
+
+Next, in the same one-change-at-a-time way: the durability
 flush policy (§2), the index work (§3), and then compression (§5) and the embedded
 wiring files (§8). The flash adapter is the proof the port is narrow enough; the
 embedded build still has to be wired and its dependency graph checked. The purity

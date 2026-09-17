@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	"github.com/tcw/ibsen/adapter/driven/logging/zerologger"
 	"github.com/tcw/ibsen/adapter/driver/grpcapi"
 	"github.com/tcw/ibsen/core/manager"
 	"github.com/tcw/ibsen/core/port/driven"
@@ -103,6 +104,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		TTL:              ibs.TTL,
 		CheckForNewEvery: time.Second * 2,
 		MaxBlockSize:     ibs.MaxBlockSize,
+		Logger:           zerologger.New(log.Logger),
 	})
 	if err != nil {
 		return errore.Wrap(err)
