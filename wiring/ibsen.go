@@ -42,12 +42,15 @@ var ibsenFiglet = `
 type IbsenServer struct {
 	Readonly bool
 	// Lock is optional: Start builds a file lease over RootPath when none is injected.
-	Lock             driven.SingleIbsenWriterLock
-	InMemory         bool
-	Afs              *afero.Afero
-	TTL              time.Duration
-	RootPath         string
-	MaxBlockSize     int
+	Lock         driven.SingleIbsenWriterLock
+	InMemory     bool
+	Afs          *afero.Afero
+	TTL          time.Duration
+	RootPath     string
+	MaxBlockSize int
+	// IndexSparsity is the number of entries between two index pairs; zero means
+	// topic.DefaultIndexSparsity.
+	IndexSparsity    uint32
 	OTELExporterAddr string
 	GRPCPrivateKey   string
 	GRPCCertKey      string
@@ -149,6 +152,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		TTL:              ibs.TTL,
 		CheckForNewEvery: time.Second * 2,
 		MaxBlockSize:     ibs.MaxBlockSize,
+		IndexSparsity:    ibs.IndexSparsity,
 		Logger:           zerologger.New(log.Logger),
 	})
 	if err != nil {

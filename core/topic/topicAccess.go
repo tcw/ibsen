@@ -26,8 +26,10 @@ var _ TopicAccess = &Topic{}
 // ErrTopicClosed is returned by writes to a topic after Close.
 var ErrTopicClosed = errors.New("topic is closed")
 
-// indexSparsity is the number of entries between two index pairs.
-const indexSparsity = 10
+// DefaultIndexSparsity is the number of entries between two index pairs when a caller does
+// not choose one. Denser indexes make a read scan less and cost more bytes and more work per
+// write; sparser ones the other way round.
+const DefaultIndexSparsity uint32 = 10
 
 // indexPairSize is the bytes one (offset, byteOffset) pair takes in an index block.
 const indexPairSize = 16
@@ -40,6 +42,7 @@ type Topic struct {
 	indexMutex     int32
 	indexWg        *sync.WaitGroup
 	MaxBlockSize   int
+	IndexSparsity  uint32
 	NextOffset     domain.Offset
 	HeadBlockSize  int
 	LogBlockList   []domain.LogBlock
@@ -58,6 +61,10 @@ type Params struct {
 	Store        driven.BlockStore
 	TopicName    string
 	MaxBlockSize int
+	// IndexSparsity is the number of entries between two index pairs. Zero means
+	// DefaultIndexSparsity. Changing it between runs is safe: the pairs already written stay
+	// valid and sorted, and the block simply ends up indexed at two densities.
+	IndexSparsity uint32
 	// Logger is optional: a core built without one logs nothing rather than crashing.
 	Logger driven.Logger
 }
@@ -67,9 +74,14 @@ func NewLogTopic(params Params) *Topic {
 	if logger == nil {
 		logger = driven.NopLogger{}
 	}
+	sparsity := params.IndexSparsity
+	if sparsity == 0 {
+		sparsity = DefaultIndexSparsity
+	}
 	return &Topic{
 		Store:          params.Store,
 		Log:            logger,
+		IndexSparsity:  sparsity,
 		TopicName:      params.TopicName,
 		indexWg:        &sync.WaitGroup{},
 		NextOffset:     0,
@@ -240,6 +252,7 @@ func (t *Topic) snapshot() *Topic {
 		Log:            t.Log,
 		TopicName:      t.TopicName,
 		MaxBlockSize:   t.MaxBlockSize,
+		IndexSparsity:  t.IndexSparsity,
 		NextOffset:     t.NextOffset,
 		HeadBlockSize:  t.HeadBlockSize,
 		LogBlockList:   append([]domain.LogBlock(nil), t.LogBlockList...),
@@ -477,7 +490,7 @@ func (t *Topic) indexBlock(block domain.LogBlock, byteOffset int64) (domain.LogB
 	if err != nil {
 		return domain.LogBlockPosition{}, errore.Wrap(err)
 	}
-	indexAsBytes, newByteOffset, err := index.CreateBinaryIndexFromLog(logBlock, byteOffset, indexSparsity)
+	indexAsBytes, newByteOffset, err := index.CreateBinaryIndexFromLog(logBlock, byteOffset, t.IndexSparsity)
 	t.closeBlock(t.logRef(block), logBlock)
 	if err != nil {
 		return domain.LogBlockPosition{}, errore.Wrap(err)

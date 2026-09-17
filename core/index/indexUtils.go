@@ -2,17 +2,25 @@ package index
 
 import (
 	"bufio"
+	"errors"
 	"io"
 
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/errore"
 )
 
+// ErrInvalidSparsity is returned for a sparsity of zero, which has no meaning: every entry
+// offset would have to be a multiple of nothing.
+var ErrInvalidSparsity = errors.New("index sparsity must be at least 1")
+
 // CreateBinaryIndexFromLog scans a log block from a reader positioned at fromByteOffset,
 // which must be an entry boundary, and returns (offset, byteOffset) pairs for every entry
 // whose offset is a multiple of oneEntryForEvery, together with the byte offset where the
-// scan ended.
+// scan ended. A oneEntryForEvery of 1 indexes every entry.
 func CreateBinaryIndexFromLog(logBlock io.Reader, fromByteOffset int64, oneEntryForEvery uint32) ([]byte, int64, error) {
+	if oneEntryForEvery == 0 {
+		return nil, fromByteOffset, errore.Wrap(ErrInvalidSparsity)
+	}
 	var index []uint64
 	byteOffset := fromByteOffset
 	reader := bufio.NewReader(logBlock)

@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/tcw/ibsen/core/topic"
 	"github.com/tcw/ibsen/wiring"
 )
 
@@ -21,6 +22,7 @@ var (
 	host                        string
 	port                        int
 	maxBlockSizeMB              int
+	indexSparsity               int
 	readOnly                    bool
 	rootDirectory               string
 	benchEntiesByteSize         int
@@ -87,6 +89,9 @@ var (
 					log.Fatal().Msgf("data root path [%s] does not exist", rootDirectory)
 				}
 			}
+			if indexSparsity < 1 {
+				log.Fatal().Msgf("indexSparsity must be at least 1, got %d", indexSparsity)
+			}
 			ibsenServer := wiring.IbsenServer{
 				Readonly:         readOnly,
 				InMemory:         inMemory,
@@ -94,6 +99,7 @@ var (
 				RootPath:         absolutePath,
 				TTL:              30 * time.Second,
 				MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
+				IndexSparsity:    uint32(indexSparsity),
 				OTELExporterAddr: OTELExporterAddr,
 				GRPCCertKey:      AbsOrEmpty(certKey),
 				GRPCPrivateKey:   AbsOrEmpty(privateKey),
@@ -329,6 +335,7 @@ func init() {
 	port, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(50001)))
 	host = getenv("IBSEN_HOST", "0.0.0.0")
 	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "1000"))
+	indexSparsity, _ = strconv.Atoi(getenv("IBSEN_INDEX_SPARSITY", strconv.FormatUint(uint64(topic.DefaultIndexSparsity), 10)))
 	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
 	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
 
@@ -341,6 +348,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&trace, "trace", "t", false, "set logging to trace level")
 
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
+	cmdServer.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
 	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
 	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
