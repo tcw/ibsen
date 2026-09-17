@@ -1,6 +1,7 @@
 package wiring
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -62,6 +63,11 @@ type IbsenServer struct {
 	stopped       chan struct{} // closed when the shutdown has finished
 }
 
+// ErrWriteLockUnavailable is returned by Start when another instance holds the single-writer
+// lease on the data directory. Start refuses rather than exiting the process, so a program
+// that embeds the log can decide what to do; the CLI reports it and exits.
+var ErrWriteLockUnavailable = errors.New("single writer lock is held by another instance")
+
 // The single-writer lease lives in the data directory. These are the values the server has
 // always used; they belong here rather than in the CLI, because picking the adapter behind a
 // port is the composition root's job.
@@ -106,7 +112,8 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		}
 		log.Info().Msg(fmt.Sprintf("Waiting for single writer lock on file [%s]...", ibs.RootPath))
 		if !ibs.Readonly && !ibs.Lock.AcquireLock() {
-			log.Fatal().Msg(fmt.Sprintf("failed trying to acquire single writer lock on path [%s], aborting start!", ibs.RootPath))
+			return errore.WrapWithContextF(ErrWriteLockUnavailable,
+				"unable to acquire the single writer lock on path [%s], aborting start", ibs.RootPath)
 		}
 	}
 
