@@ -24,17 +24,15 @@ type SimulationParams struct {
 	users        int
 	dataLimit    int
 	testDuration time.Duration
-	useDelay     bool
 	writeDelay   RandomizedTimeInterval
 	entries      RandomizedSizeInterval
 }
 
 type Simulation struct {
-	params  SimulationParams
-	started time.Time
-	wg      *sync.WaitGroup
-	cancel  chan bool
-	users   []*User
+	params SimulationParams
+	wg     *sync.WaitGroup
+	cancel chan bool
+	users  []*User
 }
 
 type User struct {
