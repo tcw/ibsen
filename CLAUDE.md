@@ -274,9 +274,14 @@ written with `driven.NoCodec`, so the format is in place and carries no compress
   amplification is linear in the bound, because a frame is decoded whole — at the default a
   read of one 130-byte entry decodes 137 KB. Sequential reads want the opposite and flatten
   around 1000. So the bound is a choice between random and sequential readers, and the ratio
-  stops arguing for large frames well before either of them does. A frame per entry is worse
-  than useless with a codec: zstd on 130 bytes makes the log *larger* (1.36), and the index
-  gets a pair only every sparsity frames, so a small frame costs header scanning too.
+  stops arguing for large frames well before either of them does. A frame per entry is where
+  a codec has nothing to offer: zstd on 130 bytes comes back larger, so every such frame falls
+  back to the plain bytes and the 1.26 above is the framing overhead alone, the same as no
+  codec at all. Before the fallback it was 1.36, meaning compression actively cost bytes. The
+  index also gets a pair only every sparsity frames, so a small frame costs header scanning
+  too.
+- The CPU of a compression attempt that is then discarded is still paid; skipping it below a
+  size threshold would save that, and wants its own measurement.
 - Still to do: the default of 1000 entries per frame was chosen before any of this was
   measured, and the table says 100 is the better all-round answer. Changing it is a
   behaviour change for every deployment, so it is a decision, not a follow-up.

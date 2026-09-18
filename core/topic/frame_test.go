@@ -3,6 +3,8 @@ package topic
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -176,39 +178,148 @@ func TestAWriteIsOneAppendHoweverManyFramesItMakes(t *testing.T) {
 	}
 }
 
+// compressiblePayload is a run of one byte, which rleCodec shrinks. A codec that does not
+// shrink its input is thrown away frame by frame, so a test about which codec a frame names
+// has to give the codec something it can do.
+func compressiblePayload(offset int) []byte {
+	return []byte(strings.Repeat(string(rune('a'+offset%26)), 300))
+}
+
+func writeCompressible(t *testing.T, tp *Topic, from, count int) {
+	t.Helper()
+	batch := make([][]byte, count)
+	for i := range batch {
+		batch[i] = compressiblePayload(from + i)
+	}
+	if err := tp.Write(&batch); err != nil {
+		t.Fatal(err)
+	}
+	tp.indexWg.Wait()
+}
+
 // A frame says which codec wrote it, so a block may hold frames of several codecs and a read
 // picks the right one per frame. That is what makes changing the codec safe: nothing already
 // written has to be rewritten.
 func TestABlockCanHoldFramesOfSeveralCodecs(t *testing.T) {
 	store := memstore.New()
-	codecs := driven.NewCodecs(reverseCodec{})
+	codecs := driven.NewCodecs(rleCodec{})
 	params := Params{Store: store, TopicName: "t", MaxBlockSize: 1 << 20, Codecs: codecs}
 
 	plain := NewLogTopic(params)
 	if err := plain.LoadOrCreate(); err != nil {
 		t.Fatal(err)
 	}
-	writeEntries(t, plain, 0, 3)
+	writeCompressible(t, plain, 0, 3)
 
 	// the same topic, reopened by a build that now writes with another codec
-	reversed := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: 1 << 20,
-		Codec: reverseCodec{}, Codecs: codecs})
-	if err := reversed.LoadOrCreate(); err != nil {
+	compressed := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: 1 << 20,
+		Codec: rleCodec{}, Codecs: codecs})
+	if err := compressed.LoadOrCreate(); err != nil {
 		t.Fatal(err)
 	}
-	writeEntries(t, reversed, 3, 3)
+	writeCompressible(t, compressed, 3, 3)
 
-	headers := headBlockFrames(t, reversed)
+	headers := headBlockFrames(t, compressed)
 	if len(headers) != 2 {
 		t.Fatalf("got %d frames, want one per write", len(headers))
 	}
-	if headers[0].Codec != uint8(driven.CodecNone) || headers[1].Codec != uint8(reverseCodec{}.ID()) {
+	if headers[0].Codec != uint8(driven.CodecNone) || headers[1].Codec != uint8(rleCodec{}.ID()) {
 		t.Errorf("frames name codecs %d and %d, want %d then %d",
-			headers[0].Codec, headers[1].Codec, driven.CodecNone, reverseCodec{}.ID())
+			headers[0].Codec, headers[1].Codec, driven.CodecNone, rleCodec{}.ID())
 	}
-	assertReadsFromEveryOffset(t, reversed, 6)
-	// and a reload reads both back the same way
-	assertReadsFromEveryOffset(t, newTestTopicWith(t, params), 6)
+	// both frames read back whole, from the topic that wrote the second and from a reload
+	for name, tp := range map[string]*Topic{"as written": compressed, "reloaded": newTestTopicWith(t, params)} {
+		got, err := readAllFrom(tp, 0, 10)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(got) != 6 {
+			t.Fatalf("%s: read %d entries, want 6", name, len(got))
+		}
+		for i, entry := range got {
+			if !bytes.Equal(entry.Entry, compressiblePayload(i)) {
+				t.Errorf("%s: offset %d came back changed", name, entry.Offset)
+			}
+		}
+	}
+}
+
+// The other half of the same rule: a codec whose output is not smaller is not recorded at
+// all, and the frame keeps the plain bytes. expandingCodec is the worst case on purpose —
+// what a real compressor does to a frame too small to find anything in.
+func TestAFrameKeepsThePlainBytesWhenCompressionDoesNotPay(t *testing.T) {
+	store := memstore.New()
+	topic := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: 1 << 20,
+		Codec: expandingCodec{}, Codecs: driven.NewCodecs(expandingCodec{})})
+	if err := topic.LoadOrCreate(); err != nil {
+		t.Fatal(err)
+	}
+
+	writeEntries(t, topic, 0, 5)
+
+	frames := headBlockFrames(t, topic)
+	if len(frames) == 0 {
+		t.Fatal("no frames were written")
+	}
+	for i, header := range frames {
+		if header.Codec != uint8(driven.CodecNone) {
+			t.Errorf("frame %d names codec %d, want the plain bytes", i, header.Codec)
+		}
+		if header.StoredSize != header.PlainSize {
+			t.Errorf("frame %d stored %d bytes for %d plain", i, header.StoredSize, header.PlainSize)
+		}
+	}
+	assertReadsFromEveryOffset(t, topic, 5)
+}
+
+// And the whole point, at the level someone notices it: a topic is never larger for having a
+// codec wired, whatever that codec makes of the entries. One entry to a write is the shape
+// that gives a compressor the least to work with, and the shape the default durability
+// policy produces for a client that does not batch.
+func TestACodecNeverMakesATopicLarger(t *testing.T) {
+	for _, codec := range []driven.Codec{rleCodec{}, expandingCodec{}} {
+		t.Run(codec.ID().String(), func(t *testing.T) {
+			plainStore, codecStore := memstore.New(), memstore.New()
+			newWith := func(store driven.BlockStore, codec driven.Codec) *Topic {
+				tp := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: 1 << 20,
+					Codec: codec, Codecs: driven.NewCodecs(rleCodec{}, expandingCodec{})})
+				if err := tp.LoadOrCreate(); err != nil {
+					t.Fatal(err)
+				}
+				return tp
+			}
+			plain := newWith(plainStore, nil)
+			withCodec := newWith(codecStore, codec)
+
+			for i := 0; i < 20; i++ {
+				writeEntries(t, plain, i, 1)
+				writeEntries(t, withCodec, i, 1)
+			}
+
+			plainSize := blockSize(t, plainStore, plain.logRef(0))
+			codecSize := blockSize(t, codecStore, withCodec.logRef(0))
+			if codecSize > plainSize {
+				t.Errorf("the topic is %d bytes with the %s codec and %d without",
+					codecSize, codec.ID(), plainSize)
+			}
+			assertReadsFromEveryOffset(t, withCodec, 20)
+		})
+	}
+}
+
+// expandingCodec always makes its input larger, which is the worst a codec can do and the
+// case the fallback exists for.
+type expandingCodec struct{}
+
+func (expandingCodec) ID() driven.CodecID { return driven.CodecID(43) }
+
+func (expandingCodec) Encode(dst, src []byte) ([]byte, error) {
+	dst = append(dst, src...)
+	return append(dst, bytes.Repeat([]byte{0xff}, 64)...), nil
+}
+
+func (expandingCodec) Decode(dst, src []byte, _ int) ([]byte, error) {
+	return append(dst, src[:len(src)-64]...), nil
 }
 
 func newTestTopicWith(t *testing.T, params Params) *Topic {
@@ -220,21 +331,35 @@ func newTestTopicWith(t *testing.T, params Params) *Topic {
 	return topic
 }
 
-// reverseCodec changes the bytes it is given, so a frame written with it is unreadable
-// without it. It is its own inverse.
-type reverseCodec struct{}
+// rleCodec collapses runs of a repeated byte into a (count, byte) pair. It shrinks input
+// with long runs and grows input without them, so one codec exercises both sides of a frame
+// keeping compression only when it paid.
+type rleCodec struct{}
 
-func (reverseCodec) ID() driven.CodecID { return driven.CodecID(42) }
+func (rleCodec) ID() driven.CodecID { return driven.CodecID(42) }
 
-func (reverseCodec) Encode(dst, src []byte) ([]byte, error) {
-	for i := len(src) - 1; i >= 0; i-- {
-		dst = append(dst, src[i])
+func (rleCodec) Encode(dst, src []byte) ([]byte, error) {
+	for i := 0; i < len(src); {
+		run := 1
+		for i+run < len(src) && src[i+run] == src[i] && run < 255 {
+			run++
+		}
+		dst = append(dst, byte(run), src[i])
+		i = i + run
 	}
 	return dst, nil
 }
 
-func (r reverseCodec) Decode(dst, src []byte, _ int) ([]byte, error) {
-	return r.Encode(dst, src)
+func (rleCodec) Decode(dst, src []byte, _ int) ([]byte, error) {
+	if len(src)%2 != 0 {
+		return nil, errors.New("rle payload is not whole pairs")
+	}
+	for i := 0; i < len(src); i = i + 2 {
+		for n := 0; n < int(src[i]); n++ {
+			dst = append(dst, src[i+1])
+		}
+	}
+	return dst, nil
 }
 
 // Zero means the default, the way every other knob on a topic works.
