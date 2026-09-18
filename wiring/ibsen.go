@@ -132,7 +132,8 @@ func (ibs *IbsenServer) lifecycle() (stopping, stopped chan struct{}) {
 func (ibs *IbsenServer) defaults() {
 	if ibs.Lock == nil {
 		ibs.Lock = locking.NewFileLock(ibs.Afs,
-			filepath.Join(ibs.RootPath, writeLockFileName), writeLockLease, writeLockReclaim)
+			filepath.Join(ibs.RootPath, writeLockFileName), writeLockLease, writeLockReclaim,
+			ibs.writeLockLost)
 	}
 }
 
@@ -171,6 +172,19 @@ func (ibs *IbsenServer) resolveCodecs() error {
 	}
 	log.Info().Msgf("writing frames with the %s codec", ibs.Codec.ID())
 	return nil
+}
+
+// writeLockLost is what this server does when it can no longer prove it holds the single
+// writer lock: it stops, now. Another instance may already have claimed the lease and be
+// writing, and two writers would corrupt the log.
+//
+// A clean shutdown would be worse than useless here, because it flushes and writes on the way
+// out. Whatever this process still holds is already lost; the only safe move is to stop
+// touching the data directory. That is why this is an exit rather than ShutdownCleanly, and
+// why the decision is here in the composition root rather than inside the lock adapter.
+func (ibs *IbsenServer) writeLockLost(reason error) {
+	log.Fatal().Err(reason).Msgf(
+		"lost the single writer lock on [%s], stopping before another instance writes beside us", ibs.RootPath)
 }
 
 func (ibs *IbsenServer) Start(listener net.Listener) error {
