@@ -1,6 +1,7 @@
 package filestore
 
 import (
+	"errors"
 	"io"
 	"os"
 )
@@ -77,3 +78,36 @@ func (OS) ReadDir(name string) ([]os.FileInfo, error) {
 	}
 	return infos, nil
 }
+
+// ErrReadOnly is what a read-only filesystem gives for anything that would change it.
+var ErrReadOnly = errors.New("the filesystem is read only")
+
+var _ FS = ReadOnly{}
+
+// ReadOnly refuses every call that would change the filesystem underneath it.
+//
+// A read-only server already refuses writes at the manager, but that is not the whole of what
+// a server writes: loading a topic recovers its head block, which truncates a torn tail, and
+// every load rebuilds the index. Pointed at a directory another instance is writing, a
+// read-only server without this would quietly truncate and re-index somebody else's log. That
+// it does not is what this keeps true, and it is what afero's read-only filesystem was doing
+// before the adapter stopped needing afero.
+type ReadOnly struct {
+	FS
+}
+
+// writeFlags are the open flags that would change a file.
+const writeFlags = os.O_WRONLY | os.O_RDWR | os.O_CREATE | os.O_APPEND | os.O_TRUNC
+
+func (r ReadOnly) OpenFile(name string, flag int, perm os.FileMode) (File, error) {
+	if flag&writeFlags != 0 {
+		return nil, ErrReadOnly
+	}
+	return r.FS.OpenFile(name, flag, perm)
+}
+
+func (ReadOnly) Mkdir(string, os.FileMode) error { return ErrReadOnly }
+
+func (ReadOnly) MkdirAll(string, os.FileMode) error { return ErrReadOnly }
+
+func (ReadOnly) Remove(string) error { return ErrReadOnly }

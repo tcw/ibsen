@@ -3,12 +3,14 @@ package wiring
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/adapter/driver/grpcapi"
 	"github.com/tcw/ibsen/core/manager"
 	"github.com/tcw/ibsen/core/port/driven"
@@ -33,16 +35,13 @@ func (l *slowReleaseLock) ReleaseLock() bool {
 }
 
 func TestShutdown_closesLogBeforeReleasingLockAndStartWaitsForIt(t *testing.T) {
-	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
-	if err := afs.MkdirAll("/data", 0700); err != nil {
-		t.Fatal(err)
-	}
+	root := t.TempDir()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	lock := &slowReleaseLock{released: make(chan struct{})}
-	ibs := &IbsenServer{Lock: lock, Afs: afs, RootPath: "/data", TTL: time.Minute, MaxBlockSize: 1000}
+	ibs := &IbsenServer{Lock: lock, RootPath: root, TTL: time.Minute, MaxBlockSize: 1000}
 	var writeAtRelease error
 	lock.onRelease = func() {
 		ibs.mu.Lock()
@@ -128,10 +127,11 @@ func startInMemory(t *testing.T, ibs *IbsenServer) (grpcapi.IbsenClient, func())
 
 // In-memory mode keeps the log in a memstore, so it reaches no filesystem at all. It used to
 // run the filesystem adapter over an emulated filesystem, which wrote real blocks into a fake
-// disk to avoid writing to a real one.
+// disk to avoid writing to a real one. It is given a real data directory here, which stays
+// empty.
 func TestInMemoryModeWritesToNoFilesystem(t *testing.T) {
-	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
-	ibs := &IbsenServer{InMemory: true, Afs: afs, RootPath: "/data", TTL: time.Minute, MaxBlockSize: 1000}
+	root := t.TempDir()
+	ibs := &IbsenServer{InMemory: true, RootPath: root, TTL: time.Minute, MaxBlockSize: 1000}
 
 	client, shutdown := startInMemory(t, ibs)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -144,8 +144,8 @@ func TestInMemoryModeWritesToNoFilesystem(t *testing.T) {
 	shutdown()
 
 	var found []string
-	err := afero.Walk(afs, "/", func(path string, info os.FileInfo, err error) error {
-		if err == nil && info != nil && !info.IsDir() {
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() {
 			found = append(found, path)
 		}
 		return nil
@@ -154,14 +154,14 @@ func TestInMemoryModeWritesToNoFilesystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(found) != 0 {
-		t.Errorf("in-memory mode wrote %v to a filesystem", found)
+		t.Errorf("in-memory mode wrote %v to its data directory", found)
 	}
 }
 
 // And it needs no filesystem to be given to it at all, which is the point: a memstore is not
 // a filesystem, so there is nothing to emulate one with.
 func TestInMemoryModeNeedsNoFilesystem(t *testing.T) {
-	ibs := &IbsenServer{InMemory: true, RootPath: "/data", TTL: time.Minute, MaxBlockSize: 1000}
+	ibs := &IbsenServer{InMemory: true, RootPath: t.TempDir(), TTL: time.Minute, MaxBlockSize: 1000}
 
 	client, shutdown := startInMemory(t, ibs)
 	defer shutdown()
@@ -185,7 +185,7 @@ func TestInMemoryModeNeedsNoFilesystem(t *testing.T) {
 // There is no second writer to fence off when the log lives in this process, and no
 // filesystem to keep a lease on.
 func TestInMemoryModeTakesNoWriteLock(t *testing.T) {
-	ibs := &IbsenServer{InMemory: true, RootPath: "/data"}
+	ibs := &IbsenServer{InMemory: true, RootPath: t.TempDir()}
 
 	ibs.defaults()
 
@@ -196,12 +196,9 @@ func TestInMemoryModeTakesNoWriteLock(t *testing.T) {
 
 // The on-disk path is unchanged: it still keeps the log on the filesystem it was given.
 func TestOnDiskModeStillWritesToTheFilesystem(t *testing.T) {
-	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
-	if err := afs.MkdirAll("/data", 0700); err != nil {
-		t.Fatal(err)
-	}
+	root := t.TempDir()
 	ibs := &IbsenServer{Lock: &slowReleaseLock{released: make(chan struct{}), onRelease: func() {}},
-		Afs: afs, RootPath: "/data", TTL: time.Minute, MaxBlockSize: 1000}
+		RootPath: root, TTL: time.Minute, MaxBlockSize: 1000}
 
 	client, shutdown := startInMemory(t, ibs)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -213,11 +210,42 @@ func TestOnDiskModeStillWritesToTheFilesystem(t *testing.T) {
 	}
 	shutdown()
 
-	exists, err := afs.Exists("/data/topic/00000000000000000000.log")
+	if _, err := os.Stat(filepath.Join(root, "topic", "00000000000000000000.log")); err != nil {
+		t.Errorf("the on-disk log block was not written: %v", err)
+	}
+}
+
+// A read-only server gets a store that cannot change the log, not merely a manager that
+// refuses writes. Loading a topic recovers its head block and rebuilds its index, and on a
+// directory another instance owns neither of those is ours to do.
+func TestReadonlyModeBuildsAStoreThatCannotWrite(t *testing.T) {
+	root := t.TempDir()
+	ibs := &IbsenServer{Readonly: true, RootPath: root}
+
+	store := ibs.blockStore()
+
+	if _, err := store.Append(driven.LogRef("topic", 0), []byte("x")); !errors.Is(err, filestore.ErrReadOnly) {
+		t.Errorf("a read-only server's store accepted an append: %v", err)
+	}
+	if _, err := store.CreateTopic("topic"); !errors.Is(err, filestore.ErrReadOnly) {
+		t.Errorf("a read-only server's store created a topic: %v", err)
+	}
+	// nothing reached the directory
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !exists {
-		t.Error("the on-disk log block was not written")
+	if len(entries) != 0 {
+		t.Errorf("a read-only server put %v in its data directory", entries)
+	}
+}
+
+// And a writable one is, of course, writable.
+func TestWritableModeBuildsAStoreThatWrites(t *testing.T) {
+	root := t.TempDir()
+	ibs := &IbsenServer{RootPath: root}
+
+	if _, err := ibs.blockStore().Append(driven.LogRef("topic", 0), []byte("x")); err != nil {
+		t.Errorf("a writable server's store refused an append: %v", err)
 	}
 }

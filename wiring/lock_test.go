@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/core/port/driven"
 )
 
@@ -44,8 +43,7 @@ func TestStartBuildsTheWriteLockInTheDataDirectory(t *testing.T) {
 func TestAnInjectedLockIsKept(t *testing.T) {
 	injected := &slowReleaseLock{released: make(chan struct{})}
 	ibs := &IbsenServer{
-		Afs:      &afero.Afero{Fs: afero.NewMemMapFs()},
-		RootPath: "/data",
+		RootPath: t.TempDir(),
 		Lock:     injected,
 	}
 
@@ -69,17 +67,14 @@ func (l *refusingLock) ReleaseLock() bool { return true }
 // Start used to log.Fatal here, which exits the process from inside a library call: a
 // program embedding the log had no say. It returns the refusal instead.
 func TestStartReturnsWhenAnotherInstanceHoldsTheLock(t *testing.T) {
-	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
-	if err := afs.MkdirAll("/data", 0700); err != nil {
-		t.Fatal(err)
-	}
+	root := t.TempDir()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lis.Close()
 	lock := &refusingLock{}
-	ibs := &IbsenServer{Lock: lock, Afs: afs, RootPath: "/data", TTL: time.Minute, MaxBlockSize: 1000}
+	ibs := &IbsenServer{Lock: lock, RootPath: root, TTL: time.Minute, MaxBlockSize: 1000}
 
 	started := make(chan error, 1)
 	go func() { started <- ibs.Start(lis) }()
@@ -92,7 +87,7 @@ func TestStartReturnsWhenAnotherInstanceHoldsTheLock(t *testing.T) {
 		if !errors.Is(err, ErrWriteLockUnavailable) {
 			t.Errorf("error does not match ErrWriteLockUnavailable: %v", err)
 		}
-		if !strings.Contains(err.Error(), "/data") {
+		if !strings.Contains(err.Error(), root) {
 			t.Errorf("error does not say which path it could not lock: %v", err)
 		}
 	case <-time.After(10 * time.Second):
@@ -107,16 +102,13 @@ func TestStartReturnsWhenAnotherInstanceHoldsTheLock(t *testing.T) {
 // A read-only server writes nothing, so it never takes the lease and a held lock does not
 // stop it starting.
 func TestReadonlyStartDoesNotTakeTheLock(t *testing.T) {
-	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
-	if err := afs.MkdirAll("/data", 0700); err != nil {
-		t.Fatal(err)
-	}
+	root := t.TempDir()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	lock := &refusingLock{}
-	ibs := &IbsenServer{Readonly: true, Lock: lock, Afs: afs, RootPath: "/data", TTL: time.Minute, MaxBlockSize: 1000}
+	ibs := &IbsenServer{Readonly: true, Lock: lock, RootPath: root, TTL: time.Minute, MaxBlockSize: 1000}
 
 	started := make(chan error, 1)
 	go func() { started <- ibs.Start(lis) }()

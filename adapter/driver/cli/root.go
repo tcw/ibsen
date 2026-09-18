@@ -10,7 +10,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/topic"
@@ -69,7 +68,6 @@ var (
 				log.Info().Msg("logger lever at info")
 			}
 			inMemory := false
-			var afs *afero.Afero
 			absolutePath := "/tmp/data"
 			if rootDirectory == "" {
 				// no data directory means no filesystem: the log goes in a memstore, and there
@@ -83,17 +81,11 @@ var (
 				}
 				log.Info().Msgf("Data directory: %s", rootDirectory)
 
-				var fs = afero.NewOsFs()
-				if readOnly {
-					fs = afero.NewReadOnlyFs(fs)
-				}
-				afs = &afero.Afero{Fs: fs}
-
-				exists, err := afs.DirExists(rootDirectory)
-				if err != nil {
-					log.Fatal().Err(err).Msgf("failed checking if root dir exists")
-				}
-				if !exists {
+				// read-only mode is refused in two places, and this is neither: the manager
+				// turns writes away, and the store the composition root builds cannot change
+				// a file even while recovering or indexing
+				info, err := os.Stat(rootDirectory)
+				if err != nil || !info.IsDir() {
 					log.Fatal().Msgf("data root path [%s] does not exist", rootDirectory)
 				}
 			}
@@ -112,7 +104,6 @@ var (
 			ibsenServer := wiring.IbsenServer{
 				Readonly:         readOnly,
 				InMemory:         inMemory,
-				Afs:              afs,
 				RootPath:         absolutePath,
 				TTL:              30 * time.Second,
 				MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,

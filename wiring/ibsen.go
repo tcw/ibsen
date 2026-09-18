@@ -14,8 +14,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/memstore"
 	zstdcodec "github.com/tcw/ibsen/adapter/driven/compression/zstd"
 	"github.com/tcw/ibsen/adapter/driven/locking"
@@ -47,10 +46,7 @@ type IbsenServer struct {
 	Lock driven.SingleIbsenWriterLock
 	// InMemory keeps the whole log in memory, in a memstore. Nothing is written anywhere and
 	// nothing survives the process.
-	InMemory bool
-	// Afs is the filesystem the log is kept on. In-memory mode does not use it and may leave
-	// it nil: a memstore is not a filesystem, so there is nothing to emulate one with.
-	Afs          *afero.Afero
+	InMemory     bool
 	TTL          time.Duration
 	RootPath     string
 	MaxBlockSize int
@@ -209,7 +205,24 @@ func (ibs *IbsenServer) blockStore() driven.BlockStore {
 	if ibs.InMemory {
 		return memstore.New()
 	}
-	return aferostore.New(ibs.Afs, ibs.RootPath)
+	if ibs.Readonly {
+		// a read-only server refuses writes at the manager, but loading a topic still
+		// recovers its head block and rebuilds its index; on a directory another instance
+		// owns, neither of those is ours to do
+		return filestore.New(filestore.ReadOnly{FS: filestore.OS{}}, ibs.RootPath)
+	}
+	return filestore.NewOS(ibs.RootPath)
+}
+
+// rootExists reports whether the data directory is there.
+func rootExists(path string) (bool, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (ibs *IbsenServer) Start(listener net.Listener) error {
@@ -226,7 +239,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	if ibs.InMemory {
 		log.Info().Msg("running in-memory only mode")
 	} else {
-		exists, err := ibs.Afs.Exists(ibs.RootPath)
+		exists, err := rootExists(ibs.RootPath)
 		if err != nil {
 			return errore.Wrap(err)
 		}
