@@ -34,5 +34,11 @@ jobs:
       - name: architecture
         run: ./scripts/check-architecture.sh
 
+      # The same claim from the other side: what the linker produced, not what the imports
+      # promised. Prints the two sizes, and fails if an embedded build stops being smaller
+      # than the server.
+      - name: embedded build size
+        run: ./scripts/embedded-size.sh
+
       - name: go test -race
         run: go test -race ./...
