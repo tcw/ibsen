@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/tcw/ibsen/core/topic"
+	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/wiring"
 )
 
@@ -297,33 +298,59 @@ var (
 				return
 			}
 			topic := args[0]
-			var offset uint64 = 0
-			var batchSize64 uint64 = 1000
-			var err error
-			if len(args) == 2 {
-				offset, err = strconv.ParseUint(args[1], 10, 64)
-				if err != nil {
-					fmt.Printf("offset %s not a uint64", args[1])
-				}
-			}
-			if len(args) == 3 {
-				batchSize64, err = strconv.ParseUint(args[2], 10, 32)
-				if err != nil {
-					fmt.Printf("offset %s not a uint64", args[1])
-				}
+			offset, batchSize, err := parseReadArgs(args)
+			if err != nil {
+				log.Fatal().Err(err).Msgf("unable to read topic %s", topic)
 			}
 			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
 			if err != nil {
 				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
 			}
 			defer client.Close()
-			err = client.Read(topic, offset, uint32(batchSize64))
+			err = client.Read(topic, offset, batchSize)
 			if err != nil {
 				log.Fatal().Err(err).Msgf("unable to read topic %s", topic)
 			}
 		},
 	}
 )
+
+// defaultReadBatchSize is how many entries a read asks for at a time when the caller does
+// not say.
+const defaultReadBatchSize uint32 = 1000
+
+// parseReadArgs reads the optional offset and batch size of "client read <topic> [offset]
+// [batchSize]". args must hold the topic name; anything after it is optional.
+//
+// Every argument that is given is parsed, and one that is not a number is an error rather
+// than a default. strconv.ParseUint returns 0 on failure, so the old code's "print a line and
+// carry on" turned a mistyped offset into a read of the whole topic: a command that looks
+// like it worked and did something else.
+func parseReadArgs(args []string) (uint64, uint32, error) {
+	if len(args) > 3 {
+		return 0, 0, errore.NewF("read takes a topic, an offset and a batch size, got %d arguments", len(args))
+	}
+	var offset uint64
+	batchSize := defaultReadBatchSize
+	if len(args) >= 2 {
+		parsed, err := strconv.ParseUint(args[1], 10, 64)
+		if err != nil {
+			return 0, 0, errore.NewF("offset %q is not a number", args[1])
+		}
+		offset = parsed
+	}
+	if len(args) >= 3 {
+		parsed, err := strconv.ParseUint(args[2], 10, 32)
+		if err != nil {
+			return 0, 0, errore.NewF("batch size %q is not a number", args[2])
+		}
+		if parsed == 0 {
+			return 0, 0, errore.New("batch size must be greater than zero")
+		}
+		batchSize = uint32(parsed)
+	}
+	return offset, batchSize, nil
+}
 
 func AbsOrEmpty(path string) string {
 	if path == "" {
