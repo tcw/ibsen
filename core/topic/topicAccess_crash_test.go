@@ -91,14 +91,28 @@ func TestTopic_CrashDuringIndexWriteDropsTheTornPair(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		// Leave the index lagging the log, the way it lags after any write that has not been
+		// indexed yet, by dropping its last pairs and reloading so the topic resumes from
+		// what is on the media. Doing it this way rather than by writing while the crash is
+		// armed is what makes this test deterministic: a write waits on a flush of the log
+		// block, and a crash tripped by the background indexer fails that flush too, so the
+		// write would fail for reasons the test is not about. That was a one-in-thirty flake.
+		indexRef := topic.indexRef(domain.IndexBlock(topic.LogBlockList[0]))
+		lagging := int64(len(blockBytes(t, store, indexRef))) - 5*indexPairSize
+		if lagging < 0 {
+			t.Fatalf("setup: the index holds fewer than five pairs")
+		}
+		if err := store.Truncate(indexRef, lagging); err != nil {
+			t.Fatal(err)
+		}
+		topic = newTestTopic(t, store, 1<<20)
+
 		// half of one pair reaches the media, and the crash takes the rollback with it
 		fs.ArmAfterFor(".idx", indexPairSize/2)
-		writeEntries(t, topic, n, 40)
-		n += 40
 		_, _ = topic.UpdateIndex()
 		fs.Restart()
 
-		indexBytes := blockBytes(t, store, topic.indexRef(domain.IndexBlock(topic.LogBlockList[0])))
+		indexBytes := blockBytes(t, store, indexRef)
 		if len(indexBytes)%indexPairSize == 0 {
 			t.Skip("the crash did not tear a pair on this filesystem")
 		}
