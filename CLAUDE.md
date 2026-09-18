@@ -105,6 +105,7 @@ errore/ utils/              stdlib-only, shared by both sides
   read rejecting a corrupt frame, a corrupt entry inside a valid frame, and an unwired codec.
   `core/topic/frame_test.go` covers the frame bounds, a write reaching the store as one
   append however many frames it makes, and one block holding frames of two codecs.
+- Indexing coalesces instead of dropping work: `Topic.UpdateIndex` leaves a mark when it finds a run under way, and the run takes that mark before it stops, so the tail of a log is always indexed by somebody. There is no background sweep and no ticker. `core/topic/indexing_test.go` gates the store to hold a run still, proves a request arriving during it is picked up rather than dropped, covers sixteen callers coalescing into one run, and covers a failed run leaving the work for the next call. `core/manager/topicsManager_test.go` pins that building a manager starts no goroutine and that the index is complete once writes stop.
 - Embedded: `wiring/embedded` is the second composition root, and `wiring/embedded/embedded_test.go` covers a store being required, write/list/read with nothing else wired, the log satisfying `driver.LogManager`, the block-size default, every other param reaching the core untouched, and `Close` refusing writes while loaded topics stay readable.
 - Frame bounds reach a topic through the manager, and zero still means the topic defaults:
   `core/manager/topicsManager_test.go`. `adapter/driver/cli/root_test.go` covers the flag
@@ -140,7 +141,7 @@ All known bugs below are fixed (2026-09-15), each with a regression test. Remain
 - **Unsent log events**: 27 zerolog events in production code had no `.Msg`/`.Send`, so they logged nothing and never exited (25 `log.Fatal().Err(err)`, a `log.Err(err)` for a failed listen, and the background index failure in `Topic.Write`). The CLI now logs and exits with a message; `wiring/ibsen.go` returns profiling setup errors from `Start` and only logs profiling errors during shutdown, so the lock is still released; the client constructors return the dial error. `logcalls_test.go` parses the repo and fails on any zerolog event that is never sent.
 - **Single-writer lease renewal** (`adapter/driven/locking`): renewal opened the lock file with `O_RDWR|O_EXCL`, which Linux ignores but afero's in-memory fs rejects for an existing file; it now opens with `O_WRONLY|O_TRUNC`. A failed renewal exits the process (another instance could claim the lock). `ReleaseLock` stops the renewer under a mutex, so a clean shutdown no longer races a renewal of the removed file (which used to panic on a nil file). The expired-lease claim checks its write. Tested on mem and OS fs.
 - **TLS paths**: `adapter/driver/grpcapi/api-server.go` used grpc's `testdata.Path` for the cert and key, which joins relative paths onto grpc's own test data directory. `serverCredentials` now loads them as given (relative to the working directory) and returns the error before using the credentials. Covered by `adapter/driver/grpcapi/tls_test.go` (self-signed cert at relative paths, TLS round trip).
-- **Shutdown**: `LogTopicsManager.Close` refuses new writes and topic loads (`manager.ErrClosed`), waits for those in flight, stops the index scheduler and closes each topic; `Topic.Close` refuses writes (`topic.ErrTopicClosed`) and waits for the indexing earlier writes started. Loaded topics stay readable. `IbsenServer.ShutdownCleanly` closes the manager after gRPC stops (a forced stop does not wait for handlers) and only then releases the lock, and `Start` waits for the shutdown to finish, since the process exits when it returns. gRPC calls during shutdown get `Unavailable`. Only the Write goroutine adds to `Topic.indexWg`, under `Topic.mu` before `closed` is set, so `Close` never races an `Add`. Covered by `core/manager/close_test.go` (gated writes) and `wiring/ibsen_test.go`.
+- **Shutdown**: `LogTopicsManager.Close` refuses new writes and topic loads (`manager.ErrClosed`), waits for those in flight, and closes each topic; `Topic.Close` refuses writes (`topic.ErrTopicClosed`) and waits for the indexing earlier writes started. Loaded topics stay readable. `IbsenServer.ShutdownCleanly` closes the manager after gRPC stops (a forced stop does not wait for handlers) and only then releases the lock, and `Start` waits for the shutdown to finish, since the process exits when it returns. gRPC calls during shutdown get `Unavailable`. Only the Write goroutine adds to `Topic.indexWg`, under `Topic.mu` before `closed` is set, so `Close` never races an `Add`. Covered by `core/manager/close_test.go` (gated writes) and `wiring/ibsen_test.go`.
 - **CLI clients**: `newIbsenClient` / `newIbsenBench` discarded the `context.WithTimeout` cancel (`go vet`); the clients now keep it and the connection, and each command defers `Close`.
 - **CLI read arguments**: `client read <topic> <offset> <batchSize>` parsed the batch size and left the offset at zero, so asking for the tail of a topic read all of it; two arguments worked, which is why it went unnoticed. The branches tested `len(args) == 2` and `== 3` rather than `>=`. A failed parse also printed a line and carried on with the zero `strconv.ParseUint` returns, and the batch-size message named the offset argument. Parsing now lives in `parseReadArgs`, refuses what it cannot parse, and is covered by `adapter/driver/cli/root_test.go`, the package's first test.
 - **End-to-end test harness** (`adapter/driver/grpcapi/test`): each test starts its own server on a free port with `startTestServer(t)`, which fails the test if the server does not start and stops it on cleanup; clients are closed. Before, `TestName` left its server running, the next server failed to bind silently (`log.Fatal().Err(err)` without `Msg` never logs or exits), and `-count=2` hung. `TestReadWriteWithOffsetVerification` is enabled and reads from every offset across several blocks. A simulated reader whose stream fails to open returns instead of calling `Recv` on a nil stream (that crashed `TestName` now and then).
@@ -336,10 +337,12 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 | linux/amd64 | 16.48 MB | 1.87 MB | 8.8× smaller |
 | linux/arm | 15.44 MB | 1.81 MB | 8.5× smaller |
 
-- Not free, and not this step's to fix: `manager.NewLogTopicsManager` starts one goroutine
-  with a ten-second ticker to finish the indexing that writes began, so an embedded build
-  carries a timer it did not ask for. `Close` stops it. Making it demand-driven, the way the
-  flusher already is (§2), is a change to the manager rather than to the wiring.
+- Nothing is woken on a timer. `manager.NewLogTopicsManager` used to start a goroutine with a
+  ten-second ticker sweeping every loaded topic, to catch indexing its own exclusion flag had
+  dropped; the topic now takes that work itself, so an embedded build carries no timer it did
+  not ask for. The core starts no goroutine that outlives the call which made it: the flusher
+  is driven by the writer that needs it (§2), and indexing by the write that dirtied the
+  index.
 
 ## 9. Testing (the linchpin)
 
@@ -377,8 +380,10 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 19. ~~Keep compression only where it paid, so turning it on cannot make a topic larger (§5).~~
 20. ~~Add the embedded composition root and check it, by dependency graph and by binary size
     (§8).~~
+21. ~~Coalesce indexing instead of dropping it, and delete the ten-second sweep that covered
+    for the drop (§8).~~
 
-Every step ships green. Steps 0 to 20 are done, one commit each.
+Every step ships green. Steps 0 to 21 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: the frame-bound default, which the benchmark has
 an answer for and nobody has decided (§5); then dictionaries (§6), which §5's measurements

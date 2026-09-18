@@ -55,11 +55,16 @@ const (
 const indexPairSize = index.PairSize
 
 type Topic struct {
-	mu              sync.RWMutex
-	Store           driven.BlockStore
-	Log             driven.Logger
-	TopicName       string
-	indexMutex      int32
+	mu        sync.RWMutex
+	Store     driven.BlockStore
+	Log       driven.Logger
+	TopicName string
+	// indexing is 1 while a run is under way; indexPending is the mark a caller leaves when
+	// it finds one, and the run takes that mark before it stops. Together they coalesce
+	// indexing the way the flusher coalesces syncing, so work is never dropped and never
+	// waits for a timer.
+	indexing        int32
+	indexPending    int32
 	indexWg         *sync.WaitGroup
 	MaxBlockSize    int
 	IndexSparsity   uint32
@@ -172,24 +177,63 @@ func (t *Topic) indexRef(block domain.IndexBlock) driven.BlockRef {
 	return driven.IndexRef(t.topic(), block)
 }
 
+// UpdateIndex brings the index up to date with the log, and reports whether this call was the
+// one that did it. False means another call was already running; that call takes on this
+// one's work too, so the answer is "somebody is indexing", not "this was dropped".
+//
+// A caller that finds a run under way leaves a mark rather than its work, and the run takes
+// the mark before it stops. That closes the window the old code left: it released the
+// exclusion flag after the topic lock, so a write landing in between had its index request
+// thrown away, and nothing but a ten-second sweep over every loaded topic would notice. There
+// is no sweep now, and so no timer for an embedded build to carry.
+//
+// This is the flusher's arrangement applied to indexing (§2): whoever is already working
+// takes the work that arrives while it works, rather than everyone re-deciding.
 func (t *Topic) UpdateIndex() (bool, error) {
-
-	// Check if an index is currently running
-	if !atomic.CompareAndSwapInt32(&t.indexMutex, 0, 1) {
-		t.Log.Log(driven.LevelDebug, "competing indices")
+	// the mark goes up first, so a run on its way out sees it before it decides to stop
+	atomic.StoreInt32(&t.indexPending, 1)
+	if !atomic.CompareAndSwapInt32(&t.indexing, 0, 1) {
+		t.Log.Log(driven.LevelDebug, "index already running, left it the work")
 		return false, nil
 	}
-	defer atomic.CompareAndSwapInt32(&t.indexMutex, 1, 0)
+	for {
+		for atomic.SwapInt32(&t.indexPending, 0) == 1 {
+			if err := t.indexOnce(); err != nil {
+				// the work is still outstanding, so put the mark back for the next write or
+				// the next explicit call. Retrying here would spin on a store that is failing,
+				// which is the rule a failed flush follows too.
+				atomic.StoreInt32(&t.indexPending, 1)
+				atomic.StoreInt32(&t.indexing, 0)
+				return true, err
+			}
+		}
+		atomic.StoreInt32(&t.indexing, 0)
+		// a caller that arrived between taking the mark and releasing the flag left it for
+		// someone who was already leaving. Take it, rather than let the tail of the log go
+		// unindexed until the next write happens along.
+		if atomic.LoadInt32(&t.indexPending) == 0 {
+			return true, nil
+		}
+		if !atomic.CompareAndSwapInt32(&t.indexing, 0, 1) {
+			// somebody else got there first and now owns the mark
+			return true, nil
+		}
+	}
+}
+
+// indexOnce brings the index up to date with the log as it stands now. It holds the topic
+// lock throughout, so no write lands in the middle of a scan.
+func (t *Topic) indexOnce() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	// index log blocks not already indexed
 	notIndexed, err := t.findBlocksToIndex()
 	if err == domain.NoBlocksFound {
-		return false, nil
+		return nil
 	}
 	if err != nil {
-		return false, errore.Wrap(err)
+		return errore.Wrap(err)
 	}
 
 	for _, block := range notIndexed {
@@ -197,7 +241,7 @@ func (t *Topic) UpdateIndex() (bool, error) {
 		if t.IndexPosition == nil {
 			pos, err := t.indexBlock(block, 0)
 			if err != nil {
-				return true, errore.Wrap(err)
+				return errore.Wrap(err)
 			}
 			t.debugLogIndexing(pos.Block, true, "first block")
 			t.addNewIndexBlock(block)
@@ -209,7 +253,7 @@ func (t *Topic) UpdateIndex() (bool, error) {
 		if position.Block == block {
 			pos, err := t.indexBlock(block, position.ByteOffset)
 			if err != nil {
-				return true, errore.Wrap(err)
+				return errore.Wrap(err)
 			}
 			t.debugLogIndexing(pos.Block, pos.ByteOffset == position.ByteOffset, "existing block")
 			t.IndexPosition = &pos
@@ -219,12 +263,12 @@ func (t *Topic) UpdateIndex() (bool, error) {
 		pos, err := t.indexBlock(block, 0)
 		t.debugLogIndexing(pos.Block, true, "new block")
 		if err != nil {
-			return true, errore.Wrap(err)
+			return errore.Wrap(err)
 		}
 		t.addNewIndexBlock(block)
 		t.IndexPosition = &pos
 	}
-	return true, nil
+	return nil
 }
 
 func (t *Topic) LoadOrCreate() error {

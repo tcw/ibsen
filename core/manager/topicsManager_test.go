@@ -2,6 +2,8 @@ package manager
 
 import (
 	"fmt"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
 	"github.com/tcw/ibsen/core/domain"
+	"github.com/tcw/ibsen/core/index"
 	"github.com/tcw/ibsen/core/logfmt"
 	"github.com/tcw/ibsen/core/port/driven"
 	"github.com/tcw/ibsen/core/port/driver"
@@ -32,10 +35,9 @@ func newTestManager(t *testing.T, afs *afero.Afero) *LogTopicsManager {
 func newTestManagerWithStore(t *testing.T, store driven.BlockStore) *LogTopicsManager {
 	t.Helper()
 	m, err := NewLogTopicsManager(LogTopicManagerParams{
-		Store:            store,
-		MaxBlockSize:     1000,
-		TTL:              time.Second,
-		CheckForNewEvery: time.Millisecond,
+		Store:        store,
+		MaxBlockSize: 1000,
+		TTL:          time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -153,12 +155,11 @@ func TestManager_topicThatFailsToLoadReturnsError(t *testing.T) {
 func TestManager_frameBoundsReachTheTopic(t *testing.T) {
 	afs := newTestAfs(t)
 	m, err := NewLogTopicsManager(LogTopicManagerParams{
-		Store:            aferostore.New(afs, "data"),
-		TTL:              time.Minute,
-		CheckForNewEvery: time.Minute,
-		MaxBlockSize:     1 << 20,
-		MaxFrameEntries:  7,
-		MaxFrameBytes:    4096,
+		Store:           aferostore.New(afs, "data"),
+		TTL:             time.Minute,
+		MaxBlockSize:    1 << 20,
+		MaxFrameEntries: 7,
+		MaxFrameBytes:   4096,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -193,5 +194,62 @@ func TestManager_zeroFrameBoundsMeanTheTopicDefaults(t *testing.T) {
 	}
 	if tp.MaxFrameBytes != topic.DefaultMaxFrameBytes {
 		t.Errorf("topic holds MaxFrameBytes %d, want the default %d", tp.MaxFrameBytes, topic.DefaultMaxFrameBytes)
+	}
+}
+
+// Indexing is driven by writes, not by a clock. The manager used to sweep every loaded topic
+// every ten seconds to catch work its own exclusion flag had dropped; the topic now takes
+// that work itself, so there is nothing to sweep and nothing to wake the CPU on a device that
+// would rather be asleep.
+func TestManager_startsNoBackgroundGoroutine(t *testing.T) {
+	store := aferostore.New(newTestAfs(t), "data")
+
+	before := runtime.NumGoroutine()
+	m, err := NewLogTopicsManager(LogTopicManagerParams{Store: store, MaxBlockSize: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := runtime.NumGoroutine()
+	m.Close()
+
+	if after > before {
+		t.Errorf("building a manager started %d goroutines, want none: indexing follows writes, not a timer",
+			after-before)
+	}
+}
+
+// And the index is still complete once writes stop, which is what the sweep was there for.
+func TestManager_indexIsCompleteOnceWritesStop(t *testing.T) {
+	afs := newTestAfs(t)
+	m := newTestManager(t, afs)
+
+	for i := 0; i < 30; i++ {
+		writeTopic(t, m, "topic", i, 1)
+	}
+	m.Close()
+
+	// one entry to a write is one entry to a frame, so the frames covering offsets 0, 10 and
+	// 20 each earn a pair. They are spread over several blocks, since 30 frames do not fit in
+	// this manager's block size, so the count is taken across all of them.
+	pairs := 0
+	entries, err := afs.ReadDir("data/topic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) != ".idx" {
+			continue
+		}
+		idx, err := afs.ReadFile(filepath.Join("data/topic", entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(idx)%index.PairSize != 0 {
+			t.Fatalf("%s holds %d bytes, not whole pairs", entry.Name(), len(idx))
+		}
+		pairs = pairs + len(idx)/index.PairSize
+	}
+	if pairs != 3 {
+		t.Errorf("the index holds %d pairs with no sweep to finish it, want 3", pairs)
 	}
 }

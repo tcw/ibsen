@@ -15,11 +15,11 @@ import (
 var _ driver.LogManager = &LogTopicsManager{}
 
 type LogTopicManagerParams struct {
-	ReadOnly         bool
-	Store            driven.BlockStore
-	TTL              time.Duration
-	CheckForNewEvery time.Duration
-	MaxBlockSize     int
+	ReadOnly bool
+	Store    driven.BlockStore
+	// TTL is unused here; the gRPC adapter carries its own connection TTL.
+	TTL          time.Duration
+	MaxBlockSize int
 	// IndexSparsity is the number of entries between two index pairs; zero means
 	// topic.DefaultIndexSparsity.
 	IndexSparsity uint32
@@ -56,12 +56,9 @@ var ErrClosed = errors.New("log manager is closed")
 
 // managerState tracks requests that can write to storage, so Close can wait for them.
 type managerState struct {
-	mu          sync.RWMutex
-	closed      bool
-	requests    sync.WaitGroup
-	stopIndexer chan struct{}
-	indexerDone chan struct{}
-	stopOnce    sync.Once
+	mu       sync.RWMutex
+	closed   bool
+	requests sync.WaitGroup
 }
 
 // topicLoad is the first load of a topic from disk, shared by every request for the topic
@@ -83,18 +80,14 @@ func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error)
 		TopicWriteLocker: &sync.Map{},
 		Topics:           &sync.Map{},
 		loads:            &sync.Map{},
-		state: &managerState{
-			stopIndexer: make(chan struct{}),
-			indexerDone: make(chan struct{}),
-		},
-		StatusAccess: &topic.Status{Store: params.Store, Log: params.Logger},
+		state:            &managerState{},
+		StatusAccess:     &topic.Status{Store: params.Store, Log: params.Logger},
 	}
-	go manager.startIndexScheduler()
 	return manager, nil
 }
 
-// Close stops accepting writes and topic loads, waits for those in flight, stops the index
-// scheduler and waits for background indexing, so nothing writes to storage once it
+// Close stops accepting writes and topic loads, waits for those in flight, and waits for the
+// background indexing each topic's writes started, so nothing writes to storage once it
 // returns. Reads of loaded topics are not waited for: they do not write, and a tailing read
 // lasts until its client leaves. Calling Close again is a no-op.
 func (l *LogTopicsManager) Close() {
@@ -102,8 +95,6 @@ func (l *LogTopicsManager) Close() {
 	l.state.closed = true
 	l.state.mu.Unlock()
 	l.state.requests.Wait()
-	l.state.stopOnce.Do(func() { close(l.state.stopIndexer) })
-	<-l.state.indexerDone
 	l.Topics.Range(func(_, loaded any) bool {
 		loaded.(*topic.Topic).Close()
 		return true
@@ -246,26 +237,5 @@ func (l *LogTopicsManager) warnAboutStrayFiles(topicName domain.TopicName) {
 	for _, name := range stray {
 		l.Params.Logger.Log(driven.LevelWarn, "ignoring file that is not a log or index block",
 			driven.Str("topic", string(topicName)), driven.Str("file", name))
-	}
-}
-
-func (l *LogTopicsManager) startIndexScheduler() {
-	defer close(l.state.indexerDone)
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-l.state.stopIndexer:
-			return
-		case <-ticker.C:
-			l.Topics.Range(func(key, value any) bool {
-				_, err := value.(*topic.Topic).UpdateIndex()
-				if err != nil {
-					l.Params.Logger.Log(driven.LevelError, "index builder for topic has failed",
-						driven.Err(err), driven.Str("topic", key.(string)))
-				}
-				return true
-			})
-		}
 	}
 }
