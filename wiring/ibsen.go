@@ -51,6 +51,13 @@ type IbsenServer struct {
 	// IndexSparsity is the number of entries between two index pairs; zero means
 	// topic.DefaultIndexSparsity.
 	IndexSparsity uint32
+	// Codec compresses the frames written from now on, and Codecs resolves the codec byte of
+	// frames already written. Both are optional injection points, and what a build puts here
+	// is what decides how much compression code it links: leaving them out wires the identity
+	// codec and links none. Whatever writes must also be readable, so defaults() folds Codec
+	// into Codecs.
+	Codec  driven.Codec
+	Codecs driven.Codecs
 	// FlushEntries and FlushInterval are the durability policy: how many entries may wait
 	// for a flush, and how long a batch may be held back hoping for more. Zero entries means
 	// topic.DefaultFlushEntries, which makes every write durable before it is acknowledged.
@@ -108,6 +115,15 @@ func (ibs *IbsenServer) defaults() {
 		ibs.Lock = locking.NewFileLock(ibs.Afs,
 			filepath.Join(ibs.RootPath, writeLockFileName), writeLockLease, writeLockReclaim)
 	}
+	// a server must be able to read back what it writes, so the write codec is always in the
+	// read registry whether or not the caller remembered to put it there
+	if ibs.Codec != nil {
+		if ibs.Codecs == nil {
+			ibs.Codecs = driven.NewCodecs(ibs.Codec)
+		} else if _, taken := ibs.Codecs[ibs.Codec.ID()]; !taken {
+			ibs.Codecs[ibs.Codec.ID()] = ibs.Codec
+		}
+	}
 }
 
 func (ibs *IbsenServer) Start(listener net.Listener) error {
@@ -158,6 +174,8 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		CheckForNewEvery: time.Second * 2,
 		MaxBlockSize:     ibs.MaxBlockSize,
 		IndexSparsity:    ibs.IndexSparsity,
+		Codec:            ibs.Codec,
+		Codecs:           ibs.Codecs,
 		FlushEntries:     ibs.FlushEntries,
 		FlushInterval:    ibs.FlushInterval,
 		Logger:           zerologger.New(log.Logger),

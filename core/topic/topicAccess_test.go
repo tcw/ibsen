@@ -94,12 +94,10 @@ func TestTopic_UpdateIndex_sigle_block(t *testing.T) {
 		TopicName:    "topic1",
 		MaxBlockSize: 20000,
 	})
-	err := topic.Write(createInputEntries(100))
+	writeOneByOne(t, topic, 0, 100)
+	err := topic.LoadOrCreate()
 	assert.Nil(t, err)
-	err = topic.LoadOrCreate()
-	assert.Nil(t, err)
-	err = topic.Write(createInputEntries(100))
-	assert.Nil(t, err)
+	writeOneByOne(t, topic, 100, 100)
 	topic.indexWg.Wait()
 	updatedIndex, err := topic.UpdateIndex()
 	assert.Nil(t, err)
@@ -119,14 +117,11 @@ func TestTopic_UpdateIndex_multiple_blocks(t *testing.T) {
 		TopicName:    "topic1",
 		MaxBlockSize: 2000,
 	})
-	err := topic.Write(createInputEntries(1000))
+	writeOneByOne(t, topic, 0, 1000)
+	err := topic.LoadOrCreate()
 	assert.Nil(t, err)
-	err = topic.LoadOrCreate()
-	assert.Nil(t, err)
-	err = topic.Write(createInputEntries(1000))
-	assert.Nil(t, err)
-	err = topic.Write(createInputEntries(1000))
-	assert.Nil(t, err)
+	writeOneByOne(t, topic, 1000, 1000)
+	writeOneByOne(t, topic, 2000, 1000)
 	topic.indexWg.Wait()
 	updatedIndex, err := topic.UpdateIndex()
 	assert.Nil(t, err)
@@ -137,6 +132,19 @@ func TestTopic_UpdateIndex_multiple_blocks(t *testing.T) {
 	index, err := topic.getIndexFromIndexBlock(head)
 	assert.Nil(t, err)
 	assert.Equal(t, domain.Offset(2990), index.Head().Offset)
+}
+
+// writeOneByOne writes count entries from an offset, one to a write and so one to a frame.
+// An index pair points at a frame start, so a test about which offsets end up indexed has to
+// say how the entries are framed.
+func writeOneByOne(t *testing.T, topic *Topic, from, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		entries := [][]byte{[]byte("dummy" + strconv.Itoa(from+i))}
+		if err := topic.Write(&entries); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func createInputEntries(numberOfEntries int) *[][]byte {

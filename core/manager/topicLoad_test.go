@@ -41,10 +41,7 @@ func (g *gatedLoadStore) List(topic domain.TopicName, kind driven.BlockKind) ([]
 func TestManager_concurrentFirstRequestsLoadTopicOnce(t *testing.T) {
 	afs := newTestAfs(t)
 	store := &gatedLoadStore{BlockStore: aferostore.New(afs, "data"), topic: "topic", second: make(chan struct{})}
-	var block []byte
-	for i := 0; i < 30; i++ {
-		block = append(block, domain.CreateByteEntry([]byte(fmt.Sprintf("topic-%d", i)), domain.Offset(i))...)
-	}
+	block := logBlockBytes(t, "topic", 0, 30)
 	if _, err := store.Append(driven.LogRef("topic", 0), block); err != nil {
 		t.Fatal(err)
 	}

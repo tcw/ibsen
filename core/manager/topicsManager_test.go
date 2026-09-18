@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
 	"github.com/tcw/ibsen/core/domain"
+	"github.com/tcw/ibsen/core/logfmt"
 	"github.com/tcw/ibsen/core/port/driven"
 	"github.com/tcw/ibsen/core/port/driver"
 )
@@ -39,6 +40,23 @@ func newTestManagerWithStore(t *testing.T, store driven.BlockStore) *LogTopicsMa
 		t.Fatal(err)
 	}
 	return &m
+}
+
+// logBlockBytes builds the bytes of a log block holding count entries from an offset, each
+// in a frame of its own, which is what a run of single-entry writes leaves behind.
+func logBlockBytes(t *testing.T, topic string, from, count int) []byte {
+	t.Helper()
+	var block []byte
+	for i := 0; i < count; i++ {
+		offset := domain.Offset(from + i)
+		entry := domain.CreateByteEntry([]byte(fmt.Sprintf("%s-%d", topic, from+i)), offset)
+		frame, err := logfmt.EncodeFrame(driven.NoCodec{}, offset, 1, entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		block = append(block, frame...)
+	}
+	return block
 }
 
 func writeTopic(t *testing.T, m *LogTopicsManager, topic string, from, count int) {
@@ -75,10 +93,7 @@ func TestManager_loadsTopicWithStrayFiles(t *testing.T) {
 	afs := newTestAfs(t)
 	// a topic as a previous run left it, written directly so no background indexing is still
 	// running when the manager loads it: one log block plus files that are not blocks
-	var block []byte
-	for i := 0; i < 30; i++ {
-		block = append(block, domain.CreateByteEntry([]byte(fmt.Sprintf("topic-%d", i)), domain.Offset(i))...)
-	}
+	block := logBlockBytes(t, "topic", 0, 30)
 	files := map[string][]byte{
 		"data/topic/00000000000000000000.log": block,
 		"data/topic/README":                   []byte("not a block"),

@@ -23,6 +23,11 @@ type LogTopicManagerParams struct {
 	// IndexSparsity is the number of entries between two index pairs; zero means
 	// topic.DefaultIndexSparsity.
 	IndexSparsity uint32
+	// Codec compresses the frames written from now on; nil writes them uncompressed.
+	Codec driven.Codec
+	// Codecs resolves the codec byte of frames already written; nil reads uncompressed
+	// frames and reports anything else as an unknown codec.
+	Codecs driven.Codecs
 	// FlushEntries is how many entries may wait before a flush is forced; zero means
 	// topic.DefaultFlushEntries, which flushes every write before acknowledging it.
 	FlushEntries uint32
@@ -201,6 +206,8 @@ func (l *LogTopicsManager) loadOrCreateNewTopic(topicName domain.TopicName) (*to
 	loaded := topic.NewLogTopic(topic.Params{
 		Logger:        l.Params.Logger,
 		IndexSparsity: l.Params.IndexSparsity,
+		Codec:         l.Params.Codec,
+		Codecs:        l.Params.Codecs,
 		FlushEntries:  l.Params.FlushEntries,
 		FlushInterval: l.Params.FlushInterval,
 		Store:         l.Params.Store,

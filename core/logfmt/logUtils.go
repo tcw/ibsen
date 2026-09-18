@@ -1,10 +1,10 @@
-// Package log reads and recovers log blocks through the driven.BlockStore port. It knows
-// the entry format and nothing about where the bytes live.
+// Package logfmt reads and recovers log blocks through the driven.BlockStore port. It knows
+// how a block is framed and how an entry is encoded, and nothing about where the bytes live.
 package logfmt
 
 import (
 	"bufio"
-	"encoding/binary"
+	"bytes"
 	"errors"
 	"io"
 	"sync"
@@ -24,88 +24,58 @@ const maxBatchBytes = 10 * 1024 * 1024
 // maxBatchPrealloc caps the entries preallocated for a batch, since the batch size comes from clients.
 const maxBatchPrealloc = 1024
 
-// offsetFieldSize is the trailing offset of an entry, which is also what a look back reads.
-const offsetFieldSize = 8
-
 var NoByteOffsetFound = errors.New("no byte offset found")
 
-// FindByteOffsetFromAndIncludingOffset scans a log block for the entry with the given
-// offset and returns where it starts. startAtByteOffset must be an entry boundary; the
-// entry ending there is used to skip the scan when it is already the one before offset.
-func FindByteOffsetFromAndIncludingOffset(store driven.BlockStore, ref driven.BlockRef, startAtByteOffset int64, offset domain.Offset) (int64, int, error) {
-	scanCount := 0
-	if offset == 0 {
-		return 0, 0, nil
-	}
-	openAt := startAtByteOffset
-	if startAtByteOffset > 0 {
-		openAt = startAtByteOffset - offsetFieldSize
-	}
-	block, err := store.Open(ref, openAt)
+// FindFrameByteOffset scans a log block for the frame holding offset and returns where that
+// frame starts. startAtByteOffset must be a frame boundary, which is what the index stores.
+//
+// Nothing is decoded and no payload is read: a header says which offsets its frame holds and
+// how many bytes it takes, so the scan steps over whole frames. That is the difference
+// between this and the entry-by-entry scan it replaced.
+func FindFrameByteOffset(store driven.BlockStore, ref driven.BlockRef, startAtByteOffset int64, offset domain.Offset) (int64, int, error) {
+	block, err := store.Open(ref, startAtByteOffset)
 	if err != nil {
-		return 0, scanCount, errore.Wrap(err)
+		return 0, 0, errore.Wrap(err)
 	}
 	defer block.Close()
 	reader := bufio.NewReader(block)
 
-	if startAtByteOffset > 0 {
-		lastOffset, err := offsetLookBack(reader)
-		if err != nil {
-			return 0, 0, errore.Wrap(err)
-		}
-		if lastOffset+1 == offset {
-			return startAtByteOffset, 0, nil
-		}
-	}
-
 	byteOffset := startAtByteOffset
+	scanCount := 0
 	for {
-		entry, n, err := domain.ReadEntry(reader, domain.MaxEntrySize)
+		header, err := domain.ReadFrameHeader(reader, domain.MaxFrameSize)
 		if err == io.EOF {
 			return 0, scanCount, NoByteOffsetFound
 		}
 		if err != nil {
 			return 0, scanCount, errore.Wrap(err)
 		}
-		byteOffset = byteOffset + int64(n)
-		scanCount = scanCount + 1
-		if domain.Offset(entry.Offset+1) == offset {
+		if header.Contains(offset) {
 			return byteOffset, scanCount, nil
 		}
+		if header.FirstOffset > offset {
+			// the scan started past the offset asked for, so the block does not hold it
+			return 0, scanCount, NoByteOffsetFound
+		}
+		if err = domain.SkipFramePayload(reader, header); err != nil {
+			return 0, scanCount, errore.Wrap(err)
+		}
+		byteOffset = byteOffset + header.Size()
+		scanCount = scanCount + 1
 	}
 }
 
-// offsetLookBack reads the offset field an entry ends with, so a reader opened right after
-// an entry can tell which offset comes next.
-func offsetLookBack(r io.Reader) (domain.Offset, error) {
-	bytes := make([]byte, offsetFieldSize)
-	if _, err := io.ReadFull(r, bytes); err != nil {
-		return 0, errore.Wrap(err)
-	}
-	return domain.Offset(binary.LittleEndian.Uint64(bytes)), nil
-}
-
-// ReadEntryAt reads and verifies the entry starting at byteOffset in a log block.
-func ReadEntryAt(store driven.BlockStore, ref driven.BlockRef, byteOffset int64) (domain.LogEntry, int, error) {
-	block, err := store.Open(ref, byteOffset)
-	if err != nil {
-		return domain.LogEntry{}, 0, errore.Wrap(err)
-	}
-	defer block.Close()
-	entry, n, err := domain.ReadEntry(block, domain.MaxEntrySize)
-	if err != nil {
-		return domain.LogEntry{}, 0, errore.Wrap(err)
-	}
-	return entry, n, nil
-}
-
-// RecoverBlock verifies every entry of a log block from the start and truncates a torn
-// tail left by an interrupted write. blockSize is the size the store reports for the block.
-// It returns the offset following the last valid entry, the valid size of the block in
-// bytes, and the number of bytes truncated. A valid entry with an unexpected offset is
-// corruption rather than a torn write and is returned as an error without truncating.
+// RecoverBlock verifies every frame of a log block from the start and truncates a torn tail
+// left by an interrupted write. blockSize is the size the store reports for the block. It
+// returns the offset following the last valid frame, the valid size of the block in bytes,
+// and the number of bytes truncated.
+//
+// It decodes nothing: a frame is checked against the two checksums in its header, so a build
+// that does not carry the codec a block was written with can still cut its torn tail. A
+// valid frame with an unexpected offset is corruption rather than a torn write and is
+// returned as an error without truncating, as is a block this build cannot read at all.
 func RecoverBlock(store driven.BlockStore, ref driven.BlockRef, firstOffset domain.Offset, blockSize int64) (domain.Offset, int64, int64, error) {
-	nextOffset, validSize, err := scanValidEntries(store, ref, firstOffset, blockSize)
+	nextOffset, validSize, err := scanValidFrames(store, ref, firstOffset, blockSize)
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -119,7 +89,7 @@ func RecoverBlock(store driven.BlockStore, ref driven.BlockRef, firstOffset doma
 	return nextOffset, validSize, truncated, nil
 }
 
-func scanValidEntries(store driven.BlockStore, ref driven.BlockRef, firstOffset domain.Offset, blockSize int64) (domain.Offset, int64, error) {
+func scanValidFrames(store driven.BlockStore, ref driven.BlockRef, firstOffset domain.Offset, blockSize int64) (domain.Offset, int64, error) {
 	block, err := store.Open(ref, 0)
 	if err != nil {
 		return 0, 0, errore.Wrap(err)
@@ -130,36 +100,59 @@ func scanValidEntries(store driven.BlockStore, ref driven.BlockRef, firstOffset 
 	var validSize int64
 	for {
 		// a payload cannot be larger than what is left of the block
-		var maxSize uint64
-		if remaining := blockSize - validSize; remaining >= domain.EntryOverhead {
-			maxSize = uint64(remaining - domain.EntryOverhead)
+		var maxStored uint64
+		if remaining := blockSize - validSize - domain.FrameHeaderSize; remaining > 0 {
+			maxStored = uint64(remaining)
 		}
-		entry, n, err := domain.ReadEntry(reader, maxSize)
-		if err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, domain.ErrCorruptEntry) {
+		header, err := domain.ReadFrameHeader(reader, maxStored)
+		if err == io.EOF {
+			return nextOffset, validSize, nil
+		}
+		if validSize == 0 && errors.Is(err, domain.ErrNotAFrame) {
+			// nothing in this block was ever a frame, so there is no torn tail to cut and
+			// nothing here to guess at: say so rather than truncate bytes we do not understand
+			return 0, 0, errore.WrapWithContextF(domain.ErrUnsupportedLogFormat,
+				"log block %s does not start with a frame header: written before framing, or damaged", ref)
+		}
+		if errors.Is(err, domain.ErrUnsupportedLogFormat) {
+			return 0, 0, errore.Wrap(err)
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, domain.ErrCorruptFrame) {
 			return nextOffset, validSize, nil
 		}
 		if err != nil {
 			return 0, 0, errore.Wrap(err)
 		}
-		if domain.Offset(entry.Offset) != nextOffset {
-			return 0, 0, errore.NewF("log block %s: entry at byte %d has offset %d, expected %d",
-				ref, validSize, entry.Offset, nextOffset)
+		err = domain.VerifyFramePayload(reader, header)
+		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, domain.ErrCorruptFrame) {
+			return nextOffset, validSize, nil
 		}
-		nextOffset = nextOffset + 1
-		validSize = validSize + int64(n)
+		if err != nil {
+			return 0, 0, errore.Wrap(err)
+		}
+		if header.FirstOffset != nextOffset {
+			return 0, 0, errore.NewF("log block %s: frame at byte %d starts at offset %d, expected %d",
+				ref, validSize, header.FirstOffset, nextOffset)
+		}
+		nextOffset = header.EndOffset()
+		validSize = validSize + header.Size()
 	}
 }
 
 type ReadFileParams struct {
-	// Reader holds the log block, positioned at the entry FromOffset names.
-	Reader    io.Reader
+	// Reader holds the log block, positioned at the start of the frame holding FromOffset.
+	Reader io.Reader
+	// Codecs resolves the codec byte a frame carries. A nil registry reads frames written
+	// without compression and reports the rest as unknown.
+	Codecs    driven.Codecs
 	LogChan   chan *[]domain.LogEntry
 	Wg        *sync.WaitGroup
 	BatchSize uint32
 	// Cancel stops the read with domain.ErrReadCancelled when closed; nil never cancels.
 	Cancel <-chan struct{}
-	// FromOffset is the offset the first entry must have. Zero takes the offset of the
-	// first entry as the start, for a reader whose first offset the caller does not know.
+	// FromOffset is the first offset to send. The frame holding it may start earlier, and
+	// the entries before it are decoded and dropped. Zero sends from the first entry there
+	// is, for a reader whose first offset the caller does not know.
 	FromOffset domain.Offset
 	EndOffset  domain.Offset
 }
@@ -215,48 +208,78 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 		currentBatchInBytes = 0
 		return nil
 	}
-	for {
-		if currentOffset == params.EndOffset {
-			if len(logEntries) > 0 {
-				if err := sendBatch(); err != nil {
-					return ReadResult{}, errore.Wrap(err)
-				}
-			}
-			return ReadResult{
-				LastLogOffset: offsetFromLogg,
-				EntriesRead:   entriesRead,
-			}, nil
-		}
-		if len(logEntries) == int(params.BatchSize) || currentBatchInBytes > maxBatchBytes {
+	// complete sends whatever the last batch holds and reports how far the read got
+	complete := func() (ReadResult, error) {
+		if len(logEntries) > 0 {
 			if err := sendBatch(); err != nil {
 				return ReadResult{}, errore.Wrap(err)
 			}
 		}
-		entry, _, err := domain.ReadEntry(reader, domain.MaxEntrySize)
+		return ReadResult{
+			LastLogOffset: offsetFromLogg,
+			EntriesRead:   entriesRead,
+		}, nil
+	}
+	for {
+		if currentOffset == params.EndOffset {
+			return complete()
+		}
+		header, err := domain.ReadFrameHeader(reader, domain.MaxFrameSize)
 		if err == io.EOF {
-			if len(logEntries) > 0 {
-				if err := sendBatch(); err != nil {
-					return ReadResult{}, errore.Wrap(err)
-				}
-			}
-			return ReadResult{
-				LastLogOffset: offsetFromLogg,
-				EntriesRead:   entriesRead,
-			}, nil
+			return complete()
 		}
 		if err != nil {
 			return ReadResult{}, errore.Wrap(err)
 		}
-		offsetFromLogg = domain.Offset(entry.Offset)
-		if currentOffset == 0 {
-			currentOffset = offsetFromLogg
+		// a frame that ends before the read begins is stepped over, not decoded
+		if header.EndOffset() <= params.FromOffset {
+			if err = domain.SkipFramePayload(reader, header); err != nil {
+				return ReadResult{}, errore.Wrap(err)
+			}
+			continue
 		}
-		if currentOffset != offsetFromLogg {
-			return ReadResult{}, errore.NewF("read order assertion failed, expected [%d] actual [%d]", currentOffset, offsetFromLogg)
+		payload, err := domain.ReadFramePayload(reader, header)
+		if err != nil {
+			return ReadResult{}, errore.Wrap(err)
 		}
-		logEntries = append(logEntries, entry)
-		currentBatchInBytes = currentBatchInBytes + entry.ByteSize
-		entriesRead = entriesRead + 1
-		currentOffset = currentOffset + 1
+		entries, err := DecodeFrame(params.Codecs, header, payload)
+		if err != nil {
+			return ReadResult{}, errore.Wrap(err)
+		}
+		frame := bytes.NewReader(entries)
+		for i := uint32(0); i < header.EntryCount; i++ {
+			entry, _, err := domain.ReadEntry(frame, domain.MaxEntrySize)
+			if err != nil {
+				return ReadResult{}, errore.Wrap(err)
+			}
+			offset := domain.Offset(entry.Offset)
+			if expected := header.FirstOffset + domain.Offset(i); offset != expected {
+				return ReadResult{}, errore.NewF("frame at offset %d holds offset %d where %d was expected",
+					header.FirstOffset, offset, expected)
+			}
+			if offset < params.FromOffset {
+				// the frame began before the read did
+				continue
+			}
+			if currentOffset == 0 {
+				currentOffset = offset
+			}
+			if currentOffset != offset {
+				return ReadResult{}, errore.NewF("read order assertion failed, expected [%d] actual [%d]", currentOffset, offset)
+			}
+			if currentOffset == params.EndOffset {
+				return complete()
+			}
+			if len(logEntries) == int(params.BatchSize) || currentBatchInBytes > maxBatchBytes {
+				if err := sendBatch(); err != nil {
+					return ReadResult{}, errore.Wrap(err)
+				}
+			}
+			logEntries = append(logEntries, entry)
+			currentBatchInBytes = currentBatchInBytes + entry.ByteSize
+			offsetFromLogg = offset
+			entriesRead = entriesRead + 1
+			currentOffset = currentOffset + 1
+		}
 	}
 }
