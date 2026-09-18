@@ -11,7 +11,7 @@ beside it:
 
 ```sh
 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
-  ./core/... ./wiring/embedded/... \
+  ./core/... ./wiring/embedded/... ./adapter/driven/blockstore/filestore/... \
   ./adapter/driven/blockstore/memstore/... ./adapter/driven/blockstore/flashstore/... ./adapter/driven/blockstore/conformance/... \
   | grep -v '^github.com/tcw/ibsen'
 ```
@@ -64,7 +64,7 @@ adapter/
     grpcapi/                gRPC server
     cli/                    cobra CLI
   driven/                   things the core drives
-    blockstore/{aferostore,memstore,flashstore,faultfs,conformance}
+    blockstore/{filestore,aferostore,memstore,flashstore,faultfs,conformance}
     compression/zstd/       zstd adapter for driven.Codec
     locking/                file-lease adapter for driven.SingleIbsenWriterLock
     logging/zerologger/     zerolog adapter for driven.Logger
@@ -77,14 +77,15 @@ main.go                     entry point
 errore/ utils/              stdlib-only, shared by both sides
 ```
 
-- Pure today: all of `core/`, all of `wiring/embedded/` including its example program, plus the `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
-- Not pure, by design: everything under `adapter/`, and `wiring/` itself.
-- **afero is on its way out.** It was the storage port before `BlockStore` existed, and is now a second filesystem abstraction underneath our own. It costs 1.63 MB — a minimal build goes from 1.77 MB with `memstore` to 3.40 MB with `aferostore` — because `github.com/spf13/afero` imports `net/http` and `golang.org/x/text`, neither of which a log server needs to read a file. Its in-memory filesystem has also cost correctness twice, both times by behaving unlike a real one: the `O_RDWR|O_EXCL` renewal bug in §1, and `MemMapFs.OpenFile` checking and creating under separate locks so `O_CREATE|O_EXCL` is not atomic there. The removal is a strangler: (1) in-memory mode to `memstore`, done; (2) a `filestore` adapter on `os` behind a small owned seam — the adapter uses only `Exists`, `DirExists`, `Mkdir`, `MkdirAll`, `Open`, `OpenFile`, `ReadDir`, `Remove` and six methods on the handle — validated by the conformance, crash and property suites that already run against every adapter; (3) the same seam for `adapter/driven/locking`; (4) delete `aferostore` and the dependency. `adapter/driven/locking` imports `uuid` and `afero`; `adapter/driven/logging/zerologger` imports `zerolog`; `adapter/driven/compression/zstd` imports `klauspost/compress`; the driving adapters import gRPC and cobra.
+- Pure today: all of `core/`, all of `wiring/embedded/` including its example program, plus the `filestore`, `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
+- Not pure, by design: everything under `adapter/`, and `wiring/` itself. `adapter/driven/locking` imports `uuid` and `afero`; `adapter/driven/logging/zerologger` imports `zerolog`; `adapter/driven/compression/zstd` imports `klauspost/compress`; the driving adapters import gRPC and cobra.
+- **afero is on its way out.** It was the storage port before `BlockStore` existed, and is now a second filesystem abstraction underneath our own. It costs 1.63 MB — a minimal build goes from 1.77 MB with `memstore` to 3.40 MB with `aferostore` — because `github.com/spf13/afero` imports `net/http` and `golang.org/x/text`, neither of which a log server needs to read a file. Its in-memory filesystem has also cost correctness twice, both times by behaving unlike a real one: the `O_RDWR|O_EXCL` renewal bug in §1, and `MemMapFs.OpenFile` checking and creating under separate locks so `O_CREATE|O_EXCL` is not atomic there. The removal is a strangler: (1) in-memory mode to `memstore`, done; (2) `filestore`, the adapter on `os` behind a small owned seam, done — it is stdlib-only and in rule 1 of the architecture check, and the same program is 3.40 MB on `aferostore` and 1.68 MB on it; (3) the same seam for `adapter/driven/locking`; (3) the same seam for `adapter/driven/locking`; (4) switch `wiring` over, then delete `aferostore` and the dependency.
 
 ## Current baseline (verified 2026-09-18, go1.26.4)
 
 - `go test -race ./...` passes through migration step 17. Run it before and after every migration step.
-- Port conformance suite: `adapter/driven/blockstore/conformance`, run by every adapter (`aferostore` on an in-memory filesystem and on a real directory, `memstore`, `flashstore`).
+- Port conformance suite: `adapter/driven/blockstore/conformance`, run by every adapter (`filestore` on a real directory, `aferostore` on an in-memory filesystem and on a real directory, `memstore`, `flashstore`).
+- `filestore` is the filesystem adapter on the standard library. Its seam is `filestore.FS`: six methods and a handle, which exists so a crash can be injected below the store and for nothing else, and which `*os.File` already satisfies. `faultfs.CrashFiles` is the other implementation. It keeps the same layout as `aferostore`, so a data directory written by either is read by either, and it passes all three suites: the conformance suite, the adapter's own crash and durability tests, and the core property tests, which run against it on a real directory. Each of those used to run twice for the filesystem adapter, the second time against an emulated filesystem; that second run is deliberately gone, since an emulation that disagrees with a real filesystem is worse than not running at all and this one disagreed twice. Its crash tests are an external test package, because `faultfs` is built on the seam and an internal test importing it back would be a cycle.
 - Core property tests: `core/topic/topicAccess_property_test.go` (read-from-every-offset across block sizes and reload modes; concurrent write/read/index), run against every adapter. Only `coreBackends()` at the top of that file knows which store is behind the port.
 - Crash and torn-write fault injection: `adapter/driven/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `adapter/driven/blockstore/aferostore/crash_test.go` and `core/topic/topicAccess_crash_test.go`, on an in-memory filesystem and on a real directory. Nothing writes to the log while a crash is armed for the index: a write waits on a flush of its log block, and a crash tripped by the background indexer fails that flush too, so the write fails for a reason the test is not about. `TestTopic_CrashDuringIndexWriteDropsTheTornPair` lags the index by truncating it and reloading instead, which is the same state without the race.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
@@ -421,8 +422,10 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
     half-written (§1, §7).~~
 24. ~~Wire in-memory mode to `memstore` instead of the filesystem adapter over an emulated
     filesystem, the first step of removing afero.~~
+25. ~~Add `filestore`, the filesystem adapter on the standard library, proved by the suites
+    that already run against every adapter.~~
 
-Every step ships green. Steps 0 to 24 are done, one commit each.
+Every step ships green. Steps 0 to 25 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: the frame-bound default, which the benchmark has
 an answer for and nobody has decided (§5); then dictionaries (§6), which §5's measurements
