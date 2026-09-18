@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	zstdcodec "github.com/tcw/ibsen/adapter/driven/compression/zstd"
 	"github.com/tcw/ibsen/adapter/driven/locking"
 	"github.com/tcw/ibsen/adapter/driven/logging/zerologger"
 	"github.com/tcw/ibsen/adapter/driven/telemetry"
@@ -51,11 +52,17 @@ type IbsenServer struct {
 	// IndexSparsity is the number of entries between two index pairs; zero means
 	// topic.DefaultIndexSparsity.
 	IndexSparsity uint32
-	// Codec compresses the frames written from now on, and Codecs resolves the codec byte of
-	// frames already written. Both are optional injection points, and what a build puts here
-	// is what decides how much compression code it links: leaving them out wires the identity
-	// codec and links none. Whatever writes must also be readable, so defaults() folds Codec
-	// into Codecs.
+	// Compression names the codec new frames are written with: "none" (the default) or
+	// "zstd". It only chooses what this server writes. Every codec the binary links is in the
+	// read registry whatever this says, so turning compression off never makes a block
+	// written with it unreadable.
+	Compression string
+	// CompressionLevel is how hard that codec tries: "fastest", "default", "better" or
+	// "best". It is not part of the format and can change between runs.
+	CompressionLevel string
+	// Codec and Codecs are the injection points underneath Compression, for a program that
+	// embeds the log and brings its own. A Codec set here is used as-is and is always added
+	// to the read registry, since a server must be able to read back what it writes.
 	Codec  driven.Codec
 	Codecs driven.Codecs
 	// FlushEntries and FlushInterval are the durability policy: how many entries may wait
@@ -72,12 +79,18 @@ type IbsenServer struct {
 	// mu guards topicsManager, grpcServer and the lifecycle channels, which Start sets while
 	// a shutdown on another goroutine may read them
 	mu            sync.Mutex
+	zstdCodec     *zstdcodec.Codec
 	topicsManager *manager.LogTopicsManager
 	grpcServer    *grpcapi.IbsenGrpcServer
 	shutdownOnce  sync.Once
 	stopping      chan struct{} // closed when a shutdown begins
 	stopped       chan struct{} // closed when the shutdown has finished
 }
+
+// ErrUnknownCompression is returned by Start for a codec name it does not have an adapter
+// for. A name it does not recognise is refused rather than quietly treated as no compression,
+// which would write a log the operator did not ask for.
+var ErrUnknownCompression = errors.New("unknown compression codec")
 
 // ErrWriteLockUnavailable is returned by Start when another instance holds the single-writer
 // lease on the data directory. Start refuses rather than exiting the process, so a program
@@ -115,19 +128,50 @@ func (ibs *IbsenServer) defaults() {
 		ibs.Lock = locking.NewFileLock(ibs.Afs,
 			filepath.Join(ibs.RootPath, writeLockFileName), writeLockLease, writeLockReclaim)
 	}
-	// a server must be able to read back what it writes, so the write codec is always in the
-	// read registry whether or not the caller remembered to put it there
-	if ibs.Codec != nil {
-		if ibs.Codecs == nil {
-			ibs.Codecs = driven.NewCodecs(ibs.Codec)
-		} else if _, taken := ibs.Codecs[ibs.Codec.ID()]; !taken {
-			ibs.Codecs[ibs.Codec.ID()] = ibs.Codec
+}
+
+// resolveCodecs builds the compression adapters. Building them here rather than in the CLI is
+// what keeps a driving adapter from reaching a driven one: the CLI passes a name, and the
+// composition root decides what that name is made of.
+//
+// A read registry holds every codec this binary links, whatever the server writes with, so a
+// block stays readable after compression is turned off or changed. The codec the server does
+// write with is always in it too, including one a caller injected.
+func (ibs *IbsenServer) resolveCodecs() error {
+	zstd, err := zstdcodec.New(zstdcodec.Level(ibs.CompressionLevel))
+	if err != nil {
+		return errore.Wrap(err)
+	}
+	ibs.mu.Lock()
+	ibs.zstdCodec = zstd
+	ibs.mu.Unlock()
+
+	if ibs.Codec == nil {
+		switch ibs.Compression {
+		case "", "none":
+			ibs.Codec = driven.NoCodec{}
+		case "zstd":
+			ibs.Codec = zstd
+		default:
+			return errore.WrapWithContextF(ErrUnknownCompression,
+				"compression %q, want one of none, zstd", ibs.Compression)
 		}
 	}
+	if ibs.Codecs == nil {
+		ibs.Codecs = driven.NewCodecs(zstd)
+	}
+	if _, taken := ibs.Codecs[ibs.Codec.ID()]; !taken {
+		ibs.Codecs[ibs.Codec.ID()] = ibs.Codec
+	}
+	log.Info().Msgf("writing frames with the %s codec", ibs.Codec.ID())
+	return nil
 }
 
 func (ibs *IbsenServer) Start(listener net.Listener) error {
 	ibs.defaults()
+	if err := ibs.resolveCodecs(); err != nil {
+		return err
+	}
 	stopping, stopped := ibs.lifecycle()
 	go ibs.initSignals()
 	log.Info().Msg(fmt.Sprintf("Using listener: %s", listener.Addr().String()))
@@ -299,6 +343,14 @@ func (ibs *IbsenServer) shutdown() {
 	if topicsManager != nil {
 		log.Info().Msg("waiting for in-flight writes and indexing to finish...")
 		topicsManager.Close()
+	}
+
+	// nothing reads or writes a frame any more, so the codec's buffers can go
+	ibs.mu.Lock()
+	zstd := ibs.zstdCodec
+	ibs.mu.Unlock()
+	if zstd != nil {
+		zstd.Close()
 	}
 
 	if !ibs.InMemory && ibs.Lock != nil {

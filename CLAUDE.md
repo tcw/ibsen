@@ -64,6 +64,7 @@ adapter/
     cli/                    cobra CLI
   driven/                   things the core drives
     blockstore/{aferostore,memstore,flashstore,faultfs,conformance}
+    compression/zstd/       zstd adapter for driven.Codec
     locking/                file-lease adapter for driven.SingleIbsenWriterLock
     logging/zerologger/     zerolog adapter for driven.Logger
     telemetry/              OTEL
@@ -74,7 +75,7 @@ errore/ utils/              stdlib-only, shared by both sides
 ```
 
 - Pure today: all of `core/`, plus the `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
-- Not pure, by design: everything under `adapter/` and `wiring/`. `adapter/driven/locking` imports `uuid` and `afero`; `adapter/driven/logging/zerologger` imports `zerolog`; the driving adapters import gRPC and cobra.
+- Not pure, by design: everything under `adapter/` and `wiring/`. `adapter/driven/locking` imports `uuid` and `afero`; `adapter/driven/logging/zerologger` imports `zerolog`; `adapter/driven/compression/zstd` imports `klauspost/compress`; the driving adapters import gRPC and cobra.
 
 ## Current baseline (verified 2026-09-18, go1.26.4)
 
@@ -85,7 +86,7 @@ errore/ utils/              stdlib-only, shared by both sides
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
 - `go vet ./...` is clean; keep it that way. `staticcheck -checks U1000 ./...` prints nothing, so there is no unused code; CI does not run it.
 - CI (`.github/workflows/ci.yml`) runs gofmt, `go vet`, `scripts/check-architecture.sh` and `go test -race ./...` on every push. It takes its Go version from the `go` directive in `go.mod`, which is `1.26.4`.
-- Dependencies are current as of 2026-09-17 (OTEL 1.46, gRPC 1.84, zerolog 1.35, cobra 1.10, afero 1.15). No deprecated gRPC dialling left: `grpcapi.DialContext` wraps `grpc.NewClient` and waits for the connection the way `grpc.WithBlock` used to, since `NewClient` connects lazily and would otherwise hand back a healthy-looking client for a server that is not there. Every client — CLI, bench and test helpers — goes through it, and `adapter/driver/grpcapi/client_test.go` pins that an unreachable address is an error rather than a client. CLI commands now bound that wait with `connectTimeout` (10s); `grpc.Dial` with `WithBlock` was given no context, so an unreachable server hung the command.
+- Dependencies are current as of 2026-09-18 (OTEL 1.46, gRPC 1.84, zerolog 1.35, cobra 1.10, afero 1.15, klauspost/compress 1.20). No deprecated gRPC dialling left: `grpcapi.DialContext` wraps `grpc.NewClient` and waits for the connection the way `grpc.WithBlock` used to, since `NewClient` connects lazily and would otherwise hand back a healthy-looking client for a server that is not there. Every client — CLI, bench and test helpers — goes through it, and `adapter/driver/grpcapi/client_test.go` pins that an unreachable address is an error rather than a client. CLI commands now bound that wait with `connectTimeout` (10s); `grpc.Dial` with `WithBlock` was given no context, so an unreachable server hung the command.
 - `Start` and `shutdown` can run on different goroutines, so what `Start` builds is guarded: `IbsenServer.mu` covers `topicsManager`, `grpcServer` and the lifecycle channels (`lifecycle()` makes the pair once), and `grpcapi.IbsenGrpcServer` guards its `*grpc.Server` behind `Stop`/`GracefulStop`, which are safe before `StartGRPC` has created it and record the request so it is honoured.
 - `Start` returns its failures instead of exiting: a refused single-writer lock is `wiring.ErrWriteLockUnavailable`, matchable with `errors.Is`, so a program embedding the log decides what to do. The CLI reports it and exits.
 - Composition: `wiring.IbsenServer` builds every adapter. `Lock` is an optional injection point — `defaults()` builds a `FileLock` at `<root>/.writeLock` when none is given, which `wiring/lock_test.go` pins — and the OTEL exporter's lifetime is held by `Start`, not by `grpcapi.StartGRPC`.
@@ -103,6 +104,16 @@ errore/ utils/              stdlib-only, shared by both sides
   append however many frames it makes, and one block holding frames of two codecs.
 - `core/port/driven/codec_test.go` covers the registry: the identity codec always present, an
   unwired codec named in the error, and a nil registry still reading uncompressed frames.
+- Compression: `adapter/driven/compression/zstd` has round trips at every level, the append
+  and no-retain contracts the port states, an unknown level refused, one codec under
+  concurrent frames, and a frame too large to hold refused before it is decoded. Its
+  `topic_test.go` drives a real `Topic` through it: a log written with zstd is smaller (500
+  JSON-shaped entries: 42926 bytes plain, 3945 zstd) and every offset still reads back, a
+  zstd topic reloads, a block survives the codec being turned on and off again, and a build
+  carrying no zstd reads the uncompressed frames of a mixed block, loads and recovers it, and
+  names the missing codec for the rest. `wiring/lock_test.go` pins that a compression name
+  picks the codec, that an unknown name or level is refused, that every linked codec is in
+  the read registry whatever the server writes with, and that an injected codec is kept.
 
 ## 1. Correctness bugs
 
@@ -219,9 +230,22 @@ written with `driven.NoCodec`, so the format is in place and carries no compress
   `domain.ErrUnsupportedLogFormat` and truncates nothing, since nothing says those bytes are
   damaged. That is a deliberate clean break — the log is not derivable the way the index is,
   so the frame header carries a magic purely to tell "written before framing" from "corrupt".
-- Still to do: the zstd adapter under `adapter/driven/compression/zstd`, wired through
-  `wiring.IbsenServer.Codec`/`Codecs` (which `defaults()` already folds together so a server
-  can always read back what it writes) and exposed on the CLI, along with the frame bounds.
+- The adapter is `adapter/driven/compression/zstd` (step 18), built by `wiring` rather than by
+  the CLI, since a driving adapter must not reach a driven one: the CLI passes a name
+  (`--compression` / `IBSEN_COMPRESSION`, `--compressionLevel` /
+  `IBSEN_COMPRESSION_LEVEL`) and the composition root decides what it is made of. A name with
+  no adapter behind it is `wiring.ErrUnknownCompression`, not a quiet fallback to none.
+  `wiring.IbsenServer.Codec`/`Codecs` remain the injection points underneath, for a program
+  that embeds the log and brings its own.
+- **Compression chooses only what is written.** The read registry holds every codec the binary
+  links, so turning compression off, or changing it, never strands a block written under the
+  old setting. The level is not part of the format either: a frame says only that zstd wrote
+  it.
+- The default is `none`. Nothing about an existing deployment changes until someone asks for
+  it.
+- Still to do: `MaxFrameEntries` and `MaxFrameBytes` are topic params with defaults and no
+  CLI flags. They are the ratio-versus-random-access dial, and wiring them up wants a
+  benchmark behind it rather than a guess.
 
 ## 6. Dictionaries
 
@@ -273,10 +297,12 @@ written with `driven.NoCodec`, so the format is in place and carries no compress
 16. ~~Remove the dead code the earlier steps left behind.~~
 17. ~~Frame the log block and define the compression port, with the identity codec as the
     only one (§5). The invasive change, made against a codec that cannot lose data.~~
+18. ~~Add the zstd adapter behind the codec port, built in `wiring` and chosen by name on the
+    CLI (§5).~~
 
-Every step ships green. Steps 0 to 17 are done, one commit each.
+Every step ships green. Steps 0 to 18 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: the zstd adapter behind the codec port (§5), then
-dictionaries (§6) and the embedded wiring files (§8). The flash adapter is the proof the
-storage port is narrow enough; the embedded build still has to be wired and its dependency
-graph checked.
+Next, in the same one-change-at-a-time way: dictionaries (§6), then the embedded wiring files
+(§8). The flash adapter is the proof the storage port is narrow enough; the embedded build
+still has to be wired and its dependency graph checked, and the codec registry is what decides
+whether it links any compression at all.

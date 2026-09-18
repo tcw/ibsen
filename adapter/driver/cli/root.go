@@ -25,6 +25,8 @@ var (
 	indexSparsity               int
 	flushEntries                int
 	flushIntervalMs             int
+	compression                 string
+	compressionLevel            string
 	readOnly                    bool
 	rootDirectory               string
 	benchEntiesByteSize         int
@@ -108,6 +110,8 @@ var (
 				TTL:              30 * time.Second,
 				MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
 				IndexSparsity:    uint32(indexSparsity),
+				Compression:      compression,
+				CompressionLevel: compressionLevel,
 				FlushEntries:     uint32(flushEntries),
 				FlushInterval:    time.Duration(flushIntervalMs) * time.Millisecond,
 				OTELExporterAddr: OTELExporterAddr,
@@ -348,6 +352,8 @@ func init() {
 	flushEntries, _ = strconv.Atoi(getenv("IBSEN_FLUSH_ENTRIES", strconv.FormatUint(uint64(topic.DefaultFlushEntries), 10)))
 	flushIntervalMs, _ = strconv.Atoi(getenv("IBSEN_FLUSH_INTERVAL_MS", "0"))
 	indexSparsity, _ = strconv.Atoi(getenv("IBSEN_INDEX_SPARSITY", strconv.FormatUint(uint64(topic.DefaultIndexSparsity), 10)))
+	compression = getenv("IBSEN_COMPRESSION", "none")
+	compressionLevel = getenv("IBSEN_COMPRESSION_LEVEL", "default")
 	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
 	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
 
@@ -363,6 +369,8 @@ func init() {
 	cmdServer.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush; 1 makes every write durable before it is acknowledged")
 	cmdServer.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits")
 	cmdServer.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
+	cmdServer.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
+	cmdServer.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
 	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
 	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
