@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/topic"
 	"github.com/tcw/ibsen/errore"
 	"github.com/tcw/ibsen/wiring"
@@ -28,6 +29,8 @@ var (
 	flushIntervalMs             int
 	compression                 string
 	compressionLevel            string
+	maxFrameEntries             int
+	maxFrameBytes               int
 	readOnly                    bool
 	rootDirectory               string
 	benchEntiesByteSize         int
@@ -103,6 +106,9 @@ var (
 			if flushIntervalMs < 0 {
 				log.Fatal().Msgf("flushIntervalMs cannot be negative, got %d", flushIntervalMs)
 			}
+			if err := validateFrameBounds(maxFrameEntries, maxFrameBytes); err != nil {
+				log.Fatal().Err(err).Msg("invalid frame bounds")
+			}
 			ibsenServer := wiring.IbsenServer{
 				Readonly:         readOnly,
 				InMemory:         inMemory,
@@ -111,6 +117,8 @@ var (
 				TTL:              30 * time.Second,
 				MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
 				IndexSparsity:    uint32(indexSparsity),
+				MaxFrameEntries:  uint32(maxFrameEntries),
+				MaxFrameBytes:    maxFrameBytes,
 				Compression:      compression,
 				CompressionLevel: compressionLevel,
 				FlushEntries:     uint32(flushEntries),
@@ -352,6 +360,27 @@ func parseReadArgs(args []string) (uint64, uint32, error) {
 	return offset, batchSize, nil
 }
 
+// validateFrameBounds refuses frame bounds the log could not honour. A frame is decoded whole
+// and an index pair points at its start, so these are the dial between how well a codec can
+// compress and how little a read has to decode; either way they have to describe a frame that
+// can exist.
+//
+// The upper bound is the one worth catching here: a frame larger than domain.MaxFrameSize
+// cannot be encoded, and without this the first write large enough to reach the bound would
+// fail instead of the server refusing to start.
+func validateFrameBounds(entries, bytes int) error {
+	if entries < 1 {
+		return errore.NewF("maxFrameEntries must be at least 1, got %d", entries)
+	}
+	if bytes < 1 {
+		return errore.NewF("maxFrameBytes must be at least 1, got %d", bytes)
+	}
+	if bytes > domain.MaxFrameSize {
+		return errore.NewF("maxFrameBytes must be at most %d, got %d", domain.MaxFrameSize, bytes)
+	}
+	return nil
+}
+
 func AbsOrEmpty(path string) string {
 	if path == "" {
 		return ""
@@ -379,6 +408,8 @@ func init() {
 	flushEntries, _ = strconv.Atoi(getenv("IBSEN_FLUSH_ENTRIES", strconv.FormatUint(uint64(topic.DefaultFlushEntries), 10)))
 	flushIntervalMs, _ = strconv.Atoi(getenv("IBSEN_FLUSH_INTERVAL_MS", "0"))
 	indexSparsity, _ = strconv.Atoi(getenv("IBSEN_INDEX_SPARSITY", strconv.FormatUint(uint64(topic.DefaultIndexSparsity), 10)))
+	maxFrameEntries, _ = strconv.Atoi(getenv("IBSEN_MAX_FRAME_ENTRIES", strconv.FormatUint(uint64(topic.DefaultMaxFrameEntries), 10)))
+	maxFrameBytes, _ = strconv.Atoi(getenv("IBSEN_MAX_FRAME_BYTES", strconv.Itoa(topic.DefaultMaxFrameBytes)))
 	compression = getenv("IBSEN_COMPRESSION", "none")
 	compressionLevel = getenv("IBSEN_COMPRESSION_LEVEL", "default")
 	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
@@ -396,6 +427,8 @@ func init() {
 	cmdServer.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush; 1 makes every write durable before it is acknowledged")
 	cmdServer.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits")
 	cmdServer.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
+	cmdServer.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
+	cmdServer.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
 	cmdServer.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
 	cmdServer.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
 	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")

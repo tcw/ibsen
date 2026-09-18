@@ -12,6 +12,7 @@ import (
 	"github.com/tcw/ibsen/core/logfmt"
 	"github.com/tcw/ibsen/core/port/driven"
 	"github.com/tcw/ibsen/core/port/driver"
+	"github.com/tcw/ibsen/core/topic"
 )
 
 func newTestAfs(t *testing.T) *afero.Afero {
@@ -144,5 +145,53 @@ func TestManager_topicThatFailsToLoadReturnsError(t *testing.T) {
 	writeTopic(t, m, "topic", 0, 3)
 	if got, err := readTopic(m, "topic"); err != nil || len(got) != 3 {
 		t.Fatalf("read %d entries with err=%v, want 3", len(got), err)
+	}
+}
+
+// The frame bounds are a knob on a topic, and the manager is what builds topics, so a
+// deployment that sets them has to see them arrive there.
+func TestManager_frameBoundsReachTheTopic(t *testing.T) {
+	afs := newTestAfs(t)
+	m, err := NewLogTopicsManager(LogTopicManagerParams{
+		Store:            aferostore.New(afs, "data"),
+		TTL:              time.Minute,
+		CheckForNewEvery: time.Minute,
+		MaxBlockSize:     1 << 20,
+		MaxFrameEntries:  7,
+		MaxFrameBytes:    4096,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.Close)
+
+	writeTopic(t, &m, "topic", 0, 3)
+
+	loaded, ok := m.Topics.Load("topic")
+	if !ok {
+		t.Fatal("the manager did not cache the topic it wrote to")
+	}
+	tp := loaded.(*topic.Topic)
+	if tp.MaxFrameEntries != 7 {
+		t.Errorf("topic holds MaxFrameEntries %d, want the 7 the manager was given", tp.MaxFrameEntries)
+	}
+	if tp.MaxFrameBytes != 4096 {
+		t.Errorf("topic holds MaxFrameBytes %d, want the 4096 the manager was given", tp.MaxFrameBytes)
+	}
+}
+
+// Zero means the topic defaults, the way every other knob the manager passes through works.
+func TestManager_zeroFrameBoundsMeanTheTopicDefaults(t *testing.T) {
+	m := newTestManager(t, newTestAfs(t))
+
+	writeTopic(t, m, "topic", 0, 3)
+
+	loaded, _ := m.Topics.Load("topic")
+	tp := loaded.(*topic.Topic)
+	if tp.MaxFrameEntries != topic.DefaultMaxFrameEntries {
+		t.Errorf("topic holds MaxFrameEntries %d, want the default %d", tp.MaxFrameEntries, topic.DefaultMaxFrameEntries)
+	}
+	if tp.MaxFrameBytes != topic.DefaultMaxFrameBytes {
+		t.Errorf("topic holds MaxFrameBytes %d, want the default %d", tp.MaxFrameBytes, topic.DefaultMaxFrameBytes)
 	}
 }

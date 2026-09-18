@@ -52,6 +52,12 @@ type IbsenServer struct {
 	// IndexSparsity is the number of entries between two index pairs; zero means
 	// topic.DefaultIndexSparsity.
 	IndexSparsity uint32
+	// MaxFrameEntries and MaxFrameBytes bound one frame: a write larger than either becomes
+	// several frames in the same append. They are the dial between how well a codec can
+	// compress, which wants large frames, and how little a read has to decode to reach one
+	// offset, which wants small ones. Zero means the topic defaults.
+	MaxFrameEntries uint32
+	MaxFrameBytes   int
 	// Compression names the codec new frames are written with: "none" (the default) or
 	// "zstd". It only chooses what this server writes. Every codec the binary links is in the
 	// read registry whatever this says, so turning compression off never makes a block
@@ -218,6 +224,8 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		CheckForNewEvery: time.Second * 2,
 		MaxBlockSize:     ibs.MaxBlockSize,
 		IndexSparsity:    ibs.IndexSparsity,
+		MaxFrameEntries:  ibs.MaxFrameEntries,
+		MaxFrameBytes:    ibs.MaxFrameBytes,
 		Codec:            ibs.Codec,
 		Codecs:           ibs.Codecs,
 		FlushEntries:     ibs.FlushEntries,

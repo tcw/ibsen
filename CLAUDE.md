@@ -102,6 +102,9 @@ errore/ utils/              stdlib-only, shared by both sides
   read rejecting a corrupt frame, a corrupt entry inside a valid frame, and an unwired codec.
   `core/topic/frame_test.go` covers the frame bounds, a write reaching the store as one
   append however many frames it makes, and one block holding frames of two codecs.
+- Frame bounds reach a topic through the manager, and zero still means the topic defaults:
+  `core/manager/topicsManager_test.go`. `adapter/driver/cli/root_test.go` covers the flag
+  validation, including the largest frame the format allows and the first one past it.
 - `core/port/driven/codec_test.go` covers the registry: the identity codec always present, an
   unwired codec named in the error, and a nil registry still reading uncompressed frames.
 - Compression: `adapter/driven/compression/zstd` has round trips at every level, the append
@@ -223,7 +226,12 @@ written with `driven.NoCodec`, so the format is in place and carries no compress
   call, whole or not at all, so the store never holds half a frame and a flush never lands
   inside one. A large write becomes several frames in that one append: a frame is bounded by
   `Params.MaxFrameEntries` (1000) and `Params.MaxFrameBytes` (1 MiB), because a frame is
-  decoded whole and the index can offer only one pair for it.
+  decoded whole and the index can offer only one pair for it. Both are threaded through the
+  manager params and `wiring.IbsenServer` to `--maxFrameEntries`, `--maxFrameBytes`,
+  `IBSEN_MAX_FRAME_ENTRIES` and `IBSEN_MAX_FRAME_BYTES`. They are the dial between how well a
+  codec can compress, which wants large frames, and how little a read has to decode to reach
+  one offset, which wants small ones; the defaults are not measured, so they are a starting
+  point rather than an answer.
 - The entry checksum still earns its place inside a frame. The frame checksum catches the
   media; the entry checksum catches everything after it, and a frame that verifies whole can
   still hold an entry that does not.
@@ -244,9 +252,11 @@ written with `driven.NoCodec`, so the format is in place and carries no compress
   it.
 - The default is `none`. Nothing about an existing deployment changes until someone asks for
   it.
-- Still to do: `MaxFrameEntries` and `MaxFrameBytes` are topic params with defaults and no
-  CLI flags. They are the ratio-versus-random-access dial, and wiring them up wants a
-  benchmark behind it rather than a guess.
+- `cli.validateFrameBounds` refuses a frame the format could not hold: without it, a
+  `maxFrameBytes` above `domain.MaxFrameSize` would start a server that fails on the first
+  write large enough to reach the bound, rather than not starting.
+- Still to do: nothing has measured what the frame bounds should be. Picking better defaults
+  wants a benchmark over ratio, write latency and read amplification, not a guess.
 
 ## 6. Dictionaries
 

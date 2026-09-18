@@ -3,6 +3,9 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/tcw/ibsen/core/domain"
+	"github.com/tcw/ibsen/core/topic"
 )
 
 // The bug this pins: "client read <topic> <offset> <batchSize>" parsed the batch size and
@@ -59,6 +62,42 @@ func TestParseReadArgsRefusesWhatItCannotParse(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), test.says) {
 				t.Errorf("error %q does not say %q, so it names the wrong argument", err, test.says)
+			}
+		})
+	}
+}
+
+// A frame larger than the format allows cannot be encoded, so the server refuses to start
+// rather than failing on the first write big enough to reach the bound.
+func TestValidateFrameBounds(t *testing.T) {
+	if err := validateFrameBounds(int(topic.DefaultMaxFrameEntries), topic.DefaultMaxFrameBytes); err != nil {
+		t.Errorf("the defaults are invalid: %v", err)
+	}
+	if err := validateFrameBounds(1, 1); err != nil {
+		t.Errorf("the smallest frame a topic can be asked for is invalid: %v", err)
+	}
+	if err := validateFrameBounds(1, domain.MaxFrameSize); err != nil {
+		t.Errorf("the largest frame the format allows is invalid: %v", err)
+	}
+	for _, test := range []struct {
+		name    string
+		entries int
+		bytes   int
+		says    string
+	}{
+		{name: "no entries", entries: 0, bytes: 1024, says: "maxFrameEntries must be at least 1"},
+		{name: "negative entries", entries: -1, bytes: 1024, says: "maxFrameEntries must be at least 1"},
+		{name: "no bytes", entries: 10, bytes: 0, says: "maxFrameBytes must be at least 1"},
+		{name: "larger than the format allows", entries: 10, bytes: domain.MaxFrameSize + 1, says: "maxFrameBytes must be at most"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateFrameBounds(test.entries, test.bytes)
+
+			if err == nil {
+				t.Fatalf("entries=%d bytes=%d was accepted", test.entries, test.bytes)
+			}
+			if !strings.Contains(err.Error(), test.says) {
+				t.Errorf("error %q does not say %q", err, test.says)
 			}
 		})
 	}

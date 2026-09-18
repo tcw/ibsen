@@ -23,6 +23,9 @@ type LogTopicManagerParams struct {
 	// IndexSparsity is the number of entries between two index pairs; zero means
 	// topic.DefaultIndexSparsity.
 	IndexSparsity uint32
+	// MaxFrameEntries and MaxFrameBytes bound one frame; zero means the topic defaults.
+	MaxFrameEntries uint32
+	MaxFrameBytes   int
 	// Codec compresses the frames written from now on; nil writes them uncompressed.
 	Codec driven.Codec
 	// Codecs resolves the codec byte of frames already written; nil reads uncompressed
@@ -204,15 +207,17 @@ func (l *LogTopicsManager) getOrCreateTopic(name domain.TopicName) (*topic.Topic
 // keep working.
 func (l *LogTopicsManager) loadOrCreateNewTopic(topicName domain.TopicName) (*topic.Topic, error) {
 	loaded := topic.NewLogTopic(topic.Params{
-		Logger:        l.Params.Logger,
-		IndexSparsity: l.Params.IndexSparsity,
-		Codec:         l.Params.Codec,
-		Codecs:        l.Params.Codecs,
-		FlushEntries:  l.Params.FlushEntries,
-		FlushInterval: l.Params.FlushInterval,
-		Store:         l.Params.Store,
-		TopicName:     string(topicName),
-		MaxBlockSize:  l.Params.MaxBlockSize,
+		Logger:          l.Params.Logger,
+		IndexSparsity:   l.Params.IndexSparsity,
+		MaxFrameEntries: l.Params.MaxFrameEntries,
+		MaxFrameBytes:   l.Params.MaxFrameBytes,
+		Codec:           l.Params.Codec,
+		Codecs:          l.Params.Codecs,
+		FlushEntries:    l.Params.FlushEntries,
+		FlushInterval:   l.Params.FlushInterval,
+		Store:           l.Params.Store,
+		TopicName:       string(topicName),
+		MaxBlockSize:    l.Params.MaxBlockSize,
 	})
 	if err := loaded.LoadOrCreate(); err != nil {
 		return nil, errore.WrapWithContextF(err, "unable to load topic %s", topicName)
