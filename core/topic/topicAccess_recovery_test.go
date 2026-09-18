@@ -216,19 +216,25 @@ func TestTopic_RecoverTornTail(t *testing.T) {
 		damage func(*testing.T, driven.BlockStore, driven.BlockRef)
 		lost   int
 	}{
-		{name: "partial entry", damage: appendBytes(domain.CreateByteEntry(propertyPayload(0), 0)[:15])},
+		{name: "partial frame", damage: appendBytes(bytes.Repeat([]byte{0x00}, 15))},
 		{name: "garbage", damage: appendBytes(bytes.Repeat([]byte{0xff}, 40))},
-		{name: "corrupt last entry", damage: flipLastByte, lost: 1},
+		// a flipped byte fails the last frame's payload checksum, and the frame is the
+		// smallest thing recovery can keep, so its one entry goes with it
+		{name: "corrupt last frame", damage: flipLastByte, lost: 1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store, _ := newTestStore(t)
 			topic := newTestTopic(t, store, 2000)
 			n := writeRandomBatches(t, topic, rand.New(rand.NewSource(7)), 300)
-			// end on an indexed offset, so losing the last entry must also drop an index pair
-			for (n-1)%10 != 0 {
+			// end on an indexed offset, with a frame of its own, so losing the last frame
+			// loses exactly one entry and must also drop an index pair
+			for {
 				writeEntries(t, topic, n, 1)
 				n++
+				if (n-1)%10 == 0 {
+					break
+				}
 			}
 			topic.indexWg.Wait()
 			if _, err := topic.UpdateIndex(); err != nil {
@@ -365,22 +371,25 @@ func TestTopic_ClosesFileHandles(t *testing.T) {
 	}
 }
 
-func TestTopic_ReadFailsOnCorruptEntry(t *testing.T) {
+// A read refuses to hand over a frame that does not verify. The frame checksum is the outer
+// of the two a read passes through, so a flipped payload byte is caught here rather than at
+// the entry inside it.
+func TestTopic_ReadFailsOnCorruptFrame(t *testing.T) {
 	store, _ := newTestStore(t)
 	topic := newTestTopic(t, store, 500)
 	writeRandomBatches(t, topic, rand.New(rand.NewSource(9)), 100)
 	topic.indexWg.Wait()
 	firstBlock := topic.logRef(topic.LogBlockList[0])
 	content := blockBytes(t, store, firstBlock)
-	content[domain.EntryOverhead+len(propertyPayload(0))+12] ^= 0xff // first payload byte of offset 1
+	content[domain.FrameHeaderSize] ^= 0xff // first payload byte of the first frame
 	if err := store.Truncate(firstBlock, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Append(firstBlock, content); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readAllFrom(topic, 0, 10); !errors.Is(err, domain.ErrCorruptEntry) {
-		t.Fatalf("err=%v, want ErrCorruptEntry", err)
+	if _, err := readAllFrom(topic, 0, 10); !errors.Is(err, domain.ErrCorruptFrame) {
+		t.Fatalf("err=%v, want ErrCorruptFrame", err)
 	}
 }
 

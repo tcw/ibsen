@@ -10,12 +10,19 @@ import (
 	"github.com/tcw/ibsen/core/port/driven"
 )
 
-// writeAndIndex writes count entries from an offset and leaves the index complete. A write
-// starts indexing in the background and skips it when one is already running, so the last
-// entries may not be indexed until this asks once more.
+// writeAndIndex writes count entries from an offset, one to a write, and leaves the index
+// complete. A write starts indexing in the background and skips it when one is already
+// running, so the last entries may not be indexed until this asks once more.
+//
+// One entry to a write is one entry to a frame, which is what makes the spacing below a
+// statement about the sparsity rather than about how a client happened to batch: a pair
+// points at the start of a frame and never inside one, so entries sharing a frame share a
+// pair whatever sparsity was asked for.
 func writeAndIndex(t *testing.T, topic *Topic, from, count int) {
 	t.Helper()
-	writeEntries(t, topic, from, count)
+	for i := 0; i < count; i++ {
+		writeEntries(t, topic, from+i, 1)
+	}
 	if _, err := topic.UpdateIndex(); err != nil {
 		t.Fatal(err)
 	}

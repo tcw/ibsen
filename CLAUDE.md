@@ -33,6 +33,13 @@ Everything below hangs off that rule: the bugs are the core earning trust, the p
 A Go append-only log server, Kafka-like: topics you write entries to and read back by offset, over gRPC, with a sparse index and block-based storage on afero.
 
 - Entry wire format (`core/domain/fsUtils.go` `CreateByteEntry`): `crc32c(4) | size uint64 LE (8) | entry | offset uint64 LE (8)`; CRC covers size, entry, offset.
+- A log block is a sequence of **frames** (`core/domain/frame.go`), and a frame holds one
+  write batch of those entries, put through a codec. Header, 36 bytes, little endian:
+  `magic(4) | headerCrc(4) | codec(1) | version(1) | reserved(2) | firstOffset(8) | entryCount(4) | storedSize(4) | plainSize(4) | payloadCrc(4)`.
+  The header CRC covers the 28 bytes after it, which includes the payload CRC, so no length
+  read from a block is acted on before it has been checked. A frame can be placed, skipped
+  and checked without being decoded, which is what lets recovery and indexing work without
+  the codec the frame was written with.
 - Blocks are named by the offset of their first entry, and carry a log kind and an index kind. Index block = checksummed pairs, `crc32c(4) | offset uint64 LE (8) | byteOffset uint64 LE (8)`, `index.PairSize` bytes each, the CRC covering the two values. Where those bytes live is the adapter's business; the afero one keeps them at `<root>/<topic>/%020d.log` and `.idx`.
 ### Layout
 
@@ -45,10 +52,10 @@ core/                       the hexagon
   domain/                   Offset, TopicName, LogEntry, entry wire codec, topic-name rules
   port/
     driver/                 inbound: LogManager, ReadParams
-    driven/                 outbound: BlockStore, Syncable, SingleIbsenWriterLock
+    driven/                 outbound: BlockStore, Syncable, SingleIbsenWriterLock, Codec, Logger
   topic/                    the Topic aggregate and its recovery
   index/                    sparse index
-  logfmt/                   entry framing, block scanning, RecoverBlock
+  logfmt/                   frame encode/decode, block scanning, RecoverBlock
   manager/                  application service; implements driver.LogManager
 
 adapter/
@@ -69,9 +76,9 @@ errore/ utils/              stdlib-only, shared by both sides
 - Pure today: all of `core/`, plus the `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
 - Not pure, by design: everything under `adapter/` and `wiring/`. `adapter/driven/locking` imports `uuid` and `afero`; `adapter/driven/logging/zerologger` imports `zerolog`; the driving adapters import gRPC and cobra.
 
-## Current baseline (verified 2026-09-17, go1.26.4)
+## Current baseline (verified 2026-09-18, go1.26.4)
 
-- `go test -race ./...` passes through migration step 5. Run it before and after every migration step.
+- `go test -race ./...` passes through migration step 17. Run it before and after every migration step.
 - Port conformance suite: `adapter/driven/blockstore/conformance`, run by every adapter (`aferostore` on an in-memory filesystem and on a real directory, `memstore`, `flashstore`).
 - Core property tests: `core/topic/topicAccess_property_test.go` (read-from-every-offset across block sizes and reload modes; concurrent write/read/index), run against every adapter. Only `coreBackends()` at the top of that file knows which store is behind the port.
 - Crash and torn-write fault injection: `adapter/driven/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `adapter/driven/blockstore/aferostore/crash_test.go` and `core/topic/topicAccess_crash_test.go`, on an in-memory filesystem and on a real directory.
@@ -85,6 +92,17 @@ errore/ utils/              stdlib-only, shared by both sides
 - Index checksums: `core/index/checksum_test.go` covers the round trip, every byte of a pair being covered by its CRC, parsing stopping at a corrupt pair, torn trailing pairs, and the old format being rejected; `core/topic/indexChecksum_test.go` shows a corrupted pair and an unchecksummed block both being rebuilt into exactly what a clean scan of the log gives, with every offset still readable.
 - Durability: `core/topic/flush_test.go` drives a `Syncable` store whose `Sync` the test gates, and covers the guarantee itself (a reader sees nothing until the flush returns, and `Write` does not return either), a failed flush being reported and leaving nothing readable, those entries appearing once a later flush succeeds, concurrent writers sharing one sync, the interval releasing a writer that never reaches the threshold, a non-syncable store never waiting, and a reloaded topic counting its recovered block as durable.
 - Logging port: `adapter/driven/logging/zerologger` has its own tests (level mapping, every field kind, `Enabled` agreeing with what is emitted, nil error dropped); `core/topic/logging_test.go` proves the core reaches its logger only through the port.
+- Framing: `core/domain/frame_test.go` covers the header round trip, every one of its 36
+  bytes being caught by its checksum, a missing magic, a future version, a stored size larger
+  than what is left of the block, and read/verify/skip of a payload agreeing with each other
+  across the streaming buffer boundary. `core/logfmt/logUtils_test.go` covers recovery of a
+  partial header, a partial payload, a garbage tail and a corrupt frame, a pre-framing block
+  being reported rather than truncated, recovery of a frame whose codec is not wired, and a
+  read rejecting a corrupt frame, a corrupt entry inside a valid frame, and an unwired codec.
+  `core/topic/frame_test.go` covers the frame bounds, a write reaching the store as one
+  append however many frames it makes, and one block holding frames of two codecs.
+- `core/port/driven/codec_test.go` covers the registry: the identity codec always present, an
+  unwired codec named in the error, and a nil registry still reading uncompressed frames.
 
 ## 1. Correctness bugs
 
@@ -147,6 +165,11 @@ them has returned, so a reader never sees an entry a power cut could take back.
 - ~~Make sparsity configurable.~~ `topic.Params.IndexSparsity` (0 means `topic.DefaultIndexSparsity`, 10), threaded through `manager.LogTopicManagerParams` and `wiring.IbsenServer` to the CLI's `--indexSparsity`/`-i` and `IBSEN_INDEX_SPARSITY`. It is per-topic state, copied by `snapshot()`. Changing it between runs is safe and tested: the pairs already written stay valid and sorted, and the block ends up indexed at two densities. `index.CreateBinaryIndexFromLog` returns `index.ErrInvalidSparsity` for 0 rather than reaching `offset % 0`, which panics.
 - ~~Checksum index files.~~ Each pair carries a crc32c over its two values, so a pair either verifies or is not there, the same rule a log entry follows. `NewIndex` stops at the first pair that is torn or fails its checksum and returns the good prefix, which the existing truncation drops the rest of and rebuilds from the log. Without this a corrupt pair pointed at a byte that is not an entry boundary and a read from it failed on EOF; the test for it fails that way when the check is removed.
 - The format change needs no migration: an index written as bare 16-byte pairs fails at its first pair and is rebuilt whole. The index says nothing the log does not.
+- Since framing (§5), a pair points at the start of a **frame**, never inside one: a frame is
+  decoded whole, so there is nothing finer to aim at. A frame earns a pair when it covers an
+  offset that is a multiple of the sparsity, which is the same set of pairs the entry-wise
+  rule gave when every entry had a frame of its own, and one pair per frame once frames are
+  larger than the sparsity. A read therefore scans at most one frame plus the sparsity.
 
 ## 4. Architecture: hexagonal refactor
 
@@ -162,13 +185,43 @@ the core is pure.
 - gRPC is a driving adapter; on embedded, skip it and call the log as a library.
 - Coordination port: `driven.SingleIbsenWriterLock`, satisfied by `adapter/driven/locking` (file lease) and by `driven.NoFileLock` for a single-process or embedded deployment. The port names none of its adapters; each adapter asserts it satisfies the port.
 - Driving port: `driver.LogManager` (`List`, `Write`, `Read`), implemented by `core/manager` and consumed by `adapter/driver/grpcapi`. A driving adapter names the port, never the implementation.
+- Compression port: `driven.Codec`, three methods (`ID`, `Encode`, `Decode`), named in a frame
+  by one byte. `driven.Codecs` is the registry a read resolves that byte against, built at
+  wiring time, which is what decides how much compression code a binary links. `driven.NoCodec`
+  is the identity codec and the only one in the core, so a build that wires no compression
+  adapter still writes and reads frames. A codec may never change what it produces for an id:
+  an id is a promise about bytes already on disk.
 - Logging port: `driven.Logger`, two methods. `Log(level, msg, fields...)` takes typed `Field` values (`Str`, `Int`, `Int64`, `Uint64`, `Bool`, `Err`), so an adapter switches on `FieldKind` exhaustively and never reaches for reflection; `Enabled(level)` lets the core skip building a payload that would be discarded. `driven.NopLogger` is the default when no adapter is wired, which is what lets an embedded build carry no logging code at all. Adapter: `adapter/driven/logging/zerologger`.
 
 ## 5. Compression
 
-- Per-block compressed **frames**, self-describing: header carries codec, offsets, two CRCs.
-- Index points at frame boundaries; reads decompress one frame and scan within it.
-- **Frame boundary = flush boundary = durability boundary.**
+Framing is done (step 17); the codec adapter behind it is not (step 18). Today every frame is
+written with `driven.NoCodec`, so the format is in place and carries no compression yet.
+
+- ~~Per-block compressed **frames**, self-describing: header carries codec, offsets, two
+  CRCs.~~ The layout is under "What it is". Self-describing is the point: a frame says which
+  codec wrote it, so a block may hold frames of several codecs and changing the codec never
+  rewrites anything. It also says where it sits and how big it is, so it can be placed,
+  skipped and checked without being decoded — which is why recovery and indexing work on a
+  block whose codec this build does not carry.
+- ~~Index points at frame boundaries; reads decompress one frame and scan within it.~~ See §3.
+  A read seeks to the frame holding the offset, decodes that one frame, and drops the entries
+  in front of the offset asked for.
+- ~~**Frame boundary = flush boundary = durability boundary.**~~ One `Write` is appended in one
+  call, whole or not at all, so the store never holds half a frame and a flush never lands
+  inside one. A large write becomes several frames in that one append: a frame is bounded by
+  `Params.MaxFrameEntries` (1000) and `Params.MaxFrameBytes` (1 MiB), because a frame is
+  decoded whole and the index can offer only one pair for it.
+- The entry checksum still earns its place inside a frame. The frame checksum catches the
+  media; the entry checksum catches everything after it, and a frame that verifies whole can
+  still hold an entry that does not.
+- A block written before framing is **not** readable: `RecoverBlock` reports
+  `domain.ErrUnsupportedLogFormat` and truncates nothing, since nothing says those bytes are
+  damaged. That is a deliberate clean break — the log is not derivable the way the index is,
+  so the frame header carries a magic purely to tell "written before framing" from "corrupt".
+- Still to do: the zstd adapter under `adapter/driven/compression/zstd`, wired through
+  `wiring.IbsenServer.Codec`/`Codecs` (which `defaults()` already folds together so a server
+  can always read back what it writes) and exposed on the CLI, along with the frame bounds.
 
 ## 6. Dictionaries
 
@@ -218,10 +271,12 @@ the core is pure.
 14. ~~Acknowledge a write only once it is on durable media (§2).~~
 15. ~~Checksum index pairs (§3).~~
 16. ~~Remove the dead code the earlier steps left behind.~~
+17. ~~Frame the log block and define the compression port, with the identity codec as the
+    only one (§5). The invasive change, made against a codec that cannot lose data.~~
 
-Every step ships green. Steps 0 to 16 are done, one commit each.
+Every step ships green. Steps 0 to 17 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: the rest of the
-index work (§3), and then compression (§5) and the embedded wiring files (§8). The flash adapter is the
-proof the port is narrow enough; the embedded build still has to be wired and its dependency
+Next, in the same one-change-at-a-time way: the zstd adapter behind the codec port (§5), then
+dictionaries (§6) and the embedded wiring files (§8). The flash adapter is the proof the
+storage port is narrow enough; the embedded build still has to be wired and its dependency
 graph checked.

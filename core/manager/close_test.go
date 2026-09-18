@@ -125,13 +125,14 @@ func TestManager_closeWaitsForBackgroundIndexing(t *testing.T) {
 	close(fs.release)
 	waitForClose(t, closed)
 
-	// entries 0, 10 and 20 are indexed, as checksummed (offset, byteOffset) pairs
+	// the thirty entries went in one write, so they are one frame, and a pair points at a
+	// frame start: one checksummed (offset, byteOffset) pair is the whole index for them
 	idx, err := afs.ReadFile("data/topic/00000000000000000000.idx")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(idx) != 3*index.PairSize {
-		t.Fatalf("index has %d bytes after Close, want %d", len(idx), 3*index.PairSize)
+	if len(idx) != index.PairSize {
+		t.Fatalf("index has %d bytes after Close, want %d", len(idx), index.PairSize)
 	}
 	var entries = [][]byte{[]byte("late")}
 	if err := m.Write(domain.TopicName("topic"), &entries); !errors.Is(err, ErrClosed) {

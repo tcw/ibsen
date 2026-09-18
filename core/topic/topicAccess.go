@@ -32,19 +32,43 @@ var ErrTopicClosed = errors.New("topic is closed")
 // write; sparser ones the other way round.
 const DefaultIndexSparsity uint32 = 10
 
+// A frame is the smallest thing a read can be aimed at: it is decoded whole, and an index
+// pair points at its start and never inside it. So a frame is bounded, and a write larger
+// than the bound becomes several frames rather than one big one. Without that, a client
+// writing a million entries in one call would produce one frame, which a read would have to
+// decode in full to reach any offset in it, and which the index could offer exactly one pair
+// for, whatever sparsity was asked for.
+//
+// The bounds are deliberately generous. They are there to stop a frame growing without
+// limit, not to tune it: a frame is also the unit a codec gets to find redundancy in, and
+// cutting it small costs compression.
+const (
+	// DefaultMaxFrameEntries is how many entries may share a frame.
+	DefaultMaxFrameEntries uint32 = 1000
+	// DefaultMaxFrameBytes is how many encoded entry bytes may share a frame, before the
+	// codec sees them. One entry larger than this still gets a frame of its own.
+	DefaultMaxFrameBytes int = 1 << 20
+)
+
 // indexPairSize is the bytes one pair takes in an index block. The index package owns the
 // encoding; this is here so the truncation arithmetic reads in terms of pairs.
 const indexPairSize = index.PairSize
 
 type Topic struct {
-	mu            sync.RWMutex
-	Store         driven.BlockStore
-	Log           driven.Logger
-	TopicName     string
-	indexMutex    int32
-	indexWg       *sync.WaitGroup
-	MaxBlockSize  int
-	IndexSparsity uint32
+	mu              sync.RWMutex
+	Store           driven.BlockStore
+	Log             driven.Logger
+	TopicName       string
+	indexMutex      int32
+	indexWg         *sync.WaitGroup
+	MaxBlockSize    int
+	IndexSparsity   uint32
+	MaxFrameEntries uint32
+	MaxFrameBytes   int
+	// Codec compresses the frames this topic writes; Codecs resolves the codec byte of
+	// frames already written, which may name one this topic no longer writes with.
+	Codec  driven.Codec
+	Codecs driven.Codecs
 	// flush decides when appended entries are durable, and is what a read is bounded by
 	flush          *flusher
 	NextOffset     domain.Offset
@@ -69,6 +93,17 @@ type Params struct {
 	// DefaultIndexSparsity. Changing it between runs is safe: the pairs already written stay
 	// valid and sorted, and the block simply ends up indexed at two densities.
 	IndexSparsity uint32
+	// Codec compresses the frames this topic writes. Nil writes them uncompressed, which
+	// every build can read back. Changing it between runs is safe: a frame carries the byte
+	// naming what it was written with, so a block may hold frames of several codecs.
+	Codec driven.Codec
+	// Codecs resolves that byte when a frame is read. Nil reads uncompressed frames and
+	// reports anything else as an unknown codec rather than as damage.
+	Codecs driven.Codecs
+	// MaxFrameEntries and MaxFrameBytes bound one frame; a write larger than either becomes
+	// several. Zero means DefaultMaxFrameEntries and DefaultMaxFrameBytes.
+	MaxFrameEntries uint32
+	MaxFrameBytes   int
 	// FlushEntries is how many entries may wait before a flush is forced. Zero means
 	// DefaultFlushEntries, which is 1: every write is durable before it is acknowledged.
 	FlushEntries uint32
@@ -88,19 +123,39 @@ func NewLogTopic(params Params) *Topic {
 	if sparsity == 0 {
 		sparsity = DefaultIndexSparsity
 	}
+	codec := params.Codec
+	if codec == nil {
+		codec = driven.NoCodec{}
+	}
+	codecs := params.Codecs
+	if codecs == nil {
+		codecs = driven.NewCodecs()
+	}
+	maxFrameEntries := params.MaxFrameEntries
+	if maxFrameEntries == 0 {
+		maxFrameEntries = DefaultMaxFrameEntries
+	}
+	maxFrameBytes := params.MaxFrameBytes
+	if maxFrameBytes == 0 {
+		maxFrameBytes = DefaultMaxFrameBytes
+	}
 	return &Topic{
-		Store:          params.Store,
-		Log:            logger,
-		IndexSparsity:  sparsity,
-		flush:          newFlusher(params.Store, params.FlushEntries, params.FlushInterval),
-		TopicName:      params.TopicName,
-		indexWg:        &sync.WaitGroup{},
-		NextOffset:     0,
-		HeadBlockSize:  0,
-		MaxBlockSize:   params.MaxBlockSize,
-		LogBlockList:   []domain.LogBlock{},
-		IndexBlockList: []domain.IndexBlock{},
-		IndexPosition:  nil,
+		Store:           params.Store,
+		Log:             logger,
+		IndexSparsity:   sparsity,
+		MaxFrameEntries: maxFrameEntries,
+		MaxFrameBytes:   maxFrameBytes,
+		Codec:           codec,
+		Codecs:          codecs,
+		flush:           newFlusher(params.Store, params.FlushEntries, params.FlushInterval),
+		TopicName:       params.TopicName,
+		indexWg:         &sync.WaitGroup{},
+		NextOffset:      0,
+		HeadBlockSize:   0,
+		MaxBlockSize:    params.MaxBlockSize,
+		LogBlockList:    []domain.LogBlock{},
+		IndexBlockList:  []domain.IndexBlock{},
+		IndexPosition:   nil,
 	}
 }
 
@@ -260,17 +315,21 @@ func (t *Topic) snapshot() *Topic {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return &Topic{
-		Store:          t.Store,
-		Log:            t.Log,
-		TopicName:      t.TopicName,
-		MaxBlockSize:   t.MaxBlockSize,
-		IndexSparsity:  t.IndexSparsity,
-		flush:          t.flush,
-		NextOffset:     t.NextOffset,
-		HeadBlockSize:  t.HeadBlockSize,
-		LogBlockList:   append([]domain.LogBlock(nil), t.LogBlockList...),
-		IndexBlockList: append([]domain.IndexBlock(nil), t.IndexBlockList...),
-		IndexPosition:  t.IndexPosition,
+		Store:           t.Store,
+		Log:             t.Log,
+		TopicName:       t.TopicName,
+		MaxBlockSize:    t.MaxBlockSize,
+		IndexSparsity:   t.IndexSparsity,
+		MaxFrameEntries: t.MaxFrameEntries,
+		MaxFrameBytes:   t.MaxFrameBytes,
+		Codec:           t.Codec,
+		Codecs:          t.Codecs,
+		flush:           t.flush,
+		NextOffset:      t.NextOffset,
+		HeadBlockSize:   t.HeadBlockSize,
+		LogBlockList:    append([]domain.LogBlock(nil), t.LogBlockList...),
+		IndexBlockList:  append([]domain.IndexBlock(nil), t.IndexBlockList...),
+		IndexPosition:   t.IndexPosition,
 	}
 }
 
@@ -325,6 +384,7 @@ func (t *Topic) sendBlock(ref driven.BlockRef, byteOffset int64, from domain.Off
 	}
 	_, err = logfmt.ReadFile(logfmt.ReadFileParams{
 		Reader:     blockReader,
+		Codecs:     t.Codecs,
 		LogChan:    params.LogChan,
 		Wg:         params.Wg,
 		BatchSize:  params.BatchSize,
@@ -372,14 +432,17 @@ func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 		t.addNewLogBlock()
 		t.resetHeadBlockSize()
 	}
-	// create a byte representation of entries and append it to the head block
-	bytes, offsets := t.buildBinaryEntryRepresentation(entries)
+	// encode the entries into frames and append them to the head block
 	head, hasBlockHead := t.logBlockHead()
 	if !hasBlockHead {
 		return nil, errors.New("Topic " + t.TopicName + " has no block head")
 	}
+	frames, offsets, err := t.buildFrames(entries)
+	if err != nil {
+		return nil, errore.Wrap(err)
+	}
 
-	block, err := t.Store.Append(t.logRef(head), bytes)
+	block, err := t.Store.Append(t.logRef(head), frames)
 	if err != nil {
 		// the store could not undo a partial append, so the head block has to be recovered
 		// before anything is written to it again
@@ -490,23 +553,47 @@ func (t *Topic) ToString() string {
 	return blocklist
 }
 
-func (t *Topic) buildBinaryEntryRepresentation(entries domain.EntriesPtr) ([]byte, int) {
-	neededAllocation := 0
-	for _, entry := range *entries {
-		neededAllocation = neededAllocation + len(entry) + 20
+// buildFrames encodes entries into one frame, or into several when the write is larger than
+// a frame may be. They are appended in one call, so the store still sees a write whole or
+// not at all and a flush still never lands inside a frame; what changes is only that a large
+// write is addressable at more than one point.
+func (t *Topic) buildFrames(entries domain.EntriesPtr) ([]byte, int, error) {
+	var frames []byte
+	var payload []byte
+	firstOffset := t.NextOffset
+	inFrame := 0
+	written := 0
+	// closeFrame encodes what has been collected and starts the next frame after it
+	closeFrame := func() error {
+		if inFrame == 0 {
+			return nil
+		}
+		frame, err := logfmt.EncodeFrame(t.Codec, firstOffset, inFrame, payload)
+		if err != nil {
+			return err
+		}
+		frames = append(frames, frame...)
+		firstOffset = t.NextOffset + domain.Offset(written)
+		payload = payload[:0]
+		inFrame = 0
+		return nil
 	}
-	var bytes = make([]byte, neededAllocation)
-	start := 0
-	end := 0
-	entriesWritten := 0
 	for _, entry := range *entries {
-		byteEntry := domain.CreateByteEntry(entry, t.NextOffset+domain.Offset(entriesWritten))
-		end = start + len(byteEntry)
-		copy(bytes[start:end], byteEntry)
-		start = start + len(byteEntry)
-		entriesWritten = entriesWritten + 1
+		encoded := domain.CreateByteEntry(entry, t.NextOffset+domain.Offset(written))
+		// an entry larger than the byte bound still gets a frame, its own
+		if inFrame > 0 && (uint32(inFrame) >= t.MaxFrameEntries || len(payload)+len(encoded) > t.MaxFrameBytes) {
+			if err := closeFrame(); err != nil {
+				return nil, 0, err
+			}
+		}
+		payload = append(payload, encoded...)
+		written = written + 1
+		inFrame = inFrame + 1
 	}
-	return bytes, entriesWritten
+	if err := closeFrame(); err != nil {
+		return nil, 0, err
+	}
+	return frames, written, nil
 }
 
 // endBoundaryForReadOffset is where a read stops: the newest entry known to be on durable
@@ -570,12 +657,14 @@ func (t *Topic) findCurrentIndexLogBlockPosition() (*domain.LogBlockPosition, er
 	position := &domain.LogBlockPosition{Block: domain.LogBlock(indexBlockHead)}
 	if len(kept) > 0 {
 		last := kept[len(kept)-1]
-		entry, n, err := logfmt.ReadEntryAt(t.Store, t.logRef(domain.LogBlock(indexBlockHead)), last.ByteOffset)
-		if err != nil || domain.Offset(entry.Offset) != last.Offset {
+		header, err := logfmt.ReadFrameHeaderAt(t.Store, t.logRef(domain.LogBlock(indexBlockHead)), last.ByteOffset)
+		// the frame must still be there, still start where the pair says, and still end
+		// inside the recovered log: a frame whose tail was cut is not one to resume after
+		if err != nil || header.FirstOffset != last.Offset || header.EndOffset() > t.NextOffset {
 			// the index does not match the log, rebuild this block's index from the start
 			kept = nil
 		} else {
-			position.ByteOffset = last.ByteOffset + int64(n)
+			position.ByteOffset = last.ByteOffset + header.Size()
 		}
 	}
 	// the kept pairs are a prefix of the block, so dropping the rest is a truncation
@@ -601,14 +690,14 @@ func (t *Topic) findByteOffsetInLogBlock(offset domain.Offset) (int64, int, erro
 	}
 	// byte offsets in an index are only valid for its own log block
 	if !foundIndexBlock || uint64(indexBlock) != uint64(logBlock) {
-		return logfmt.FindByteOffsetFromAndIncludingOffset(t.Store, t.logRef(logBlock), 0, offset)
+		return logfmt.FindFrameByteOffset(t.Store, t.logRef(logBlock), 0, offset)
 	}
 	idx, err := t.getIndexFromIndexBlock(indexBlock)
 	if err != nil {
 		return 0, 0, errore.Wrap(err)
 	}
 	if idx == nil {
-		return logfmt.FindByteOffsetFromAndIncludingOffset(t.Store, t.logRef(logBlock), 0, offset)
+		return logfmt.FindFrameByteOffset(t.Store, t.logRef(logBlock), 0, offset)
 	}
 	indexOffset := idx.FindNearestByteOffset(offset)
 	if indexOffset.Offset > offset {
@@ -618,7 +707,7 @@ func (t *Topic) findByteOffsetInLogBlock(offset domain.Offset) (int64, int, erro
 		return indexOffset.ByteOffset, 0, nil
 	}
 
-	return logfmt.FindByteOffsetFromAndIncludingOffset(t.Store, t.logRef(logBlock), indexOffset.ByteOffset, offset)
+	return logfmt.FindFrameByteOffset(t.Store, t.logRef(logBlock), indexOffset.ByteOffset, offset)
 }
 
 func (t *Topic) getIndexFromIndexBlock(block domain.IndexBlock) (*index.Index, error) {
