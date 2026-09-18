@@ -9,13 +9,13 @@ import (
 	"github.com/tcw/ibsen/core/port/driven"
 )
 
-func newCodec(t *testing.T, level Level) *Codec {
-	t.Helper()
+func newCodec(tb testing.TB, level Level) *Codec {
+	tb.Helper()
 	codec, err := New(level)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	t.Cleanup(codec.Close)
+	tb.Cleanup(codec.Close)
 	return codec
 }
 

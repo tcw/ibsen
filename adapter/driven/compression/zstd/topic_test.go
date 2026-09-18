@@ -53,11 +53,11 @@ func readFrom(t *testing.T, tp *topic.Topic, from domain.Offset) []domain.LogEnt
 	return got
 }
 
-func blockBytes(t *testing.T, store driven.BlockStore, name domain.TopicName) int64 {
-	t.Helper()
+func blockBytes(tb testing.TB, store driven.BlockStore, name domain.TopicName) int64 {
+	tb.Helper()
 	blocks, err := store.List(name, driven.Log)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	var total int64
 	for _, block := range blocks {
