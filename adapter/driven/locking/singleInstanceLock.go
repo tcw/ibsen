@@ -7,25 +7,24 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/core/port/driven"
 	"github.com/tcw/ibsen/errore"
 )
 
 // FileLock is the driven adapter satisfying the coordination port with a lease kept in a
-// file on the shared filesystem.
+// file on the shared filesystem. It reaches that filesystem through the standard library and
+// nothing else: it needs no faults injected under it, so it needs nothing between it and the
+// disk.
 //
 // It asks two things of that filesystem, and gets both from a real one: that O_CREATE|O_EXCL
 // is atomic, which is what makes a claim on a free lock a claim rather than an open, and that
 // a rename replaces a file atomically, which is what stops a reader seeing a half-written
-// holder. afero's in-memory filesystem provides neither — its OpenFile checks for the file and
-// creates it under separate locks — so a FileLock over MemMapFs can hand the same lease to two
-// instances. That is not a deployment: the server takes this lock only when it is not running
-// in memory.
+// holder. an emulated one need not: afero's, which this adapter used to run on,
+// implements neither, since its OpenFile checks for the file and creates it under separate
+// locks. Its tests run against a real directory for that reason.
 var _ driven.SingleIbsenWriterLock = &FileLock{}
 
 type FileLock struct {
-	afero        *afero.Afero
 	lockFile     string
 	reclaimLease time.Duration
 	leaseTime    time.Duration
@@ -47,7 +46,7 @@ type FileLock struct {
 // must not call back into the lock.
 type LeaseLost func(reason error)
 
-func NewFileLock(afero *afero.Afero, lockFile string, leaseTime time.Duration, waitFor time.Duration, onLost LeaseLost) FileLock {
+func NewFileLock(lockFile string, leaseTime time.Duration, waitFor time.Duration, onLost LeaseLost) FileLock {
 	if onLost == nil {
 		// a caller that has not thought about it must not get a no-op: losing the lease and
 		// carrying on writing is the one outcome this lock exists to prevent
@@ -56,7 +55,6 @@ func NewFileLock(afero *afero.Afero, lockFile string, leaseTime time.Duration, w
 		}
 	}
 	return FileLock{
-		afero:        afero,
 		lockFile:     lockFile,
 		reclaimLease: waitFor,
 		leaseTime:    leaseTime,
@@ -77,7 +75,7 @@ func NewFileLock(afero *afero.Afero, lockFile string, leaseTime time.Duration, w
 // and there is no compare-and-swap to do that with, so the claim is confirmed rather than
 // assumed. See takeOverExpired.
 func (fl FileLock) AcquireLock() bool {
-	exists, err := fl.afero.Exists(fl.lockFile)
+	exists, err := fl.exists()
 	if err != nil {
 		log.Err(err).Msgf("failed while checking if file %s exists", fl.lockFile)
 		return false
@@ -128,7 +126,7 @@ func (fl FileLock) AcquireLock() bool {
 // instances starting together cannot both come away believing they hold the lease — which
 // they could when this used O_CREATE alone and both simply wrote their id.
 func (fl FileLock) createExclusively() (bool, error) {
-	file, err := fl.afero.OpenFile(fl.lockFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0660)
+	file, err := os.OpenFile(fl.lockFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0660)
 	if err != nil {
 		if os.IsExist(err) {
 			return false, nil
@@ -140,7 +138,7 @@ func (fl FileLock) createExclusively() (bool, error) {
 	if writeErr != nil || closeErr != nil {
 		// an empty lock file would block every other instance until it aged out, and it is
 		// ours to clean up because we are the one that created it
-		if removeErr := fl.afero.Remove(fl.lockFile); removeErr != nil {
+		if removeErr := os.Remove(fl.lockFile); removeErr != nil {
 			log.Err(removeErr).Msgf("unable to remove the lock file %s this instance failed to claim", fl.lockFile)
 		}
 		return false, errore.WrapError(closeErr, writeErr)
@@ -253,7 +251,7 @@ func (fl FileLock) renewLease() (bool, error) {
 // checking whether a lease was live would read it as expired and try to take over.
 func (fl FileLock) writeClaim() error {
 	temp := fl.lockFile + ".claim-" + fl.uniqueId
-	file, err := fl.afero.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0660)
+	file, err := os.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0660)
 	if err != nil {
 		return err
 	}
@@ -263,7 +261,7 @@ func (fl FileLock) writeClaim() error {
 		fl.removeQuietly(temp)
 		return errore.WrapError(closeErr, writeErr)
 	}
-	if err = fl.afero.Rename(temp, fl.lockFile); err != nil {
+	if err = os.Rename(temp, fl.lockFile); err != nil {
 		fl.removeQuietly(temp)
 		return err
 	}
@@ -271,7 +269,7 @@ func (fl FileLock) writeClaim() error {
 }
 
 func (fl FileLock) removeQuietly(name string) {
-	if err := fl.afero.Remove(name); err != nil {
+	if err := os.Remove(name); err != nil {
 		log.Err(err).Msgf("unable to remove the temporary lock file %s", name)
 	}
 }
@@ -302,9 +300,20 @@ func (fl FileLock) stillOurs() error {
 	return nil
 }
 
+// exists reports whether the lock file is there.
+func (fl FileLock) exists() (bool, error) {
+	if _, err := os.Stat(fl.lockFile); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // readOwner is the id in the lock file, which is whose lease it is.
 func (fl FileLock) readOwner() (string, error) {
-	content, err := fl.afero.ReadFile(fl.lockFile)
+	content, err := os.ReadFile(fl.lockFile)
 	if err != nil {
 		return "", err
 	}
@@ -312,7 +321,7 @@ func (fl FileLock) readOwner() (string, error) {
 }
 
 func (fl FileLock) getFileModificationTime() (time.Time, error) {
-	stat, err := fl.afero.Stat(fl.lockFile)
+	stat, err := os.Stat(fl.lockFile)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -337,7 +346,7 @@ func (fl FileLock) ReleaseLock() bool {
 			fl.lockFile, owner, fl.uniqueId)
 		return false
 	}
-	err = fl.afero.Remove(fl.lockFile)
+	err = os.Remove(fl.lockFile)
 	if err != nil {
 		log.Err(err).Msgf("failed to remove lock file [%s]", fl.lockFile)
 		return false

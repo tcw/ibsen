@@ -1,29 +1,27 @@
 package locking
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/spf13/afero"
 )
 
-// forEachFs runs test against an in-memory and an OS filesystem, whose open flags differ.
-func forEachFs(t *testing.T, test func(t *testing.T, afs *afero.Afero, lockFile string)) {
-	t.Run("mem", func(t *testing.T) {
-		test(t, &afero.Afero{Fs: afero.NewMemMapFs()}, "lock")
-	})
-	t.Run("os", func(t *testing.T) {
-		test(t, &afero.Afero{Fs: afero.NewOsFs()}, filepath.Join(t.TempDir(), "lock"))
-	})
+// withLockFile runs test against a real directory, which is the only filesystem this adapter
+// has. It used to run twice, the second time against an emulated one whose open flags differ —
+// and that difference was never a feature: it produced the O_RDWR|O_EXCL bug in §1 and hid the
+// fact that its O_CREATE|O_EXCL is not atomic.
+func withLockFile(t *testing.T, test func(t *testing.T, lockFile string)) {
+	t.Helper()
+	test(t, filepath.Join(t.TempDir(), "lock"))
 }
 
 func TestFileLock_renewsLeaseWhileHeld(t *testing.T) {
-	forEachFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
-		lock := NewFileLock(afs, lockFile, time.Second, 5*time.Millisecond, failOnLoss(t))
+	withLockFile(t, func(t *testing.T, lockFile string) {
+		lock := NewFileLock(lockFile, time.Second, 5*time.Millisecond, failOnLoss(t))
 		if !lock.AcquireLock() {
 			t.Fatal("unable to acquire a free lock")
 		}
@@ -48,8 +46,8 @@ func TestFileLock_renewsLeaseWhileHeld(t *testing.T) {
 }
 
 func TestFileLock_releaseStopsRenewingLease(t *testing.T) {
-	forEachFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
-		lock := NewFileLock(afs, lockFile, time.Second, time.Millisecond, failOnLoss(t))
+	withLockFile(t, func(t *testing.T, lockFile string) {
+		lock := NewFileLock(lockFile, time.Second, time.Millisecond, failOnLoss(t))
 		if !lock.AcquireLock() {
 			t.Fatal("unable to acquire a free lock")
 		}
@@ -58,7 +56,7 @@ func TestFileLock_releaseStopsRenewingLease(t *testing.T) {
 		}
 		// a renewal after release used to open the removed lock file and crash
 		time.Sleep(50 * time.Millisecond)
-		if exists, _ := afs.Exists(lockFile); exists {
+		if _, err := os.Stat(lockFile); err == nil {
 			t.Fatal("lock file was recreated after release")
 		}
 	})
@@ -73,17 +71,17 @@ func failOnLoss(t *testing.T) LeaseLost {
 
 // age moves the lock file's timestamps back, which is how a test makes a lease look stale
 // without waiting for one.
-func age(t *testing.T, afs *afero.Afero, lockFile string, by time.Duration) {
+func age(t *testing.T, lockFile string, by time.Duration) {
 	t.Helper()
 	when := time.Now().Add(-by)
-	if err := afs.Chtimes(lockFile, when, when); err != nil {
+	if err := os.Chtimes(lockFile, when, when); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func ownerOf(t *testing.T, afs *afero.Afero, lockFile string) string {
+func ownerOf(t *testing.T, lockFile string) string {
 	t.Helper()
-	content, err := afs.ReadFile(lockFile)
+	content, err := os.ReadFile(lockFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,23 +93,23 @@ func ownerOf(t *testing.T, afs *afero.Afero, lockFile string) string {
 // it. Both then believed they held it, and two writers on one log is the thing this lock
 // exists to prevent. It needs no network partition: one long pause on one machine does it.
 func TestARenewalAfterTheLeaseExpiredDoesNotStealItBack(t *testing.T) {
-	forEachFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
+	withLockFile(t, func(t *testing.T, lockFile string) {
 		const lease = time.Second
 		// a reclaim interval longer than the test, so renewal happens only when asked for
-		stalled := NewFileLock(afs, lockFile, lease, time.Hour, failOnLoss(t))
+		stalled := NewFileLock(lockFile, lease, time.Hour, failOnLoss(t))
 		if !stalled.AcquireLock() {
 			t.Fatal("unable to acquire a free lock")
 		}
 
 		// the holder stalls long enough for its lease to expire
-		age(t, afs, lockFile, 2*lease)
+		age(t, lockFile, 2*lease)
 
 		// another instance takes the expired lease
-		successor := NewFileLock(afs, lockFile, lease, time.Hour, failOnLoss(t))
+		successor := NewFileLock(lockFile, lease, time.Hour, failOnLoss(t))
 		if !successor.AcquireLock() {
 			t.Fatal("the successor could not claim the expired lease")
 		}
-		if ownerOf(t, afs, lockFile) != successor.uniqueId {
+		if ownerOf(t, lockFile) != successor.uniqueId {
 			t.Fatal("the successor did not take the lock file")
 		}
 
@@ -124,7 +122,7 @@ func TestARenewalAfterTheLeaseExpiredDoesNotStealItBack(t *testing.T) {
 		if reason == nil {
 			t.Error("the stalled instance was not told why it could not renew")
 		}
-		if owner := ownerOf(t, afs, lockFile); owner != successor.uniqueId {
+		if owner := ownerOf(t, lockFile); owner != successor.uniqueId {
 			t.Errorf("the lock file is now held by [%s], want the successor [%s]: the stalled instance stole it back",
 				owner, successor.uniqueId)
 		}
@@ -136,15 +134,15 @@ func TestARenewalAfterTheLeaseExpiredDoesNotStealItBack(t *testing.T) {
 // at any moment. Stopping before the lease could be granted elsewhere is what a time-bounded
 // lease is for.
 func TestARenewalStopsOnceItsOwnLeaseHasAgedOut(t *testing.T) {
-	forEachFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
+	withLockFile(t, func(t *testing.T, lockFile string) {
 		const lease = time.Second
-		lock := NewFileLock(afs, lockFile, lease, time.Hour, failOnLoss(t))
+		lock := NewFileLock(lockFile, lease, time.Hour, failOnLoss(t))
 		if !lock.AcquireLock() {
 			t.Fatal("unable to acquire a free lock")
 		}
 
 		// nobody has taken it; this instance simply stalled past its own lease
-		age(t, afs, lockFile, 2*lease)
+		age(t, lockFile, 2*lease)
 
 		renewed, reason := lock.renewLease()
 
@@ -163,9 +161,9 @@ func TestARenewalStopsOnceItsOwnLeaseHasAgedOut(t *testing.T) {
 // Losing the lease tells whoever asked to be told, and stops the renewals rather than carrying
 // on regardless. In the server that callback exits the process.
 func TestLosingTheLeaseIsReportedAndStopsRenewing(t *testing.T) {
-	forEachFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
+	withLockFile(t, func(t *testing.T, lockFile string) {
 		lost := make(chan error, 4)
-		lock := NewFileLock(afs, lockFile, 50*time.Millisecond, 5*time.Millisecond,
+		lock := NewFileLock(lockFile, 50*time.Millisecond, 5*time.Millisecond,
 			func(reason error) { lost <- reason })
 		if !lock.AcquireLock() {
 			t.Fatal("unable to acquire a free lock")
@@ -173,7 +171,7 @@ func TestLosingTheLeaseIsReportedAndStopsRenewing(t *testing.T) {
 
 		// somebody else takes the lock file out from under it
 		thief := "another-instance"
-		if err := afs.WriteFile(lockFile, []byte(thief), 0660); err != nil {
+		if err := os.WriteFile(lockFile, []byte(thief), 0660); err != nil {
 			t.Fatal(err)
 		}
 
@@ -188,7 +186,7 @@ func TestLosingTheLeaseIsReportedAndStopsRenewing(t *testing.T) {
 
 		// and it renews no more: the thief's id stays put
 		time.Sleep(50 * time.Millisecond)
-		if owner := ownerOf(t, afs, lockFile); owner != thief {
+		if owner := ownerOf(t, lockFile); owner != thief {
 			t.Errorf("the lock file is held by [%s] after the lease was lost, want [%s]", owner, thief)
 		}
 		if len(lost) != 0 {
@@ -200,13 +198,13 @@ func TestLosingTheLeaseIsReportedAndStopsRenewing(t *testing.T) {
 // The same rule on the way out: a lock this instance no longer holds is not its to remove.
 // Removing it would hand the log to a third writer while the second is still using it.
 func TestReleaseDoesNotRemoveALockItNoLongerHolds(t *testing.T) {
-	forEachFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
-		lock := NewFileLock(afs, lockFile, time.Second, time.Hour, failOnLoss(t))
+	withLockFile(t, func(t *testing.T, lockFile string) {
+		lock := NewFileLock(lockFile, time.Second, time.Hour, failOnLoss(t))
 		if !lock.AcquireLock() {
 			t.Fatal("unable to acquire a free lock")
 		}
 		successor := "another-instance"
-		if err := afs.WriteFile(lockFile, []byte(successor), 0660); err != nil {
+		if err := os.WriteFile(lockFile, []byte(successor), 0660); err != nil {
 			t.Fatal(err)
 		}
 
@@ -214,10 +212,10 @@ func TestReleaseDoesNotRemoveALockItNoLongerHolds(t *testing.T) {
 			t.Error("releasing a lock held by somebody else reported success")
 		}
 
-		if exists, _ := afs.Exists(lockFile); !exists {
-			t.Fatal("the successor's lock file was removed")
+		if _, err := os.Stat(lockFile); err != nil {
+			t.Fatalf("the successor's lock file was removed: %v", err)
 		}
-		if owner := ownerOf(t, afs, lockFile); owner != successor {
+		if owner := ownerOf(t, lockFile); owner != successor {
 			t.Errorf("the lock file is held by [%s], want the successor [%s]", owner, successor)
 		}
 	})
@@ -226,12 +224,12 @@ func TestReleaseDoesNotRemoveALockItNoLongerHolds(t *testing.T) {
 // countWinners has instances race for the same lock file and reports how many came away
 // believing they hold it. Anything but one is a bug: two is split-brain, and zero means a
 // free lock nobody could take.
-func countWinners(t *testing.T, afs *afero.Afero, lockFile string, lease time.Duration, racers int) int {
+func countWinners(t *testing.T, lockFile string, lease time.Duration, racers int) int {
 	t.Helper()
 	locks := make([]FileLock, racers)
 	for i := range locks {
 		// a reclaim interval longer than the test, so nothing renews behind our back
-		locks[i] = NewFileLock(afs, lockFile, lease, time.Hour, func(error) {})
+		locks[i] = NewFileLock(lockFile, lease, time.Hour, func(error) {})
 	}
 	start := make(chan struct{})
 	var won atomic.Int64
@@ -251,28 +249,16 @@ func countWinners(t *testing.T, afs *afero.Afero, lockFile string, lease time.Du
 	return int(won.Load())
 }
 
-// onRealFs runs a race against a real filesystem only.
-//
-// The in-memory one cannot answer these. afero's MemMapFs.OpenFile checks whether the file
-// exists and then creates it under two separate locks, so O_CREATE|O_EXCL is not atomic there
-// and two instances can both create the same lock file. That is afero's, not this adapter's,
-// and it is not a deployment: the server takes this lock only when it is not running in
-// memory. Running these against MemMapFs would be asserting a guarantee nothing can provide.
-func onRealFs(t *testing.T, test func(t *testing.T, afs *afero.Afero, lockFile string)) {
-	t.Helper()
-	test(t, &afero.Afero{Fs: afero.NewOsFs()}, filepath.Join(t.TempDir(), "lock"))
-}
-
 // Two instances starting at the same moment on a fresh data directory both used to create the
 // lock file and both come away holding it: O_CREATE without O_EXCL is not a claim, it is an
 // open. This is the one race here that a filesystem settles outright.
 func TestOnlyOneInstanceCanClaimAFreshLock(t *testing.T) {
-	onRealFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
+	withLockFile(t, func(t *testing.T, lockFile string) {
 		for attempt := 0; attempt < 30; attempt++ {
-			if err := afs.RemoveAll(lockFile); err != nil {
+			if err := os.RemoveAll(lockFile); err != nil {
 				t.Fatal(err)
 			}
-			if won := countWinners(t, afs, lockFile, time.Minute, 8); won != 1 {
+			if won := countWinners(t, lockFile, time.Minute, 8); won != 1 {
 				t.Fatalf("%d of 8 instances claimed a fresh lock on attempt %d, want exactly 1", won, attempt)
 			}
 		}
@@ -283,16 +269,16 @@ func TestOnlyOneInstanceCanClaimAFreshLock(t *testing.T) {
 // no compare-and-swap on a filesystem, so a takeover is confirmed by reading the file back
 // after a pause rather than assumed, and whoever is not in it backs off.
 func TestOnlyOneInstanceCanTakeOverAnExpiredLease(t *testing.T) {
-	onRealFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
+	withLockFile(t, func(t *testing.T, lockFile string) {
 		const lease = 100 * time.Millisecond
 		for attempt := 0; attempt < 30; attempt++ {
 			// a lock file whose holder went quiet long ago
-			if err := afs.WriteFile(lockFile, []byte("departed-instance"), 0660); err != nil {
+			if err := os.WriteFile(lockFile, []byte("departed-instance"), 0660); err != nil {
 				t.Fatal(err)
 			}
-			age(t, afs, lockFile, 10*lease)
+			age(t, lockFile, 10*lease)
 
-			if won := countWinners(t, afs, lockFile, lease, 8); won != 1 {
+			if won := countWinners(t, lockFile, lease, 8); won != 1 {
 				t.Fatalf("%d of 8 instances took over an expired lease on attempt %d, want exactly 1", won, attempt)
 			}
 		}
@@ -303,14 +289,14 @@ func TestOnlyOneInstanceCanTakeOverAnExpiredLease(t *testing.T) {
 // write this replaced let a reader see an empty file or a short read, which a holder renewing
 // its own lease would take as having lost it.
 func TestAClaimIsNeverReadHalfWritten(t *testing.T) {
-	onRealFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
+	withLockFile(t, func(t *testing.T, lockFile string) {
 		writers := make([]FileLock, 4)
 		ids := map[string]bool{}
 		for i := range writers {
-			writers[i] = NewFileLock(afs, lockFile, time.Minute, time.Hour, failOnLoss(t))
+			writers[i] = NewFileLock(lockFile, time.Minute, time.Hour, failOnLoss(t))
 			ids[writers[i].uniqueId] = true
 		}
-		if err := afs.WriteFile(lockFile, []byte(writers[0].uniqueId), 0660); err != nil {
+		if err := os.WriteFile(lockFile, []byte(writers[0].uniqueId), 0660); err != nil {
 			t.Fatal(err)
 		}
 
@@ -353,16 +339,16 @@ func TestAClaimIsNeverReadHalfWritten(t *testing.T) {
 
 // A live lease is nobody else's to take, however many ask.
 func TestNobodyTakesALiveLease(t *testing.T) {
-	forEachFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
-		holder := NewFileLock(afs, lockFile, time.Minute, time.Hour, failOnLoss(t))
+	withLockFile(t, func(t *testing.T, lockFile string) {
+		holder := NewFileLock(lockFile, time.Minute, time.Hour, failOnLoss(t))
 		if !holder.AcquireLock() {
 			t.Fatal("unable to acquire a free lock")
 		}
 
-		if won := countWinners(t, afs, lockFile, time.Minute, 8); won != 0 {
+		if won := countWinners(t, lockFile, time.Minute, 8); won != 0 {
 			t.Errorf("%d instances took a lease that was still live", won)
 		}
-		if owner := ownerOf(t, afs, lockFile); owner != holder.uniqueId {
+		if owner := ownerOf(t, lockFile); owner != holder.uniqueId {
 			t.Errorf("the lock file is held by [%s], want the holder [%s]", owner, holder.uniqueId)
 		}
 	})

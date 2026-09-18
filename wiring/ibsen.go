@@ -141,7 +141,7 @@ func (ibs *IbsenServer) defaults() {
 			// writer to fence off and no filesystem to keep a lease on
 			ibs.Lock = driven.NoFileLock{}
 		} else {
-			ibs.Lock = locking.NewFileLock(ibs.Afs,
+			ibs.Lock = locking.NewFileLock(
 				filepath.Join(ibs.RootPath, writeLockFileName), writeLockLease, writeLockReclaim,
 				ibs.writeLockLost)
 		}

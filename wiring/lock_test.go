@@ -3,6 +3,8 @@ package wiring
 import (
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,12 +16,14 @@ import (
 // The CLI used to build the lease itself, at <root>/.writeLock. The composition root now
 // does, and it has to land in the same place: an operator's existing data directory already
 // holds one, and another instance is fenced off by that exact path.
+//
+// The directory is a real one because the lease is. The lock adapter reaches the filesystem
+// through the standard library rather than through whatever this server was handed, which is
+// what a lease fencing off another process has to do; a lease on a filesystem that exists only
+// inside this process fences off nobody.
 func TestStartBuildsTheWriteLockInTheDataDirectory(t *testing.T) {
-	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
-	if err := afs.MkdirAll("/data", 0700); err != nil {
-		t.Fatal(err)
-	}
-	ibs := &IbsenServer{Afs: afs, RootPath: "/data"}
+	root := t.TempDir()
+	ibs := &IbsenServer{RootPath: root}
 
 	ibs.defaults()
 
@@ -31,12 +35,8 @@ func TestStartBuildsTheWriteLockInTheDataDirectory(t *testing.T) {
 	}
 	t.Cleanup(func() { ibs.Lock.ReleaseLock() })
 
-	exists, err := afs.Exists("/data/.writeLock")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !exists {
-		t.Error("acquiring the lock did not create /data/.writeLock")
+	if _, err := os.Stat(filepath.Join(root, ".writeLock")); err != nil {
+		t.Errorf("acquiring the lock did not create <root>/.writeLock: %v", err)
 	}
 }
 
