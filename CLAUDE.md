@@ -140,6 +140,7 @@ All known bugs below are fixed (2026-09-15), each with a regression test. Remain
 - **Concurrent first loads**: `LogTopicsManager.getOrCreateTopic` runs at most one load per topic. Requests that arrive during a load wait for it and share its result; a failed load is not cached, so the next request retries. Before, two first requests could both run `LoadOrCreate` and keep one, and the discarded load kept recovering the head block and rewriting its index while the kept topic accepted writes, which could truncate acknowledged entries. Covered by `core/manager/topicLoad_test.go` (gated fs, counts loads).
 - **Unsent log events**: 27 zerolog events in production code had no `.Msg`/`.Send`, so they logged nothing and never exited (25 `log.Fatal().Err(err)`, a `log.Err(err)` for a failed listen, and the background index failure in `Topic.Write`). The CLI now logs and exits with a message; `wiring/ibsen.go` returns profiling setup errors from `Start` and only logs profiling errors during shutdown, so the lock is still released; the client constructors return the dial error. `logcalls_test.go` parses the repo and fails on any zerolog event that is never sent.
 - **Single-writer lease renewal** (`adapter/driven/locking`): renewal opened the lock file with `O_RDWR|O_EXCL`, which Linux ignores but afero's in-memory fs rejects for an existing file; it now opens with `O_WRONLY|O_TRUNC`. `ReleaseLock` stops the renewer under a mutex, so a clean shutdown no longer races a renewal of the removed file (which used to panic on a nil file). The expired-lease claim checks its write. Tested on mem and OS fs.
+- **Two instances could both claim the same lock.** A free lock was claimed with `O_CREATE` and no `O_EXCL`, which is an open rather than a claim, so two servers starting together both created the file and both came away holding the lease; it is now `O_CREATE|O_EXCL`, the one step a filesystem makes atomic. An expired lease has no such primitive — there is no compare-and-swap — so a takeover is confirmed rather than assumed: the claimant pauses for a tenth of the lease and reads the file back, and only the instance whose id is in it carries on. Every claim is written to a temporary file and renamed into place, so a reader sees the old holder or the new one and never a half-written name; the truncate-then-write it replaced produced real short reads under contention, which a holder renewing its own lease would have read as having lost it. The adapter needs a filesystem where `O_CREATE|O_EXCL` and `Rename` are atomic: afero's MemMapFs is not one, since its `OpenFile` checks and creates under separate locks, which is why the two race tests run only against a real directory. The server takes this lock only when it is not running in memory, so that is not a deployment.
 - **A stalled writer used to steal its own lease back, and two writers then shared one log.** Renewal truncated the lock file and wrote its own id without reading it first. So: the holder stalls past its lease (a garbage collection pause, a frozen scheduler, a slow disk), the lease expires, a second instance legitimately claims it, the first wakes up and overwrites the file back to its own id — and both then believe they hold the lease. No partition needed, one long pause on one machine. Renewal now proves the lease is still its own before extending it, and treats its own lease having aged out as lost even if nobody has taken it, since anyone may take it at any moment. `ReleaseLock` follows the same rule and will not remove a lock file it no longer holds, which would hand the log to a third writer. Losing the lease is reported through `locking.LeaseLost` rather than exited from inside the adapter: `wiring.IbsenServer.writeLockLost` is what stops the process, and it exits rather than shutting down cleanly, because a clean shutdown flushes and writes. A filesystem has no compare-and-swap, so renewal is a read and then a write: this closes the window a stall opens, it does not make renewal atomic. `adapter/driven/locking/singleInstanceLock_test.go` reproduces the theft on both filesystems and pins all four rules.
 - **TLS paths**: `adapter/driver/grpcapi/api-server.go` used grpc's `testdata.Path` for the cert and key, which joins relative paths onto grpc's own test data directory. `serverCredentials` now loads them as given (relative to the working directory) and returns the error before using the credentials. Covered by `adapter/driver/grpcapi/tls_test.go` (self-signed cert at relative paths, TLS round trip).
 - **Shutdown**: `LogTopicsManager.Close` refuses new writes and topic loads (`manager.ErrClosed`), waits for those in flight, and closes each topic; `Topic.Close` refuses writes (`topic.ErrTopicClosed`) and waits for the indexing earlier writes started. Loaded topics stay readable. `IbsenServer.ShutdownCleanly` closes the manager after gRPC stops (a forced stop does not wait for handlers) and only then releases the lock, and `Start` waits for the shutdown to finish, since the process exits when it returns. gRPC calls during shutdown get `Unavailable`. Only the Write goroutine adds to `Topic.indexWg`, under `Topic.mu` before `closed` is set, so `Close` never races an `Add`. Covered by `core/manager/close_test.go` (gated writes) and `wiring/ibsen_test.go`.
@@ -327,9 +328,12 @@ What is already here, and what a token would actually add:
   most one pod per ordinal, and a ReadWriteOnce volume is attached to one node by the CSI
   driver. That has known edges around force-detach and unreachable nodes, which is a reason to
   keep the file lease as a cheap backstop rather than to build etcd integration.
-- Still open, and a different window from the one now closed: `AcquireLock` claims an expired
-  lease by read-then-write too, so two instances could both find it expired and both claim it.
-  Closing that needs an atomic create, not a check.
+- Claiming is as atomic as a filesystem allows: `O_CREATE|O_EXCL` for a free lock, which is
+  exact, and confirm-after-a-pause for an expired one, which is not. What makes the second
+  safe in the end is renewal, which gives up the moment it cannot prove the lease is still its
+  own, so a claim that slips through is dropped within one renewal interval rather than
+  running beside another writer for the life of the process. A token enforced by storage would
+  replace that argument with a guarantee; nothing short of it removes the pause.
 
 ## 8. Embedded builds
 
@@ -411,8 +415,10 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 21. ~~Coalesce indexing instead of dropping it, and delete the ten-second sweep that covered
     for the drop (§8).~~
 22. ~~Stop a stalled writer from stealing its own lease back (§1, §7).~~
+23. ~~Make claiming the lock as atomic as a filesystem allows, and stop a claim being read
+    half-written (§1, §7).~~
 
-Every step ships green. Steps 0 to 22 are done, one commit each.
+Every step ships green. Steps 0 to 23 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: the frame-bound default, which the benchmark has
 an answer for and nobody has decided (§5); then dictionaries (§6), which §5's measurements
