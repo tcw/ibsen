@@ -3,6 +3,8 @@ package locking
 import (
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -217,6 +219,151 @@ func TestReleaseDoesNotRemoveALockItNoLongerHolds(t *testing.T) {
 		}
 		if owner := ownerOf(t, afs, lockFile); owner != successor {
 			t.Errorf("the lock file is held by [%s], want the successor [%s]", owner, successor)
+		}
+	})
+}
+
+// countWinners has instances race for the same lock file and reports how many came away
+// believing they hold it. Anything but one is a bug: two is split-brain, and zero means a
+// free lock nobody could take.
+func countWinners(t *testing.T, afs *afero.Afero, lockFile string, lease time.Duration, racers int) int {
+	t.Helper()
+	locks := make([]FileLock, racers)
+	for i := range locks {
+		// a reclaim interval longer than the test, so nothing renews behind our back
+		locks[i] = NewFileLock(afs, lockFile, lease, time.Hour, func(error) {})
+	}
+	start := make(chan struct{})
+	var won atomic.Int64
+	var wg sync.WaitGroup
+	for i := range locks {
+		wg.Add(1)
+		go func(lock FileLock) {
+			defer wg.Done()
+			<-start
+			if lock.AcquireLock() {
+				won.Add(1)
+			}
+		}(locks[i])
+	}
+	close(start)
+	wg.Wait()
+	return int(won.Load())
+}
+
+// onRealFs runs a race against a real filesystem only.
+//
+// The in-memory one cannot answer these. afero's MemMapFs.OpenFile checks whether the file
+// exists and then creates it under two separate locks, so O_CREATE|O_EXCL is not atomic there
+// and two instances can both create the same lock file. That is afero's, not this adapter's,
+// and it is not a deployment: the server takes this lock only when it is not running in
+// memory. Running these against MemMapFs would be asserting a guarantee nothing can provide.
+func onRealFs(t *testing.T, test func(t *testing.T, afs *afero.Afero, lockFile string)) {
+	t.Helper()
+	test(t, &afero.Afero{Fs: afero.NewOsFs()}, filepath.Join(t.TempDir(), "lock"))
+}
+
+// Two instances starting at the same moment on a fresh data directory both used to create the
+// lock file and both come away holding it: O_CREATE without O_EXCL is not a claim, it is an
+// open. This is the one race here that a filesystem settles outright.
+func TestOnlyOneInstanceCanClaimAFreshLock(t *testing.T) {
+	onRealFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
+		for attempt := 0; attempt < 30; attempt++ {
+			if err := afs.RemoveAll(lockFile); err != nil {
+				t.Fatal(err)
+			}
+			if won := countWinners(t, afs, lockFile, time.Minute, 8); won != 1 {
+				t.Fatalf("%d of 8 instances claimed a fresh lock on attempt %d, want exactly 1", won, attempt)
+			}
+		}
+	})
+}
+
+// And two instances that both find the same lease expired must not both take it over. There is
+// no compare-and-swap on a filesystem, so a takeover is confirmed by reading the file back
+// after a pause rather than assumed, and whoever is not in it backs off.
+func TestOnlyOneInstanceCanTakeOverAnExpiredLease(t *testing.T) {
+	onRealFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
+		const lease = 100 * time.Millisecond
+		for attempt := 0; attempt < 30; attempt++ {
+			// a lock file whose holder went quiet long ago
+			if err := afs.WriteFile(lockFile, []byte("departed-instance"), 0660); err != nil {
+				t.Fatal(err)
+			}
+			age(t, afs, lockFile, 10*lease)
+
+			if won := countWinners(t, afs, lockFile, lease, 8); won != 1 {
+				t.Fatalf("%d of 8 instances took over an expired lease on attempt %d, want exactly 1", won, attempt)
+			}
+		}
+	})
+}
+
+// A claim is never half-written, however many instances are writing one. The truncate-then-
+// write this replaced let a reader see an empty file or a short read, which a holder renewing
+// its own lease would take as having lost it.
+func TestAClaimIsNeverReadHalfWritten(t *testing.T) {
+	onRealFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
+		writers := make([]FileLock, 4)
+		ids := map[string]bool{}
+		for i := range writers {
+			writers[i] = NewFileLock(afs, lockFile, time.Minute, time.Hour, failOnLoss(t))
+			ids[writers[i].uniqueId] = true
+		}
+		if err := afs.WriteFile(lockFile, []byte(writers[0].uniqueId), 0660); err != nil {
+			t.Fatal(err)
+		}
+
+		stop := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := range writers {
+			wg.Add(1)
+			go func(lock FileLock) {
+				defer wg.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					if err := lock.writeClaim(); err != nil {
+						t.Error(err)
+						return
+					}
+				}
+			}(writers[i])
+		}
+		for i := 0; i < 2000; i++ {
+			owner, err := writers[0].readOwner()
+			if err != nil {
+				close(stop)
+				wg.Wait()
+				t.Fatalf("read the lock file and got %v, want a whole id", err)
+			}
+			if !ids[owner] {
+				close(stop)
+				wg.Wait()
+				t.Fatalf("read [%s] from the lock file, which is not a whole id any writer wrote", owner)
+			}
+		}
+		close(stop)
+		wg.Wait()
+	})
+}
+
+// A live lease is nobody else's to take, however many ask.
+func TestNobodyTakesALiveLease(t *testing.T) {
+	forEachFs(t, func(t *testing.T, afs *afero.Afero, lockFile string) {
+		holder := NewFileLock(afs, lockFile, time.Minute, time.Hour, failOnLoss(t))
+		if !holder.AcquireLock() {
+			t.Fatal("unable to acquire a free lock")
+		}
+
+		if won := countWinners(t, afs, lockFile, time.Minute, 8); won != 0 {
+			t.Errorf("%d instances took a lease that was still live", won)
+		}
+		if owner := ownerOf(t, afs, lockFile); owner != holder.uniqueId {
+			t.Errorf("the lock file is held by [%s], want the holder [%s]", owner, holder.uniqueId)
 		}
 	})
 }
