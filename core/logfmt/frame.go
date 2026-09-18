@@ -14,6 +14,17 @@ var crcTable = crc32.MakeTable(crc32.Castagnoli)
 // through codec behind a header describing what came out. One call to Topic.Write makes one
 // frame, which is what makes a frame boundary a flush boundary and a durability boundary:
 // the store never sees half a frame, so a flush never lands inside one.
+//
+// Compression that did not pay is thrown away. A codec is offered the entries and is taken up
+// on it only if what comes back is smaller; otherwise the frame stores the entries as they
+// are and its header says so. Costing a codec nothing is not the same as costing it nothing
+// to try: a frame too small for a compressor to find anything in comes back larger than it
+// went in, and without this a topic could be made bigger by turning compression on. A tie
+// goes to the plain bytes, which are cheaper to read and readable by a build that does not
+// carry the codec at all.
+//
+// This is per frame, so it costs nothing to get wrong at the topic level: a topic that
+// batches well compresses, and the same topic's occasional single-entry write does not.
 func EncodeFrame(codec driven.Codec, firstOffset domain.Offset, entryCount int, entries []byte) ([]byte, error) {
 	if codec == nil {
 		codec = driven.NoCodec{}
@@ -25,11 +36,16 @@ func EncodeFrame(codec driven.Codec, firstOffset domain.Offset, entryCount int, 
 	if err != nil {
 		return nil, errore.Wrap(err)
 	}
+	codecID := codec.ID()
+	if codecID != driven.CodecNone && len(stored) >= len(entries) {
+		codecID = driven.CodecNone
+		stored = entries
+	}
 	if len(stored) > domain.MaxFrameSize {
 		return nil, errore.NewF("frame of %d stored bytes exceeds %d", len(stored), domain.MaxFrameSize)
 	}
 	header := domain.FrameHeader{
-		Codec:       uint8(codec.ID()),
+		Codec:       uint8(codecID),
 		FirstOffset: firstOffset,
 		EntryCount:  uint32(entryCount),
 		StoredSize:  uint32(len(stored)),

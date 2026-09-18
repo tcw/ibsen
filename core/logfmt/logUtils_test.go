@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 
@@ -153,9 +154,13 @@ func TestRecoverBlock_blockWrittenBeforeFramingIsReported(t *testing.T) {
 // Recovery checks frames against their two checksums and decodes nothing, so a torn tail is
 // found and cut even by a build carrying none of the codecs the block was written with.
 func TestRecoverBlock_needsNoCodec(t *testing.T) {
-	unknown, err := EncodeFrame(unknownCodec{}, 0, 1, entriesFrom(0, "dummy1"))
+	unknown, err := EncodeFrame(rleCodec{}, 0, 1, entriesFrom(0, runHeavy()))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if header, hErr := domain.ReadFrameHeader(bytes.NewReader(unknown), domain.MaxFrameSize); hErr != nil ||
+		header.Codec != uint8(rleCodec{}.ID()) {
+		t.Fatalf("the frame must be written with the unwired codec for this to mean anything: %+v, %v", header, hErr)
 	}
 	content := append(append([]byte(nil), unknown...), bytes.Repeat([]byte{0xff}, 40)...)
 	store, ref, size := blockWith(t, 0, content)
@@ -168,15 +173,42 @@ func TestRecoverBlock_needsNoCodec(t *testing.T) {
 	assert.Equal(t, int64(40), truncated)
 }
 
-// unknownCodec writes frames naming a codec no registry here holds.
-type unknownCodec struct{}
+// rleCodec collapses runs of a repeated byte into a (count, byte) pair. It is a real codec
+// in the only sense these tests need: it shrinks input with long runs and grows input
+// without them, so one codec exercises both sides of EncodeFrame keeping compression only
+// when it paid. No registry here holds its id, which is what makes it the unwired one.
+type rleCodec struct{}
 
-func (unknownCodec) ID() driven.CodecID { return driven.CodecID(200) }
-func (unknownCodec) Encode(dst, src []byte) ([]byte, error) {
-	return append(dst, src...), nil
+func (rleCodec) ID() driven.CodecID { return driven.CodecID(200) }
+
+func (rleCodec) Encode(dst, src []byte) ([]byte, error) {
+	for i := 0; i < len(src); {
+		run := 1
+		for i+run < len(src) && src[i+run] == src[i] && run < 255 {
+			run++
+		}
+		dst = append(dst, byte(run), src[i])
+		i = i + run
+	}
+	return dst, nil
 }
-func (unknownCodec) Decode(dst, src []byte, _ int) ([]byte, error) {
-	return append(dst, src...), nil
+
+func (rleCodec) Decode(dst, src []byte, _ int) ([]byte, error) {
+	if len(src)%2 != 0 {
+		return nil, errors.New("rle payload is not whole pairs")
+	}
+	for i := 0; i < len(src); i = i + 2 {
+		for n := 0; n < int(src[i]); n++ {
+			dst = append(dst, src[i+1])
+		}
+	}
+	return dst, nil
+}
+
+// runHeavy is a payload rleCodec shrinks, so a frame built from it records the codec rather
+// than falling back to the plain bytes.
+func runHeavy() string {
+	return strings.Repeat("a", 300)
 }
 
 func collectBatches(params ReadFileParams) ([][]domain.LogEntry, error) {
@@ -245,7 +277,7 @@ func TestReadFile_rejectsCorruptEntryInsideAValidFrame(t *testing.T) {
 // A frame naming a codec this build did not wire is intact, not damaged, and is reported as
 // a missing codec rather than as corruption.
 func TestReadFile_reportsAnUnknownCodec(t *testing.T) {
-	content, err := EncodeFrame(unknownCodec{}, 0, 1, entriesFrom(0, "dummy1"))
+	content, err := EncodeFrame(rleCodec{}, 0, 1, entriesFrom(0, runHeavy()))
 	if err != nil {
 		t.Fatal(err)
 	}
