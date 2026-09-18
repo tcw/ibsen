@@ -29,6 +29,7 @@ edges() {
 impure=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
 	./core/... \
 	./wiring/embedded/... \
+	./adapter/driven/blockstore/filestore/... \
 	./adapter/driven/blockstore/memstore/... \
 	./adapter/driven/blockstore/flashstore/... \
 	./adapter/driven/blockstore/conformance/... |
