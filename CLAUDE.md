@@ -255,8 +255,31 @@ written with `driven.NoCodec`, so the format is in place and carries no compress
 - `cli.validateFrameBounds` refuses a frame the format could not hold: without it, a
   `maxFrameBytes` above `domain.MaxFrameSize` would start a server that fails on the first
   write large enough to reach the bound, rather than not starting.
-- Still to do: nothing has measured what the frame bounds should be. Picking better defaults
-  wants a benchmark over ratio, write latency and read amplification, not a guess.
+- **What the frame bound costs**, measured by `adapter/driven/compression/zstd/bench_test.go`
+  (`go test ./adapter/driven/compression/zstd/ -run XXX -bench BenchmarkFrame`). It varies
+  `MaxFrameEntries` with `MaxFrameBytes` wide open and one write of 10000 entries, so the
+  entry bound is the only thing deciding frame size. Storage is `memstore`, which cannot
+  sync, so the flush policy stays out of the numbers. For ~130-byte JSON events through zstd
+  at the default level, on a 2-core AMD Ryzen 5 2600X:
+
+  | entries/frame | ratio | decoded per single-entry read | single read | sequential read |
+  |---|---|---|---|---|
+  | 1 | 1.36 | 410 B | 69 µs | 122 MB/s |
+  | 10 | 0.30 | 1.6 KB | 96 µs | 121 MB/s |
+  | 100 | 0.17 | 14 KB | 64 µs | 215 MB/s |
+  | 1000 (default) | 0.16 | 137 KB | 248 µs | 403 MB/s |
+  | 10000 | 0.17 | 1.4 MB | 2537 µs | 428 MB/s |
+
+  The ratio is flat above 100: 1000 buys 4% over 100, and 10000 buys nothing. Read
+  amplification is linear in the bound, because a frame is decoded whole — at the default a
+  read of one 130-byte entry decodes 137 KB. Sequential reads want the opposite and flatten
+  around 1000. So the bound is a choice between random and sequential readers, and the ratio
+  stops arguing for large frames well before either of them does. A frame per entry is worse
+  than useless with a codec: zstd on 130 bytes makes the log *larger* (1.36), and the index
+  gets a pair only every sparsity frames, so a small frame costs header scanning too.
+- Still to do: the default of 1000 entries per frame was chosen before any of this was
+  measured, and the table says 100 is the better all-round answer. Changing it is a
+  behaviour change for every deployment, so it is a decision, not a follow-up.
 
 ## 6. Dictionaries
 
