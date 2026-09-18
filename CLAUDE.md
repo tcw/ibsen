@@ -139,7 +139,8 @@ All known bugs below are fixed (2026-09-15), each with a regression test. Remain
 - **Topic names**: `domain.ValidateTopicName` rejects names that would escape or misuse the topic directory: empty or longer than 255 bytes, a leading dot (covers `.` and `..`), `/`, `\`, or control characters. `Topic.LoadOrCreate`, `Write` and `Read` enforce it; the gRPC handlers check first and return `InvalidArgument`.
 - **Concurrent first loads**: `LogTopicsManager.getOrCreateTopic` runs at most one load per topic. Requests that arrive during a load wait for it and share its result; a failed load is not cached, so the next request retries. Before, two first requests could both run `LoadOrCreate` and keep one, and the discarded load kept recovering the head block and rewriting its index while the kept topic accepted writes, which could truncate acknowledged entries. Covered by `core/manager/topicLoad_test.go` (gated fs, counts loads).
 - **Unsent log events**: 27 zerolog events in production code had no `.Msg`/`.Send`, so they logged nothing and never exited (25 `log.Fatal().Err(err)`, a `log.Err(err)` for a failed listen, and the background index failure in `Topic.Write`). The CLI now logs and exits with a message; `wiring/ibsen.go` returns profiling setup errors from `Start` and only logs profiling errors during shutdown, so the lock is still released; the client constructors return the dial error. `logcalls_test.go` parses the repo and fails on any zerolog event that is never sent.
-- **Single-writer lease renewal** (`adapter/driven/locking`): renewal opened the lock file with `O_RDWR|O_EXCL`, which Linux ignores but afero's in-memory fs rejects for an existing file; it now opens with `O_WRONLY|O_TRUNC`. A failed renewal exits the process (another instance could claim the lock). `ReleaseLock` stops the renewer under a mutex, so a clean shutdown no longer races a renewal of the removed file (which used to panic on a nil file). The expired-lease claim checks its write. Tested on mem and OS fs.
+- **Single-writer lease renewal** (`adapter/driven/locking`): renewal opened the lock file with `O_RDWR|O_EXCL`, which Linux ignores but afero's in-memory fs rejects for an existing file; it now opens with `O_WRONLY|O_TRUNC`. `ReleaseLock` stops the renewer under a mutex, so a clean shutdown no longer races a renewal of the removed file (which used to panic on a nil file). The expired-lease claim checks its write. Tested on mem and OS fs.
+- **A stalled writer used to steal its own lease back, and two writers then shared one log.** Renewal truncated the lock file and wrote its own id without reading it first. So: the holder stalls past its lease (a garbage collection pause, a frozen scheduler, a slow disk), the lease expires, a second instance legitimately claims it, the first wakes up and overwrites the file back to its own id — and both then believe they hold the lease. No partition needed, one long pause on one machine. Renewal now proves the lease is still its own before extending it, and treats its own lease having aged out as lost even if nobody has taken it, since anyone may take it at any moment. `ReleaseLock` follows the same rule and will not remove a lock file it no longer holds, which would hand the log to a third writer. Losing the lease is reported through `locking.LeaseLost` rather than exited from inside the adapter: `wiring.IbsenServer.writeLockLost` is what stops the process, and it exits rather than shutting down cleanly, because a clean shutdown flushes and writes. A filesystem has no compare-and-swap, so renewal is a read and then a write: this closes the window a stall opens, it does not make renewal atomic. `adapter/driven/locking/singleInstanceLock_test.go` reproduces the theft on both filesystems and pins all four rules.
 - **TLS paths**: `adapter/driver/grpcapi/api-server.go` used grpc's `testdata.Path` for the cert and key, which joins relative paths onto grpc's own test data directory. `serverCredentials` now loads them as given (relative to the working directory) and returns the error before using the credentials. Covered by `adapter/driver/grpcapi/tls_test.go` (self-signed cert at relative paths, TLS round trip).
 - **Shutdown**: `LogTopicsManager.Close` refuses new writes and topic loads (`manager.ErrClosed`), waits for those in flight, and closes each topic; `Topic.Close` refuses writes (`topic.ErrTopicClosed`) and waits for the indexing earlier writes started. Loaded topics stay readable. `IbsenServer.ShutdownCleanly` closes the manager after gRPC stops (a forced stop does not wait for handlers) and only then releases the lock, and `Start` waits for the shutdown to finish, since the process exits when it returns. gRPC calls during shutdown get `Unavailable`. Only the Write goroutine adds to `Topic.indexWg`, under `Topic.mu` before `closed` is set, so `Close` never races an `Add`. Covered by `core/manager/close_test.go` (gated writes) and `wiring/ibsen_test.go`.
 - **CLI clients**: `newIbsenClient` / `newIbsenBench` discarded the `context.WithTimeout` cancel (`go vet`); the clients now keep it and the connection, and each command defers `Close`.
@@ -203,7 +204,7 @@ the core is pure.
 - Optional **`Syncable`** capability, probed by type assertion through `driven.Sync`.
 - Adapters, all under `adapter/driven/blockstore`: `aferostore` (filesystem, the one the server wires), `memstore` (pure in-memory), `flashstore` (a fixed region of raw flash: fixed pages, write-once bytes, page table in RAM).
 - gRPC is a driving adapter; on embedded, skip it and call the log as a library.
-- Coordination port: `driven.SingleIbsenWriterLock`, satisfied by `adapter/driven/locking` (file lease) and by `driven.NoFileLock` for a single-process or embedded deployment. The port names none of its adapters; each adapter asserts it satisfies the port.
+- Coordination port: `driven.SingleIbsenWriterLock`, satisfied by `adapter/driven/locking` (file lease, which self-fences the moment it cannot prove it still holds the lease) and by `driven.NoFileLock` for a single-process or embedded deployment. The port names none of its adapters; each adapter asserts it satisfies the port.
 - Driving port: `driver.LogManager` (`List`, `Write`, `Read`), implemented by `core/manager` and consumed by `adapter/driver/grpcapi`. A driving adapter names the port, never the implementation.
 - Compression port: `driven.Codec`, three methods (`ID`, `Encode`, `Decode`), named in a frame
   by one byte. `driven.Codecs` is the registry a read resolves that byte against, built at
@@ -301,7 +302,34 @@ written with `driven.NoCodec`, so the format is in place and carries no compress
 
 - Don't build Raft. Run on replicated storage as a Kubernetes StatefulSet.
 - Keep single-writer safety with a fencing lease and monotonic token (likely etcd lease + mod-revision); storage rejects stale-token writes.
-- Coordination is an optional adapter, no-op locally, so embedded doesn't carry it. (Existing `consensus/` + `adapter/driven/locking` is the seed.)
+- Coordination is an optional adapter, no-op locally, so embedded doesn't carry it. `adapter/driven/locking` is the seed; there is no `consensus/` package, the step-6 restructure removed it.
+
+What is already here, and what a token would actually add:
+
+- The file lease is the "acquire, renew, self-fence" half, and it is honest about the window
+  it closes. It stops the moment it cannot prove it holds the lease, including when its own
+  lease has aged out with nobody having taken it.
+- **A token cannot reach the storage without widening a port that is deliberately narrow.**
+  `SingleIbsenWriterLock.AcquireLock() bool` has no token and `BlockStore.Append(ref, data)`
+  has no token; threading one through would make memstore, flashstore and every
+  microcontroller store carry a concept one deployment needs. It does not have to: a fencing
+  store is a `BlockStore` decorator built in `wiring`, which checks the token on every append
+  rather than once at startup. No core change, no port change.
+- **Any `BlockStore` decorator must forward `Syncable`.** It is probed by type assertion in
+  `driven.Sync` and in `newFlusher`, so a wrapper that does not implement it makes both
+  conclude the store has nothing to flush, and every write becomes readable the moment
+  `Append` returns. Nothing fails; the durability guarantee of §2 just quietly stops holding.
+- Storage-side enforcement, which is what makes a token airtight rather than merely useful, is
+  **not reachable through afero**: a filesystem has no conditional write. Getting it means an
+  object store with `If-Match`, and object stores do not append, while `BlockStore` is built
+  around appending to a growing block. That is a storage redesign, not a feature.
+- The deployment this section describes already fences below Ibsen: a StatefulSet gives at
+  most one pod per ordinal, and a ReadWriteOnce volume is attached to one node by the CSI
+  driver. That has known edges around force-detach and unreachable nodes, which is a reason to
+  keep the file lease as a cheap backstop rather than to build etcd integration.
+- Still open, and a different window from the one now closed: `AcquireLock` claims an expired
+  lease by read-then-write too, so two instances could both find it expired and both claim it.
+  Closing that needs an atomic create, not a check.
 
 ## 8. Embedded builds
 
@@ -382,8 +410,9 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
     (§8).~~
 21. ~~Coalesce indexing instead of dropping it, and delete the ten-second sweep that covered
     for the drop (§8).~~
+22. ~~Stop a stalled writer from stealing its own lease back (§1, §7).~~
 
-Every step ships green. Steps 0 to 21 are done, one commit each.
+Every step ships green. Steps 0 to 22 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: the frame-bound default, which the benchmark has
 an answer for and nobody has decided (§5); then dictionaries (§6), which §5's measurements
