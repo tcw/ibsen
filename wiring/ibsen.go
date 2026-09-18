@@ -218,19 +218,18 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	}
 
 	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
-		ReadOnly:         ibs.Readonly,
-		Store:            aferostore.New(ibs.Afs, ibs.RootPath),
-		TTL:              ibs.TTL,
-		CheckForNewEvery: time.Second * 2,
-		MaxBlockSize:     ibs.MaxBlockSize,
-		IndexSparsity:    ibs.IndexSparsity,
-		MaxFrameEntries:  ibs.MaxFrameEntries,
-		MaxFrameBytes:    ibs.MaxFrameBytes,
-		Codec:            ibs.Codec,
-		Codecs:           ibs.Codecs,
-		FlushEntries:     ibs.FlushEntries,
-		FlushInterval:    ibs.FlushInterval,
-		Logger:           zerologger.New(log.Logger),
+		ReadOnly:        ibs.Readonly,
+		Store:           aferostore.New(ibs.Afs, ibs.RootPath),
+		TTL:             ibs.TTL,
+		MaxBlockSize:    ibs.MaxBlockSize,
+		IndexSparsity:   ibs.IndexSparsity,
+		MaxFrameEntries: ibs.MaxFrameEntries,
+		MaxFrameBytes:   ibs.MaxFrameBytes,
+		Codec:           ibs.Codec,
+		Codecs:          ibs.Codecs,
+		FlushEntries:    ibs.FlushEntries,
+		FlushInterval:   ibs.FlushInterval,
+		Logger:          zerologger.New(log.Logger),
 	})
 	if err != nil {
 		return errore.Wrap(err)

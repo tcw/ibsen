@@ -33,18 +33,19 @@ func startTestServer(t *testing.T) {
 	if err := afs.MkdirAll(rootPath, 0700); err != nil {
 		t.Fatal(err)
 	}
-	params := manager.LogTopicManagerParams{
-		ReadOnly:         false,
-		Store:            aferostore.New(afs, rootPath),
-		TTL:              5 * time.Second,
-		CheckForNewEvery: 100 * time.Millisecond,
-		MaxBlockSize:     10,
-	}
-	topicsManager, err := manager.NewLogTopicsManager(params)
+	// how long a tailing read waits for new entries and how often it looks: a gRPC concern,
+	// so it is named here rather than borrowed from the manager's parameters
+	const readTTL = 5 * time.Second
+	const checkForNewEvery = 100 * time.Millisecond
+	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
+		ReadOnly:     false,
+		Store:        aferostore.New(afs, rootPath),
+		MaxBlockSize: 10,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := grpcapi.NewUnsecureIbsenGrpcServer(&topicsManager, params.TTL, params.CheckForNewEvery)
+	server := grpcapi.NewUnsecureIbsenGrpcServer(&topicsManager, readTTL, checkForNewEvery)
 	lis, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		t.Fatal(err)
