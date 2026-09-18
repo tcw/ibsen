@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/core/port/driven"
 )
 
 // The CLI used to build the lease itself, at <root>/.writeLock. The composition root now
@@ -136,4 +137,100 @@ func TestReadonlyStartDoesNotTakeTheLock(t *testing.T) {
 	if lock.acquireCalls != 0 {
 		t.Errorf("a read-only server took the write lock %d times", lock.acquireCalls)
 	}
+}
+
+// Compression is a name on the command line and an adapter in here: the CLI is a driving
+// adapter and must not reach a driven one, so the composition root is what turns one into
+// the other.
+func TestCompressionNamePicksTheCodec(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		want driven.CodecID
+	}{
+		{name: "", want: driven.CodecNone},
+		{name: "none", want: driven.CodecNone},
+		{name: "zstd", want: driven.CodecZstd},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ibsen := &IbsenServer{Compression: test.name}
+			if err := ibsen.resolveCodecs(); err != nil {
+				t.Fatal(err)
+			}
+			defer ibsen.zstdCodec.Close()
+			if got := ibsen.Codec.ID(); got != test.want {
+				t.Errorf("compression %q writes with %s, want %s", test.name, got, test.want)
+			}
+		})
+	}
+}
+
+// A name with no adapter behind it is refused rather than quietly becoming no compression,
+// which would write a log the operator did not ask for.
+func TestAnUnknownCompressionNameIsRefused(t *testing.T) {
+	ibsen := &IbsenServer{Compression: "snappy"}
+
+	err := ibsen.resolveCodecs()
+
+	if !errors.Is(err, ErrUnknownCompression) {
+		t.Fatalf("got %v, want ErrUnknownCompression", err)
+	}
+	if ibsen.zstdCodec != nil {
+		ibsen.zstdCodec.Close()
+	}
+}
+
+func TestAnUnknownCompressionLevelIsRefused(t *testing.T) {
+	ibsen := &IbsenServer{Compression: "zstd", CompressionLevel: "turbo"}
+
+	if err := ibsen.resolveCodecs(); err == nil {
+		t.Fatal("an unknown compression level was accepted")
+	}
+}
+
+// Every codec the binary links is readable whatever it writes with, so turning compression
+// off never strands a block written while it was on.
+func TestTheReadRegistryHoldsEveryLinkedCodec(t *testing.T) {
+	ibsen := &IbsenServer{Compression: "none"}
+	if err := ibsen.resolveCodecs(); err != nil {
+		t.Fatal(err)
+	}
+	defer ibsen.zstdCodec.Close()
+
+	for _, id := range []driven.CodecID{driven.CodecNone, driven.CodecZstd} {
+		codec, err := ibsen.Codecs.Get(id)
+		if err != nil {
+			t.Errorf("a server writing no compression cannot read %s: %v", id, err)
+			continue
+		}
+		if codec.ID() != id {
+			t.Errorf("%s resolved to %s", id, codec.ID())
+		}
+	}
+}
+
+// An embedder that brings its own codec keeps it, and it is readable.
+func TestAnInjectedCodecIsKeptAndReadable(t *testing.T) {
+	injected := stubCodec{}
+	ibsen := &IbsenServer{Compression: "zstd", Codec: injected}
+	if err := ibsen.resolveCodecs(); err != nil {
+		t.Fatal(err)
+	}
+	defer ibsen.zstdCodec.Close()
+
+	if ibsen.Codec != driven.Codec(injected) {
+		t.Errorf("an injected codec was replaced by %s", ibsen.Codec.ID())
+	}
+	if codec, err := ibsen.Codecs.Get(injected.ID()); err != nil || codec.ID() != injected.ID() {
+		t.Errorf("an injected codec is not in the read registry: %v, %v", codec, err)
+	}
+}
+
+type stubCodec struct{}
+
+func (stubCodec) ID() driven.CodecID { return driven.CodecID(77) }
+func (stubCodec) Encode(dst, src []byte) ([]byte, error) {
+	return append(dst, src...), nil
+}
+func (stubCodec) Decode(dst, src []byte, _ int) ([]byte, error) {
+	return append(dst, src...), nil
 }
