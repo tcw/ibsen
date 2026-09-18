@@ -18,16 +18,23 @@ edges() {
 {{end}}' "$@"
 }
 
-# 1. The core, and the adapters that claim to be stdlib-only, may reach nothing outside the
-#    standard library. -deps is transitive, so anything errore or utils reached shows up too.
+# 1. The core, the embedded composition root, and the adapters that claim to be stdlib-only,
+#    may reach nothing outside the standard library. -deps is transitive, so anything errore
+#    or utils reached shows up too.
+#
+#    wiring/embedded is in this list rather than relying on a build tag: a tag has to be
+#    trusted, a dependency graph can be read. It is what makes "an embedded build links no
+#    gRPC, no cobra, no OTEL, no zerolog, no afero and no compressor" a thing CI checks
+#    instead of a thing the documentation claims.
 impure=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
 	./core/... \
+	./wiring/embedded/... \
 	./adapter/driven/blockstore/memstore/... \
 	./adapter/driven/blockstore/flashstore/... \
 	./adapter/driven/blockstore/conformance/... |
 	{ grep -v '^github.com/tcw/ibsen' || true; })
 if [ -n "$impure" ]; then
-	fail "the core reaches outside the standard library" $impure
+	fail "the core or the embedded wiring reaches outside the standard library" $impure
 fi
 
 # 2. The core must not know its adapters or the composition root. A port that names an

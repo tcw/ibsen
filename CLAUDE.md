@@ -6,11 +6,12 @@
 
 Enforced by `scripts/check-architecture.sh`, which CI runs on every push. Its first rule is
 this command; it must print nothing. All of `core/` is pure, so the whole hexagon is covered
-by one pattern, with the three stdlib-only adapters named beside it:
+by one pattern, with the embedded composition root and the three stdlib-only adapters named
+beside it:
 
 ```sh
 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
-  ./core/... \
+  ./core/... ./wiring/embedded/... \
   ./adapter/driven/blockstore/memstore/... ./adapter/driven/blockstore/flashstore/... ./adapter/driven/blockstore/conformance/... \
   | grep -v '^github.com/tcw/ibsen'
 ```
@@ -70,12 +71,14 @@ adapter/
     telemetry/              OTEL
 
 wiring/                     composition root: builds adapters, owns lifecycle
+  embedded/                 the other one: the log as a library, stdlib-only
+    example/                the smallest embedded program, built to be weighed
 main.go                     entry point
 errore/ utils/              stdlib-only, shared by both sides
 ```
 
-- Pure today: all of `core/`, plus the `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
-- Not pure, by design: everything under `adapter/` and `wiring/`. `adapter/driven/locking` imports `uuid` and `afero`; `adapter/driven/logging/zerologger` imports `zerolog`; `adapter/driven/compression/zstd` imports `klauspost/compress`; the driving adapters import gRPC and cobra.
+- Pure today: all of `core/`, all of `wiring/embedded/` including its example program, plus the `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
+- Not pure, by design: everything under `adapter/`, and `wiring/` itself. `adapter/driven/locking` imports `uuid` and `afero`; `adapter/driven/logging/zerologger` imports `zerolog`; `adapter/driven/compression/zstd` imports `klauspost/compress`; the driving adapters import gRPC and cobra.
 
 ## Current baseline (verified 2026-09-18, go1.26.4)
 
@@ -85,7 +88,7 @@ errore/ utils/              stdlib-only, shared by both sides
 - Crash and torn-write fault injection: `adapter/driven/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `adapter/driven/blockstore/aferostore/crash_test.go` and `core/topic/topicAccess_crash_test.go`, on an in-memory filesystem and on a real directory.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
 - `go vet ./...` is clean; keep it that way. `staticcheck -checks U1000 ./...` prints nothing, so there is no unused code; CI does not run it.
-- CI (`.github/workflows/ci.yml`) runs gofmt, `go vet`, `scripts/check-architecture.sh` and `go test -race ./...` on every push. It takes its Go version from the `go` directive in `go.mod`, which is `1.26.4`.
+- CI (`.github/workflows/ci.yml`) runs gofmt, `go vet`, `scripts/check-architecture.sh`, `scripts/embedded-size.sh` and `go test -race ./...` on every push. It takes its Go version from the `go` directive in `go.mod`, which is `1.26.4`.
 - Dependencies are current as of 2026-09-18 (OTEL 1.46, gRPC 1.84, zerolog 1.35, cobra 1.10, afero 1.15, klauspost/compress 1.20). No deprecated gRPC dialling left: `grpcapi.DialContext` wraps `grpc.NewClient` and waits for the connection the way `grpc.WithBlock` used to, since `NewClient` connects lazily and would otherwise hand back a healthy-looking client for a server that is not there. Every client — CLI, bench and test helpers — goes through it, and `adapter/driver/grpcapi/client_test.go` pins that an unreachable address is an error rather than a client. CLI commands now bound that wait with `connectTimeout` (10s); `grpc.Dial` with `WithBlock` was given no context, so an unreachable server hung the command.
 - `Start` and `shutdown` can run on different goroutines, so what `Start` builds is guarded: `IbsenServer.mu` covers `topicsManager`, `grpcServer` and the lifecycle channels (`lifecycle()` makes the pair once), and `grpcapi.IbsenGrpcServer` guards its `*grpc.Server` behind `Stop`/`GracefulStop`, which are safe before `StartGRPC` has created it and record the request so it is honoured.
 - `Start` returns its failures instead of exiting: a refused single-writer lock is `wiring.ErrWriteLockUnavailable`, matchable with `errors.Is`, so a program embedding the log decides what to do. The CLI reports it and exits.
@@ -102,6 +105,7 @@ errore/ utils/              stdlib-only, shared by both sides
   read rejecting a corrupt frame, a corrupt entry inside a valid frame, and an unwired codec.
   `core/topic/frame_test.go` covers the frame bounds, a write reaching the store as one
   append however many frames it makes, and one block holding frames of two codecs.
+- Embedded: `wiring/embedded` is the second composition root, and `wiring/embedded/embedded_test.go` covers a store being required, write/list/read with nothing else wired, the log satisfying `driver.LogManager`, the block-size default, every other param reaching the core untouched, and `Close` refusing writes while loaded topics stay readable.
 - Frame bounds reach a topic through the manager, and zero still means the topic defaults:
   `core/manager/topicsManager_test.go`. `adapter/driver/cli/root_test.go` covers the flag
   validation, including the largest frame the format allows and the first one past it.
@@ -300,10 +304,42 @@ written with `driven.NoCodec`, so the format is in place and carries no compress
 
 ## 8. Embedded builds
 
-- Build tags select wiring files, but the real lever is import discipline: no heavy dependency reachable from the embedded wiring file.
-- Prefer two additive wiring files over exclusions; default build is the full server.
-- `CGO_ENABLED=0`, `-ldflags="-s -w"`, cross-compile via `GOOS`/`GOARCH`.
-- Verify by diffing binary size and inspecting the dependency graph, not by trusting the tags.
+Done. `wiring/embedded` is the second composition root: `Open(Params{Store: ...})` returns a
+`*Log` that satisfies `driver.LogManager`, so an embedded program drives the log through the
+same port a gRPC server does.
+
+- ~~Build tags select wiring files, but the real lever is import discipline.~~ There are no
+  build tags. The two composition roots are two **packages**, which is additive in a stronger
+  sense than a tag: nothing is excluded, a program imports the root it wants, and the default
+  build is still the full server. It is also the reason the rest of this works — a tag can
+  only be trusted, while `go list -deps` on a package can be read.
+- ~~Prefer two additive wiring files over exclusions.~~ `wiring/embedded` imports nothing but
+  `core/`, so it is stdlib-only and sits in rule 1 of `scripts/check-architecture.sh`
+  alongside the core. An embedded build links no gRPC, no cobra, no OTEL, no zerolog, no
+  afero and no compressor, and CI fails if that stops being true.
+- **What a build pays for is what it brings.** The store is injected, not chosen: a program
+  bringing `memstore` or `flashstore` stays inside the standard library, one bringing
+  `aferostore` pays for afero, one wiring the zstd codec pays for zstd. The same goes for the
+  logger and the codec, which default to `NopLogger` and `NoCodec`.
+- ~~`CGO_ENABLED=0`, `-ldflags="-s -w"`, cross-compile via `GOOS`/`GOARCH`.~~ Those are the
+  flags `scripts/embedded-size.sh` builds with, and `GOOS`/`GOARCH` pass through it.
+- ~~Verify by diffing binary size and inspecting the dependency graph, not by trusting the
+  tags.~~ Both, and both in CI. The dependency graph is the gate, since it is exact. The size
+  is the other side of the same claim — what the linker produced rather than what the imports
+  promised — and the script fails if an embedded build stops being smaller than the server.
+  A byte ceiling would only drift with each Go release.
+
+Measured by `scripts/embedded-size.sh` on go1.26.4:
+
+| target | server | embedded | |
+|---|---|---|---|
+| linux/amd64 | 16.48 MB | 1.87 MB | 8.8× smaller |
+| linux/arm | 15.44 MB | 1.81 MB | 8.5× smaller |
+
+- Not free, and not this step's to fix: `manager.NewLogTopicsManager` starts one goroutine
+  with a ten-second ticker to finish the indexing that writes began, so an embedded build
+  carries a timer it did not ask for. `Close` stops it. Making it demand-driven, the way the
+  flusher already is (§2), is a change to the manager rather than to the wiring.
 
 ## 9. Testing (the linchpin)
 
@@ -338,10 +374,12 @@ written with `driven.NoCodec`, so the format is in place and carries no compress
     only one (§5). The invasive change, made against a codec that cannot lose data.~~
 18. ~~Add the zstd adapter behind the codec port, built in `wiring` and chosen by name on the
     CLI (§5).~~
+19. ~~Keep compression only where it paid, so turning it on cannot make a topic larger (§5).~~
+20. ~~Add the embedded composition root and check it, by dependency graph and by binary size
+    (§8).~~
 
-Every step ships green. Steps 0 to 18 are done, one commit each.
+Every step ships green. Steps 0 to 20 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: dictionaries (§6), then the embedded wiring files
-(§8). The flash adapter is the proof the storage port is narrow enough; the embedded build
-still has to be wired and its dependency graph checked, and the codec registry is what decides
-whether it links any compression at all.
+Next, in the same one-change-at-a-time way: the frame-bound default, which the benchmark has
+an answer for and nobody has decided (§5); then dictionaries (§6), which §5's measurements
+argue are narrower than they look; and §7, which is untouched.
