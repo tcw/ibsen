@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/afero"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/memstore"
 	zstdcodec "github.com/tcw/ibsen/adapter/driven/compression/zstd"
 	"github.com/tcw/ibsen/adapter/driven/locking"
 	"github.com/tcw/ibsen/adapter/driven/logging/zerologger"
@@ -43,8 +44,12 @@ var ibsenFiglet = `
 type IbsenServer struct {
 	Readonly bool
 	// Lock is optional: Start builds a file lease over RootPath when none is injected.
-	Lock         driven.SingleIbsenWriterLock
-	InMemory     bool
+	Lock driven.SingleIbsenWriterLock
+	// InMemory keeps the whole log in memory, in a memstore. Nothing is written anywhere and
+	// nothing survives the process.
+	InMemory bool
+	// Afs is the filesystem the log is kept on. In-memory mode does not use it and may leave
+	// it nil: a memstore is not a filesystem, so there is nothing to emulate one with.
 	Afs          *afero.Afero
 	TTL          time.Duration
 	RootPath     string
@@ -131,9 +136,15 @@ func (ibs *IbsenServer) lifecycle() (stopping, stopped chan struct{}) {
 // its own Lock and keeps it.
 func (ibs *IbsenServer) defaults() {
 	if ibs.Lock == nil {
-		ibs.Lock = locking.NewFileLock(ibs.Afs,
-			filepath.Join(ibs.RootPath, writeLockFileName), writeLockLease, writeLockReclaim,
-			ibs.writeLockLost)
+		if ibs.InMemory {
+			// the log lives in this process and is shared with nobody, so there is no second
+			// writer to fence off and no filesystem to keep a lease on
+			ibs.Lock = driven.NoFileLock{}
+		} else {
+			ibs.Lock = locking.NewFileLock(ibs.Afs,
+				filepath.Join(ibs.RootPath, writeLockFileName), writeLockLease, writeLockReclaim,
+				ibs.writeLockLost)
+		}
 	}
 }
 
@@ -187,6 +198,20 @@ func (ibs *IbsenServer) writeLockLost(reason error) {
 		"lost the single writer lock on [%s], stopping before another instance writes beside us", ibs.RootPath)
 }
 
+// blockStore is where the log's bytes go.
+//
+// In-memory mode is a memstore, not the filesystem adapter over an emulated filesystem. It is
+// the same port either way, and memstore is what the conformance suite and the core property
+// tests already run against; the difference is that it reaches no filesystem at all, which is
+// what "in memory" was supposed to mean. It is also the only one of the two that stays inside
+// the standard library.
+func (ibs *IbsenServer) blockStore() driven.BlockStore {
+	if ibs.InMemory {
+		return memstore.New()
+	}
+	return aferostore.New(ibs.Afs, ibs.RootPath)
+}
+
 func (ibs *IbsenServer) Start(listener net.Listener) error {
 	ibs.defaults()
 	if err := ibs.resolveCodecs(); err != nil {
@@ -200,10 +225,6 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	}
 	if ibs.InMemory {
 		log.Info().Msg("running in-memory only mode")
-		err := ibs.Afs.Mkdir(ibs.RootPath, 0600)
-		if err != nil {
-			return err
-		}
 	} else {
 		exists, err := ibs.Afs.Exists(ibs.RootPath)
 		if err != nil {
@@ -233,7 +254,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 
 	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
 		ReadOnly:        ibs.Readonly,
-		Store:           aferostore.New(ibs.Afs, ibs.RootPath),
+		Store:           ibs.blockStore(),
 		TTL:             ibs.TTL,
 		MaxBlockSize:    ibs.MaxBlockSize,
 		IndexSparsity:   ibs.IndexSparsity,

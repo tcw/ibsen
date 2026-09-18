@@ -72,8 +72,8 @@ var (
 			var afs *afero.Afero
 			absolutePath := "/tmp/data"
 			if rootDirectory == "" {
-				var fs = afero.NewMemMapFs()
-				afs = &afero.Afero{Fs: fs}
+				// no data directory means no filesystem: the log goes in a memstore, and there
+				// is nothing for an emulated filesystem to do
 				inMemory = true
 			} else {
 				var err error

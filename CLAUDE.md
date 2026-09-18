@@ -78,7 +78,8 @@ errore/ utils/              stdlib-only, shared by both sides
 ```
 
 - Pure today: all of `core/`, all of `wiring/embedded/` including its example program, plus the `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
-- Not pure, by design: everything under `adapter/`, and `wiring/` itself. `adapter/driven/locking` imports `uuid` and `afero`; `adapter/driven/logging/zerologger` imports `zerolog`; `adapter/driven/compression/zstd` imports `klauspost/compress`; the driving adapters import gRPC and cobra.
+- Not pure, by design: everything under `adapter/`, and `wiring/` itself.
+- **afero is on its way out.** It was the storage port before `BlockStore` existed, and is now a second filesystem abstraction underneath our own. It costs 1.63 MB — a minimal build goes from 1.77 MB with `memstore` to 3.40 MB with `aferostore` — because `github.com/spf13/afero` imports `net/http` and `golang.org/x/text`, neither of which a log server needs to read a file. Its in-memory filesystem has also cost correctness twice, both times by behaving unlike a real one: the `O_RDWR|O_EXCL` renewal bug in §1, and `MemMapFs.OpenFile` checking and creating under separate locks so `O_CREATE|O_EXCL` is not atomic there. The removal is a strangler: (1) in-memory mode to `memstore`, done; (2) a `filestore` adapter on `os` behind a small owned seam — the adapter uses only `Exists`, `DirExists`, `Mkdir`, `MkdirAll`, `Open`, `OpenFile`, `ReadDir`, `Remove` and six methods on the handle — validated by the conformance, crash and property suites that already run against every adapter; (3) the same seam for `adapter/driven/locking`; (4) delete `aferostore` and the dependency. `adapter/driven/locking` imports `uuid` and `afero`; `adapter/driven/logging/zerologger` imports `zerolog`; `adapter/driven/compression/zstd` imports `klauspost/compress`; the driving adapters import gRPC and cobra.
 
 ## Current baseline (verified 2026-09-18, go1.26.4)
 
@@ -92,6 +93,7 @@ errore/ utils/              stdlib-only, shared by both sides
 - Dependencies are current as of 2026-09-18 (OTEL 1.46, gRPC 1.84, zerolog 1.35, cobra 1.10, afero 1.15, klauspost/compress 1.20). No deprecated gRPC dialling left: `grpcapi.DialContext` wraps `grpc.NewClient` and waits for the connection the way `grpc.WithBlock` used to, since `NewClient` connects lazily and would otherwise hand back a healthy-looking client for a server that is not there. Every client — CLI, bench and test helpers — goes through it, and `adapter/driver/grpcapi/client_test.go` pins that an unreachable address is an error rather than a client. CLI commands now bound that wait with `connectTimeout` (10s); `grpc.Dial` with `WithBlock` was given no context, so an unreachable server hung the command.
 - `Start` and `shutdown` can run on different goroutines, so what `Start` builds is guarded: `IbsenServer.mu` covers `topicsManager`, `grpcServer` and the lifecycle channels (`lifecycle()` makes the pair once), and `grpcapi.IbsenGrpcServer` guards its `*grpc.Server` behind `Stop`/`GracefulStop`, which are safe before `StartGRPC` has created it and record the request so it is honoured.
 - `Start` returns its failures instead of exiting: a refused single-writer lock is `wiring.ErrWriteLockUnavailable`, matchable with `errors.Is`, so a program embedding the log decides what to do. The CLI reports it and exits.
+- In-memory mode (`--rootDirectory` unset) wires `memstore`, not the filesystem adapter over an emulated filesystem, so it reaches no filesystem at all and takes no write lock: the log lives in the process and is shared with nobody. `IbsenServer.Afs` may be nil in that mode. Pinned by `wiring/ibsen_test.go`, which writes through a running in-memory server and then walks the filesystem it was given to check nothing landed on it.
 - Composition: `wiring.IbsenServer` builds every adapter. `Lock` is an optional injection point — `defaults()` builds a `FileLock` at `<root>/.writeLock` when none is given, which `wiring/lock_test.go` pins — and the OTEL exporter's lifetime is held by `Start`, not by `grpcapi.StartGRPC`.
 - Index checksums: `core/index/checksum_test.go` covers the round trip, every byte of a pair being covered by its CRC, parsing stopping at a corrupt pair, torn trailing pairs, and the old format being rejected; `core/topic/indexChecksum_test.go` shows a corrupted pair and an unchecksummed block both being rebuilt into exactly what a clean scan of the log gives, with every offset still readable.
 - Durability: `core/topic/flush_test.go` drives a `Syncable` store whose `Sync` the test gates, and covers the guarantee itself (a reader sees nothing until the flush returns, and `Write` does not return either), a failed flush being reported and leaving nothing readable, those entries appearing once a later flush succeeds, concurrent writers sharing one sync, the interval releasing a writer that never reaches the threshold, a non-syncable store never waiting, and a reloaded topic counting its recovered block as durable.
@@ -417,8 +419,10 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 22. ~~Stop a stalled writer from stealing its own lease back (§1, §7).~~
 23. ~~Make claiming the lock as atomic as a filesystem allows, and stop a claim being read
     half-written (§1, §7).~~
+24. ~~Wire in-memory mode to `memstore` instead of the filesystem adapter over an emulated
+    filesystem, the first step of removing afero.~~
 
-Every step ships green. Steps 0 to 23 are done, one commit each.
+Every step ships green. Steps 0 to 24 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: the frame-bound default, which the benchmark has
 an answer for and nobody has decided (§5); then dictionaries (§6), which §5's measurements
