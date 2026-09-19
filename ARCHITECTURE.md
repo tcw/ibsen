@@ -63,10 +63,11 @@ graph can be read.
 
         ┌──────────────┐                                  ┌────────────────────┐
         │  grpcapi     │──┐                            ┌─▶│ filestore          │
-        ├──────────────┤  │    ┌───────────────────┐   │  │ memstore           │
-        │  cli         │──┼───▶│ driver.LogManager │   │  │ flashstore         │
-        └──────────────┘  │    └─────────┬─────────┘   │  │ faultfs (tests)    │
-                          │              │             │  └────────────────────┘
+        ├──────────────┤  │                            │  │ memstore           │
+        │  stdio       │──┤    ┌───────────────────┐   │  │ flashstore         │
+        ├──────────────┤  ├───▶│ driver.LogManager │   │  │ faultfs (tests)    │
+        │  cli         │──┤    └─────────┬─────────┘   │  └────────────────────┘
+        └──────────────┘  │              │             │
         ┌──────────────┐  │        ┌─────▼─────┐       │  ┌────────────────────┐
         │ your program │──┘        │           │   ┌───┴─▶│ driven.BlockStore  │
         │  (embedded)  │           │   core/   │───┤      │ driven.Syncable    │
@@ -363,7 +364,8 @@ the no-op adapter for a single-process or embedded deployment.
 | `logging/zerologger` | driven | `zerolog` | `driven.Logger` |
 | `telemetry` | driven | OpenTelemetry | exporter, lifetime owned by `wiring` |
 | `driver/grpcapi` | driving | gRPC | server and Go client |
-| `driver/cli` | driving | cobra | flags and environment only; it names codecs, it does not build them |
+| `driver/stdio` | driving | none | the log over two byte streams: `Append`, `Cat`, `List`. Stdlib-only, so it is held to rule 1 with the core |
+| `driver/cli` | driving | cobra | flags and environment only; it names codecs and directories, it does not build them |
 
 **afero is gone.** It was the storage port before `BlockStore` existed and became a second
 filesystem abstraction underneath our own. Removing it cost 1.63 MB of binary — the same
@@ -787,6 +789,8 @@ Testing is the linchpin: the architecture is only worth the claims it lets you c
 | **Format** — `core/domain/frame_test.go`, `core/logfmt/logUtils_test.go`, `core/index/checksum_test.go` | every header byte caught by its checksum, partial headers and payloads, garbage tails, pre-framing blocks, unwired codecs, torn index pairs |
 | **Unsent log events** — `logcalls_test.go` | parses the repo and fails on any zerolog event never sent. 27 of them logged nothing and never exited, including 25 `log.Fatal().Err(err)` |
 | **End to end** — `adapter/driver/grpcapi/test` | each test starts its own server on a free port and stops it on cleanup |
+| **Streams** — `adapter/driver/stdio/stdio_test.go` | a stream round-tripping through the log in both framings, a blank line as an empty entry, a cut stream keeping what was whole at either batch boundary, a failed write cancelling the read and draining it, a follow seeing what arrives during it |
+| **A directory without a server** — `wiring/local_test.go` | the lease taken, refused and released; a read-only open taking no lock and leaving the directory byte for byte as it found it; zstd frames read by an open that asked for nothing |
 
 Two habits follow from **everything running against real directories**: a test that writes a
 file must create its parent directory, and a test that builds a manager or a topic on a

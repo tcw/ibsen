@@ -194,6 +194,8 @@ seriously for logs.
 
 - **A library first.** The log is an ordinary Go value inside your program. No port, no
   daemon, no connection pool, no serialisation you did not ask for.
+- **A command when that is all you need.** `ibsen append` and `ibsen cat` open the data
+  directory themselves, so a shell pipeline can write and read a log with nothing running.
 - **A server when you want one.** The same core behind gRPC, one static binary, one data
   directory.
 - **Small enough to be boring.** The core imports nothing but the parts of the standard
@@ -278,6 +280,31 @@ Every server flag has an environment variable, so containers need no command lin
 An unknown `--compression` name is refused at startup rather than quietly falling back to
 none, because falling back writes a log the operator did not ask for.
 
+### The filter commands
+
+`append`, `cat` and `topics` take `-d, --rootDirectory` (or `IBSEN_ROOT_DIRECTORY`) like the
+server, and there is no in-memory fallback for them: a log that lives in one process and is
+shared with nobody has nothing to append to. `append` also takes every write-side server flag
+above — `--maxBlockSize`, `--flushEntries`, `--flushIntervalMs`, `--indexSparsity`,
+`--maxFrameEntries`, `--maxFrameBytes`, `--compression`, `--compressionLevel` — because those
+describe what is written, and a filter writes the same log a server does.
+
+| flag | commands | default | what it does |
+|---|---|---|---|
+| `--framing` | `append`, `cat` | `lines` | how the stream delimits entries: `lines`, or `length` for a little-endian uint64 byte count before each entry |
+| `--batchSize` | `append`, `cat` | `1000` | entries per write, or per read |
+| `--offsets` | `cat` | `false` | prefix each entry with its offset and a tab; line framing only |
+| `-F, --follow` | `cat` | `false` | keep printing as entries are written, until Ctrl-C |
+| `--pollMs` | `cat` | `1000` | milliseconds between passes while following |
+
+Following reopens the log on every pass, which is what lets it see entries another process
+appends. That costs a topic load per pass, and a load scans the head block, so a large head
+block wants a larger `--pollMs`. Nothing is written by any of it — `cat` opens the log
+read-only.
+
+`--offsets` with `--framing length` is refused rather than ignored: length framing carries
+entries and nothing else, so a reader of it needs to be told nothing.
+
 ### Durability
 
 A write is acknowledged, and its entries become readable, only once the flush covering them
@@ -305,6 +332,9 @@ On ~130-byte JSON events, zstd at the default level took a test log from 42926 t
 manager that turns writes away. This matters more than it looks: loading a topic recovers its
 head block, truncates a torn tail and rebuilds its index. Pointed at a directory another
 instance owns, a read-only server without a read-only store would quietly rewrite it.
+
+`ibsen cat` and `ibsen topics` are always built this way, which is why they can be pointed at
+a directory a server is writing without taking a lock or changing a byte.
 
 ---
 
@@ -370,8 +400,12 @@ service Ibsen {
 ```
 
 `read` takes a topic, a starting offset, a batch size and `stopOnCompletion`: false keeps the
-stream open and follows the log, true ends it when it reaches the end. Embedded programs get
-the same three calls as a Go interface, `driver.LogManager`.
+stream open and follows the log, true ends it when it reaches the end.
+
+Those three calls are the whole of what Ibsen offers, and gRPC is one way to reach them.
+Embedded programs get them as a Go interface, `driver.LogManager`; `ibsen append`, `ibsen cat`
+and `ibsen topics` are the same three over stdin and stdout. Nothing in the log knows which
+one is driving it.
 
 Generate clients:
 
