@@ -17,7 +17,7 @@ import (
 )
 
 // blockWith puts content in a log block and returns the store holding it, its reference and
-// the size the store reports. The afero adapter stands in for any BlockStore here.
+// the size the store reports. filestore stands in for any BlockStore here.
 func blockWith(t *testing.T, block domain.LogBlock, content []byte) (driven.BlockStore, driven.BlockRef, int64) {
 	t.Helper()
 	store := filestore.NewOS(t.TempDir())

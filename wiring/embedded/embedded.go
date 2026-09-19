@@ -3,18 +3,17 @@
 //
 // It is the counterpart to the wiring package, which assembles the full server. The
 // difference is not a build tag. This is a separate package that imports nothing but the
-// core, so a program that imports it links no gRPC, no cobra, no OTEL, no zerolog, no afero
-// and no compressor. scripts/check-architecture.sh holds it to that with the same rule it
+// core, so a program that imports it links no gRPC, no cobra, no OTEL, no zerolog and no
+// compressor. scripts/check-architecture.sh holds it to that with the same rule it
 // holds the core to, which is worth more than a tag: a tag has to be trusted, a dependency
 // graph can be read.
 //
 // What a build pays for is what it brings. The store is injected rather than chosen here, so
-// a program bringing memstore or flashstore stays inside the standard library, one bringing
-// aferostore pays for afero, and one wiring the zstd codec pays for zstd. Nothing in this
-// package decides that for it.
+// a program bringing memstore, flashstore or filestore stays inside the standard library, and
+// one wiring the zstd codec pays for zstd. Nothing in this package decides that for it.
 //
-// Not free: the log manager runs one goroutine with a ten-second ticker to finish indexing
-// that writes started. Close stops it.
+// Nothing here is woken on a timer: indexing is driven by the write that dirtied the index,
+// and flushing by the writer that needs its entries durable.
 package embedded
 
 import (
@@ -40,7 +39,7 @@ var ErrNoStore = errors.New("embedded: a BlockStore is required")
 // Params is everything an embedded log takes. Every field but Store has a working default,
 // and the defaults are the core's own.
 type Params struct {
-	// Store is where blocks live: memstore, flashstore, aferostore, or a caller's own.
+	// Store is where blocks live: memstore, flashstore, filestore, or a caller's own.
 	Store driven.BlockStore
 	// ReadOnly refuses writes, for a build that only consumes a log another wrote.
 	ReadOnly bool
@@ -74,8 +73,8 @@ type Log struct {
 
 var _ driver.LogManager = (*Log)(nil)
 
-// Open builds the log. The caller closes it, which stops the indexer and waits for writes
-// and indexing already under way.
+// Open builds the log. The caller closes it, which waits for writes and the indexing they
+// started.
 func Open(params Params) (*Log, error) {
 	if params.Store == nil {
 		return nil, ErrNoStore
@@ -118,8 +117,8 @@ func (l *Log) Read(params driver.ReadParams) error {
 	return l.manager.Read(params)
 }
 
-// Close refuses further writes, waits for those in flight and for the indexing they started,
-// and stops the indexer. Loaded topics stay readable.
+// Close refuses further writes and waits for those in flight and for the indexing they
+// started. Loaded topics stay readable.
 func (l *Log) Close() {
 	l.manager.Close()
 }
