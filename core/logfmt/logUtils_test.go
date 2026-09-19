@@ -44,7 +44,7 @@ func entriesFrom(firstOffset domain.Offset, payloads ...string) []byte {
 // oneFrame builds a single frame holding payloads numbered from firstOffset.
 func oneFrame(t *testing.T, firstOffset domain.Offset, payloads ...string) []byte {
 	t.Helper()
-	frame, err := EncodeFrame(driven.NoCodec{}, firstOffset, len(payloads), entriesFrom(firstOffset, payloads...))
+	frame, err := AppendFrame(nil, driven.NoCodec{}, firstOffset, len(payloads), entriesFrom(firstOffset, payloads...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestRecoverBlock_blockWrittenBeforeFramingIsReported(t *testing.T) {
 // Recovery checks frames against their two checksums and decodes nothing, so a torn tail is
 // found and cut even by a build carrying none of the codecs the block was written with.
 func TestRecoverBlock_needsNoCodec(t *testing.T) {
-	unknown, err := EncodeFrame(rleCodec{}, 0, 1, entriesFrom(0, runHeavy()))
+	unknown, err := AppendFrame(nil, rleCodec{}, 0, 1, entriesFrom(0, runHeavy()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestRecoverBlock_needsNoCodec(t *testing.T) {
 
 // rleCodec collapses runs of a repeated byte into a (count, byte) pair. It is a real codec
 // in the only sense these tests need: it shrinks input with long runs and grows input
-// without them, so one codec exercises both sides of EncodeFrame keeping compression only
+// without them, so one codec exercises both sides of AppendFrame keeping compression only
 // when it paid. No registry here holds its id, which is what makes it the unwired one.
 type rleCodec struct{}
 
@@ -266,7 +266,7 @@ func TestReadFile_rejectsCorruptFrame(t *testing.T) {
 func TestReadFile_rejectsCorruptEntryInsideAValidFrame(t *testing.T) {
 	entries := entriesFrom(0, "dummy1", "dummy2")
 	entries[26+12] ^= 0xff // first payload byte of the second entry
-	content, err := EncodeFrame(driven.NoCodec{}, 0, 2, entries)
+	content, err := AppendFrame(nil, driven.NoCodec{}, 0, 2, entries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestReadFile_rejectsCorruptEntryInsideAValidFrame(t *testing.T) {
 // A frame naming a codec this build did not wire is intact, not damaged, and is reported as
 // a missing codec rather than as corruption.
 func TestReadFile_reportsAnUnknownCodec(t *testing.T) {
-	content, err := EncodeFrame(rleCodec{}, 0, 1, entriesFrom(0, runHeavy()))
+	content, err := AppendFrame(nil, rleCodec{}, 0, 1, entriesFrom(0, runHeavy()))
 	if err != nil {
 		t.Fatal(err)
 	}

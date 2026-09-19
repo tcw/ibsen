@@ -113,17 +113,31 @@ errore/                     stdlib-only, shared by both sides
   read rejecting a corrupt frame, a corrupt entry inside a valid frame, and an unwired codec.
   `core/topic/frame_test.go` covers the frame bounds, a write reaching the store as one
   append however many frames it makes, and one block holding frames of two codecs.
-- **Cost per entry.** An entry is encoded straight into the frame payload it will be stored
-  in (`domain.AppendEntry`) and parsed back as a window onto the decoded frame
-  (`domain.ParseEntry`), so a write allocates the payload it is building, a read allocates the
-  frame it decoded, and neither allocates per entry. `core/domain/fsUtils_test.go` pins both
-  counts at zero and states the ownership rule the read path rests on: the entry aliases the
-  buffer it was parsed from, which nothing reuses. The pin is skipped under `-race`, where the
-  detector allocates on its own account. Measured on 400 MB / 12.64M lines of ~32 bytes:
-  appending with syncing out of the picture (tmpfs) 8.75s -> 6.16s, `ibsen cat` 4.42s ->
-  2.70s, and afterwards both profiles are crc32 and syscalls rather than `mallocgc`. What is
-  left is per *frame*, not per entry: `EncodeFrame` copies the payload through the codec and
-  then into the frame, so a write's bytes are copied three times before the store sees them.
+- **What a byte costs on its way in and out.** Bytes are written where they are going to be
+  stored and read where they already are, which is one rule applied at both sizes.
+  - An entry is encoded straight into the frame payload (`domain.AppendEntry`) and parsed
+    back as a window onto the decoded frame (`domain.ParseEntry`), so neither direction
+    allocates per entry. `core/domain/fsUtils_test.go` pins both counts at zero and states
+    the ownership rule the read path rests on: the entry aliases the buffer it was parsed
+    from, which nothing reuses. The pin is skipped under `-race`, where the detector
+    allocates on its own account.
+  - A frame is built into the buffer the block is appended from (`logfmt.AppendFrame`): the
+    header's room is reserved, the payload goes in after it — a codec encoding into that
+    buffer directly — and the header is written last, once the stored size and checksum are
+    known. Nothing is appended when it fails, so a frame that could not be built leaves no
+    half of itself in front of the frames that were. A read of an uncompressed frame is
+    handed the payload it just filled rather than a copy of it (`logfmt.DecodeFrame`), which
+    is the same aliasing rule one level up. `core/logfmt/appendFrame_test.go` pins all three.
+  - Measured on 400 MB / 12.64M lines of ~32 bytes, over the two steps: appending with
+    syncing out of the picture (tmpfs) 8.75s -> 6.16s -> 5.08s, `ibsen cat` 4.42s -> 2.70s ->
+    2.24s, and `--compression zstd` 9.08s -> 8.24s. The read profile is now crc32 and
+    syscalls; `mallocgc` is in neither top ten. The same 400 MB written by either build is
+    byte for byte the same block, which is the only thing that had to stay true.
+  - What is left is one copy of each entry more than is strictly needed: entries go into a
+    frame payload and the payload into the block buffer, because a codec needs the plain
+    bytes as its input while it writes its output into the block. Removing it means building
+    the payload inside the block buffer and compressing out of it, which costs the compressed
+    path a copy back and costs the caller a two-call frame protocol. Not worth it at ~3%.
 
 - Indexing coalesces instead of dropping work: `Topic.UpdateIndex` leaves a mark when it finds a run under way, and the run takes that mark before it stops, so the tail of a log is always indexed by somebody. There is no background sweep and no ticker. `core/topic/indexing_test.go` gates the store to hold a run still, proves a request arriving during it is picked up rather than dropped, covers sixteen callers coalescing into one run, and covers a failed run leaving the work for the next call. `core/manager/topicsManager_test.go` pins that building a manager starts no goroutine and that the index is complete once writes stop.
 - Embedded: `wiring/embedded` is the second composition root, and `wiring/embedded/embedded_test.go` covers a store being required, write/list/read with nothing else wired, the log satisfying `driver.LogManager`, the block-size default, every other param reaching the core untouched, and `Close` refusing writes while loaded topics stay readable.

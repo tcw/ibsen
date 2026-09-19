@@ -607,17 +607,19 @@ func (t *Topic) buildFrames(entries domain.EntriesPtr) ([]byte, int, error) {
 	firstOffset := t.NextOffset
 	inFrame := 0
 	written := 0
-	// closeFrame encodes what has been collected and starts the next frame after it
+	// closeFrame encodes what has been collected onto the end of frames, where the store will
+	// write it from, and starts the next frame after it
 	closeFrame := func() error {
 		if inFrame == 0 {
 			return nil
 		}
-		frame, err := logfmt.EncodeFrame(t.Codec, firstOffset, inFrame, payload)
+		var err error
+		frames, err = logfmt.AppendFrame(frames, t.Codec, firstOffset, inFrame, payload)
 		if err != nil {
 			return err
 		}
-		frames = append(frames, frame...)
 		firstOffset = t.NextOffset + domain.Offset(written)
+		// the payload buffer is kept and refilled: one write's frames share it
 		payload = payload[:0]
 		inFrame = 0
 		return nil
