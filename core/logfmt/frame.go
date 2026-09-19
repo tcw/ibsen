@@ -10,7 +10,7 @@ import (
 
 var crcTable = crc32.MakeTable(crc32.Castagnoli)
 
-// EncodeFrame builds the bytes of one frame: entries, as CreateByteEntry wrote them, put
+// EncodeFrame builds the bytes of one frame: entries, as AppendEntry wrote them, put
 // through codec behind a header describing what came out. One call to Topic.Write makes one
 // frame, which is what makes a frame boundary a flush boundary and a durability boundary:
 // the store never sees half a frame, so a flush never lands inside one.

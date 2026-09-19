@@ -623,14 +623,15 @@ func (t *Topic) buildFrames(entries domain.EntriesPtr) ([]byte, int, error) {
 		return nil
 	}
 	for _, entry := range *entries {
-		encoded := domain.CreateByteEntry(entry, t.NextOffset+domain.Offset(written))
+		encodedSize := domain.EntryOverhead + len(entry)
 		// an entry larger than the byte bound still gets a frame, its own
-		if inFrame > 0 && (uint32(inFrame) >= t.MaxFrameEntries || len(payload)+len(encoded) > t.MaxFrameBytes) {
+		if inFrame > 0 && (uint32(inFrame) >= t.MaxFrameEntries || len(payload)+encodedSize > t.MaxFrameBytes) {
 			if err := closeFrame(); err != nil {
 				return nil, 0, err
 			}
 		}
-		payload = append(payload, encoded...)
+		// the entry is encoded straight into the payload it will be stored in
+		payload = domain.AppendEntry(payload, entry, t.NextOffset+domain.Offset(written))
 		written = written + 1
 		inFrame = inFrame + 1
 	}

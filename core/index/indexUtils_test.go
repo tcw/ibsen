@@ -20,7 +20,7 @@ func frame(t *testing.T, firstOffset domain.Offset, count int) []byte {
 	var entries []byte
 	for i := 0; i < count; i++ {
 		offset := firstOffset + domain.Offset(i)
-		entries = append(entries, domain.CreateByteEntry([]byte("dummy"+strconv.Itoa(int(offset))), offset)...)
+		entries = domain.AppendEntry(entries, []byte("dummy"+strconv.Itoa(int(offset))), offset)
 	}
 	encoded, err := logfmt.EncodeFrame(driven.NoCodec{}, firstOffset, count, entries)
 	if err != nil {

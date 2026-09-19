@@ -7,12 +7,14 @@ import (
 	"hash/crc32"
 	"io"
 	"math"
-
-	"github.com/tcw/ibsen/utils"
 )
 
 // EntryOverhead is the bytes a log entry adds around its payload: crc (4), size (8) and offset (8).
 const EntryOverhead = 20
+
+// entryHeaderSize is the crc and the size, which is what has to be there before the payload
+// size can be trusted.
+const entryHeaderSize = 12
 
 // MaxEntrySize bounds a payload size read from disk, so a corrupt size field is reported instead of allocated.
 const MaxEntrySize = math.MaxInt32 - EntryOverhead
@@ -21,60 +23,61 @@ var crc32q = crc32.MakeTable(crc32.Castagnoli)
 
 var ErrCorruptEntry = errors.New("corrupt log entry")
 
-func CreateByteEntry(entry []byte, currentOffset Offset) []byte {
-	offset := Uint64ToLittleEndian(uint64(currentOffset))
-	entrySize := len(entry)
-	byteSize := Uint64ToLittleEndian(uint64(entrySize))
-	checksum := crc32.Checksum(byteSize, crc32q)
-	checksum = crc32.Update(checksum, crc32q, entry)
-	checksum = crc32.Update(checksum, crc32q, offset)
-	check := Uint32ToLittleEndian(checksum)
-	return utils.JoinSize(EntryOverhead+entrySize, check, byteSize, entry, offset)
+// AppendEntry encodes one log entry into dst and returns the extended slice, the way append
+// does. Nothing is allocated for the entry: dst is the frame payload being built, so an
+// entry is written where it is going to be stored rather than assembled beside it and copied
+// in. A write of a million small entries is a million entries the garbage collector never
+// hears about.
+//
+// The layout is crc32c(4) | size uint64 LE (8) | entry | offset uint64 LE (8). The checksum
+// covers everything after it, and is taken from the bytes as written rather than from the
+// values they came from, so what is checked is what is stored.
+func AppendEntry(dst []byte, entry []byte, currentOffset Offset) []byte {
+	start := len(dst)
+	// room for the checksum, which is taken once the bytes it covers are written
+	dst = append(dst, 0, 0, 0, 0)
+	dst = binary.LittleEndian.AppendUint64(dst, uint64(len(entry)))
+	dst = append(dst, entry...)
+	dst = binary.LittleEndian.AppendUint64(dst, uint64(currentOffset))
+	binary.LittleEndian.PutUint32(dst[start:], crc32.Checksum(dst[start+4:], crc32q))
+	return dst
 }
 
-// ReadEntry reads one log entry from r and verifies its checksum. It returns io.EOF only
-// when r ends exactly on an entry boundary, io.ErrUnexpectedEOF for a partial entry, and
-// ErrCorruptEntry for a checksum mismatch or a payload larger than maxSize. n is the
-// number of bytes the entry occupies.
-func ReadEntry(r io.Reader, maxSize uint64) (entry LogEntry, n int, err error) {
+// ParseEntry decodes one log entry from the start of src and verifies its checksum. It
+// returns io.EOF only when src is empty (a clean entry boundary), io.ErrUnexpectedEOF for an
+// entry cut short, and ErrCorruptEntry for a checksum mismatch or a payload larger than
+// maxSize. n is the number of bytes the entry occupies.
+//
+// The entry aliases src instead of copying out of it. A read decodes a whole frame into a
+// buffer of its own and hands out the entries inside it, so the copy would be of every byte
+// read and would buy nothing; src must not be changed while the entry is in use.
+func ParseEntry(src []byte, maxSize uint64) (entry LogEntry, n int, err error) {
 	if maxSize > MaxEntrySize {
 		maxSize = MaxEntrySize
 	}
-	header := make([]byte, 12)
-	if _, err = io.ReadFull(r, header); err != nil {
-		return LogEntry{}, 0, err
+	if len(src) == 0 {
+		return LogEntry{}, 0, io.EOF
 	}
-	size := binary.LittleEndian.Uint64(header[4:])
+	if len(src) < entryHeaderSize {
+		return LogEntry{}, 0, io.ErrUnexpectedEOF
+	}
+	size := binary.LittleEndian.Uint64(src[4:entryHeaderSize])
 	if size > maxSize {
 		return LogEntry{}, 0, fmt.Errorf("%w: payload size %d exceeds %d", ErrCorruptEntry, size, maxSize)
 	}
-	body := make([]byte, size+8)
-	if _, err = io.ReadFull(r, body); err != nil {
-		if err == io.EOF {
-			err = io.ErrUnexpectedEOF
-		}
-		return LogEntry{}, 0, err
+	end := uint64(EntryOverhead) + size
+	if uint64(len(src)) < end {
+		return LogEntry{}, 0, io.ErrUnexpectedEOF
 	}
-	crc := binary.LittleEndian.Uint32(header)
-	if crc32.Update(crc32.Checksum(header[4:], crc32q), crc32q, body) != crc {
+	crc := binary.LittleEndian.Uint32(src)
+	if crc32.Checksum(src[4:end], crc32q) != crc {
 		return LogEntry{}, 0, fmt.Errorf("%w: checksum mismatch", ErrCorruptEntry)
 	}
+	payloadEnd := uint64(entryHeaderSize) + size
 	return LogEntry{
-		Offset:   binary.LittleEndian.Uint64(body[size:]),
+		Offset:   binary.LittleEndian.Uint64(src[payloadEnd:end]),
 		Crc:      crc,
 		ByteSize: int(size),
-		Entry:    body[:size:size],
-	}, int(size) + EntryOverhead, nil
-}
-
-func Uint64ToLittleEndian(offset uint64) []byte {
-	bytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(bytes, offset)
-	return bytes
-}
-
-func Uint32ToLittleEndian(number uint32) []byte {
-	bytes := make([]byte, 4)
-	binary.LittleEndian.PutUint32(bytes, number)
-	return bytes
+		Entry:    src[entryHeaderSize:payloadEnd:payloadEnd],
+	}, int(end), nil
 }

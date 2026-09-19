@@ -71,7 +71,7 @@ func Sync(store BlockStore, ref BlockRef) (bool, error) {
 type BlockKind uint8
 
 const (
-	// Log holds entries as written by CreateByteEntry.
+	// Log holds entries as written by AppendEntry.
 	Log BlockKind = iota
 	// Index holds (offset, byteOffset) pairs into the log block with the same number.
 	Index

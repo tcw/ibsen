@@ -10,7 +10,7 @@ import (
 )
 
 // A log block is a sequence of frames, and a frame holds one write batch: the entries as
-// CreateByteEntry encodes them, put through a codec, behind a header that says enough to
+// AppendEntry encodes them, put through a codec, behind a header that says enough to
 // place the frame in the log, skip it, and check it, without decoding it.
 //
 // That last property is what the header is worth its bytes for. Recovery walks a block

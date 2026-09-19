@@ -75,7 +75,7 @@ func logBlockBytes(t *testing.T, topic string, from, count int) []byte {
 	var block []byte
 	for i := 0; i < count; i++ {
 		offset := domain.Offset(from + i)
-		entry := domain.CreateByteEntry([]byte(fmt.Sprintf("%s-%d", topic, from+i)), offset)
+		entry := domain.AppendEntry(nil, []byte(fmt.Sprintf("%s-%d", topic, from+i)), offset)
 		frame, err := logfmt.EncodeFrame(driven.NoCodec{}, offset, 1, entry)
 		if err != nil {
 			t.Fatal(err)

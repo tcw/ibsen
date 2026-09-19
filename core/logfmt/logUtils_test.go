@@ -36,7 +36,7 @@ func blockWith(t *testing.T, block domain.LogBlock, content []byte) (driven.Bloc
 func entriesFrom(firstOffset domain.Offset, payloads ...string) []byte {
 	var entries []byte
 	for i, payload := range payloads {
-		entries = append(entries, domain.CreateByteEntry([]byte(payload), firstOffset+domain.Offset(i))...)
+		entries = domain.AppendEntry(entries, []byte(payload), firstOffset+domain.Offset(i))
 	}
 	return entries
 }
@@ -62,8 +62,8 @@ func framePerEntry(t *testing.T, firstOffset domain.Offset, payloads ...string) 
 	return block
 }
 
-func TestCreateByteEntry(t *testing.T) {
-	entry := domain.CreateByteEntry([]byte("dummy"), 0)
+func TestEntryRoundTripThroughAFrame(t *testing.T) {
+	entry := domain.AppendEntry(nil, []byte("dummy"), 0)
 	logChan := make(chan *[]domain.LogEntry)
 	var wg sync.WaitGroup
 	go func() {
