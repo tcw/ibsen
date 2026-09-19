@@ -73,12 +73,18 @@ var ErrOffsetsNeedLines = errors.New("stdio: offsets can only be printed with li
 // which means the stream was cut rather than finished.
 var ErrTruncatedEntry = errors.New("stdio: stream ended inside an entry")
 
+// ErrLineTooLong is a newline-delimited entry larger than MaxLineSize. A stream with no
+// newline in it would otherwise be read into memory whole; length framing carries entries
+// that large, and says how large before they are read.
+var ErrLineTooLong = errors.New("stdio: line longer than MaxLineSize")
+
 // AppendParams is how a stream is read into the log.
 type AppendParams struct {
 	// Framing is how the incoming stream delimits entries.
 	Framing Framing
-	// BatchSize is how many entries go in one Write; zero means DefaultAppendBatchSize.
-	// MaxBatchBytes bounds it too, since entries have no size of their own.
+	// BatchSize is how many entries go in one Write; zero means DefaultAppendBatchSize. It
+	// is a ceiling rather than a quota: a batch is written when it is full, when it holds
+	// MaxBatchBytes, when the stream has nothing more ready, or when the stream ends.
 	//
 	// It is a batching choice and not a durability one: a Write returns when the entries it
 	// carried are durable, whatever the size. What it decides is the cost of that — one
@@ -100,7 +106,7 @@ func Append(log driver.LogManager, topic domain.TopicName, in io.Reader, params 
 	if batchSize <= 0 {
 		batchSize = DefaultAppendBatchSize
 	}
-	next, err := entryReader(in, params.Framing)
+	reader, err := newEntryReader(in, params.Framing)
 	if err != nil {
 		return 0, err
 	}
@@ -123,7 +129,7 @@ func Append(log driver.LogManager, topic domain.TopicName, in io.Reader, params 
 		return nil
 	}
 	for {
-		entry, err := next()
+		entry, err := reader.next()
 		if errors.Is(err, io.EOF) {
 			return written, flush()
 		}
@@ -138,7 +144,9 @@ func Append(log driver.LogManager, topic domain.TopicName, in io.Reader, params 
 		}
 		batch = append(batch, entry)
 		batchBytes = batchBytes + len(entry)
-		if len(batch) == batchSize || batchBytes >= MaxBatchBytes {
+		// a full batch is written, and so is one with nothing behind it: a stream that has
+		// gone quiet leaves what it has already said on durable media rather than in memory
+		if len(batch) == batchSize || batchBytes >= MaxBatchBytes || !reader.buffered() {
 			if err := flush(); err != nil {
 				return written, err
 			}
@@ -146,57 +154,110 @@ func Append(log driver.LogManager, topic domain.TopicName, in io.Reader, params 
 	}
 }
 
-// entryReader returns a function handing back one entry at a time, and io.EOF when the
-// stream has ended cleanly. The returned entry is the caller's.
-func entryReader(in io.Reader, framing Framing) (func() ([]byte, error), error) {
-	switch framing {
-	case Lines:
-		scanner := bufio.NewScanner(in)
-		scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), MaxLineSize)
-		return func() ([]byte, error) {
-			if !scanner.Scan() {
-				if err := scanner.Err(); err != nil {
-					return nil, err
-				}
-				return nil, io.EOF
-			}
-			// Bytes points into the scanner's buffer, which the next Scan reuses
-			line := scanner.Bytes()
-			entry := make([]byte, len(line))
-			copy(entry, line)
-			return entry, nil
-		}, nil
-	case Length:
-		reader := bufio.NewReader(in)
-		var header [8]byte
-		return func() ([]byte, error) {
-			if _, err := io.ReadFull(reader, header[:]); err != nil {
-				if errors.Is(err, io.EOF) {
-					// a stream that ends between entries has ended cleanly
-					return nil, io.EOF
-				}
-				if errors.Is(err, io.ErrUnexpectedEOF) {
-					return nil, ErrTruncatedEntry
-				}
-				return nil, err
-			}
-			size := binary.LittleEndian.Uint64(header[:])
-			if size > uint64(domain.MaxEntrySize) {
-				return nil, fmt.Errorf("stdio: entry of %d bytes is larger than the %d a log entry can hold",
-					size, domain.MaxEntrySize)
-			}
-			entry := make([]byte, size)
-			if _, err := io.ReadFull(reader, entry); err != nil {
-				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-					return nil, ErrTruncatedEntry
-				}
-				return nil, err
-			}
-			return entry, nil
-		}, nil
-	default:
+// entryReader hands back one entry of a stream at a time, and says whether another one is
+// already there. Both framings read through one bufio.Reader, which is what makes the second
+// question answerable: a bufio.Scanner keeps a buffer of its own and will not say what is
+// behind it, so an appender built on one can only block on the next entry or stop.
+type entryReader struct {
+	in      *bufio.Reader
+	framing Framing
+	header  [8]byte
+}
+
+// readerBufferSize is how much of the stream is held ahead of the appender. It is large
+// because the buffer running empty is how the appender decides to write what it has (see
+// buffered), and a small one would make a bulk load flush every time it ran dry rather than
+// when its batch was full. This way a stream of ordinary lines fills a batch first, and a
+// sync costs at most this much of the stream however small the entries are.
+const readerBufferSize = 1 << 20
+
+func newEntryReader(in io.Reader, framing Framing) (*entryReader, error) {
+	if framing != Lines && framing != Length {
 		return nil, fmt.Errorf("stdio: unknown framing %d", framing)
 	}
+	return &entryReader{in: bufio.NewReaderSize(in, readerBufferSize), framing: framing}, nil
+}
+
+// buffered reports whether the next entry can be read without waiting on the stream. It is
+// what lets a batch be written rather than held: a feed that has gone quiet leaves the
+// buffer empty, and the entries already read are written instead of waiting for company that
+// is not coming. A stream arriving faster than it is written keeps the buffer full, so its
+// batches fill and the check costs nothing.
+//
+// It is a hint and not a promise: the bytes left may be half an entry, and the read after
+// them blocks. Nothing but batching depends on the answer.
+func (r *entryReader) buffered() bool {
+	return r.in.Buffered() > 0
+}
+
+// next reads one entry, returning io.EOF when the stream has ended cleanly. The entry is the
+// caller's: nothing here holds a reference to it.
+func (r *entryReader) next() ([]byte, error) {
+	if r.framing == Length {
+		return r.nextLengthFramed()
+	}
+	return r.nextLine()
+}
+
+// nextLine reads up to the next newline, or to the end of a stream that does not end with
+// one. The line is copied out of the reader's buffer, which the next read refills, and a
+// line longer than that buffer is collected across several of them.
+func (r *entryReader) nextLine() ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := r.in.ReadSlice('\n')
+		switch err {
+		case nil:
+			chunk = chunk[:len(chunk)-1]
+		case bufio.ErrBufferFull, io.EOF:
+		default:
+			return nil, err
+		}
+		if err == io.EOF && len(line) == 0 && len(chunk) == 0 {
+			// the stream ended on an entry boundary, which is the end of it
+			return nil, io.EOF
+		}
+		if len(line)+len(chunk) > MaxLineSize {
+			return nil, ErrLineTooLong
+		}
+		line = append(line, chunk...)
+		if err == bufio.ErrBufferFull {
+			// the line is longer than the buffer, so there is more of it to come
+			continue
+		}
+		if line == nil {
+			// a blank line is an empty entry, not nothing
+			line = []byte{}
+		}
+		return line, nil
+	}
+}
+
+// nextLengthFramed reads one entry behind its little-endian uint64 byte count.
+func (r *entryReader) nextLengthFramed() ([]byte, error) {
+	if _, err := io.ReadFull(r.in, r.header[:]); err != nil {
+		if errors.Is(err, io.EOF) {
+			// a stream that ends between entries has ended cleanly
+			return nil, io.EOF
+		}
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, ErrTruncatedEntry
+		}
+		return nil, err
+	}
+	size := binary.LittleEndian.Uint64(r.header[:])
+	if size > uint64(domain.MaxEntrySize) {
+		return nil, fmt.Errorf("stdio: entry of %d bytes is larger than the %d a log entry can hold",
+			size, domain.MaxEntrySize)
+	}
+	entry := make([]byte, size)
+	if _, err := io.ReadFull(r.in, entry); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, ErrTruncatedEntry
+		}
+		return nil, err
+	}
+	return entry, nil
 }
 
 // CatParams is how a topic is written to a stream.

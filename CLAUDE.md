@@ -571,14 +571,29 @@ logs" something you can run.
   a large write saves fsyncs, while a large read only holds more entries before the first of
   them reaches the stream. 10000 is where the gain flattened when it was measured — 400 MB of
   12.6M lines took 11–22s against 55–86s at 1000, three runs each, and 100000 bought nothing
-  more. Two things follow. A batch is also bounded at `stdio.MaxBatchBytes` (16 MiB), since
-  the size counts entries and entries have no size; one entry larger than that still gets a
-  write of its own, and both are pinned by tests. And a batch is written when it is full or
-  when the stream ends, never because time passed, so a trickle waits for it to fill: a
-  `tail -F` into an `append` wants `--batchSize 1`. Making a slow feed flush what it has
-  would mean the appender knowing whether more input is ready, which the line reader is a
-  `bufio.Scanner` and cannot say; it is the obvious next thing here if a live feed ever
-  matters more than a bulk load.
+  more. The size is a ceiling rather than a quota: a batch is also written once it holds
+  `stdio.MaxBatchBytes` (16 MiB), since the size counts entries and entries have no size,
+  and one entry larger than that still gets a write of its own.
+- **A batch is also written whenever the stream has nothing more ready**, which is what the
+  line reader is built on a `bufio.Reader` for. A `bufio.Scanner` keeps a buffer of its own
+  and will not say what is behind it, so an appender built on one can only block on the next
+  entry or stop — and a feed that trickles would sit in memory until a batch filled, which at
+  10000 is a long time to be invisible. `entryReader.buffered()` is the whole of it: read an
+  entry, and if nothing is buffered behind it, write what there is. It is a hint, not a
+  promise — the bytes left may be half an entry — and nothing but batching depends on the
+  answer.
+  - It costs a bulk load almost nothing, which is not obvious and is why `readerBufferSize`
+    is 1 MiB: a buffer that holds several batches of ordinary lines is nearly always still
+    holding some when a batch fills, so the check fires only when an entry happens to end
+    exactly where the buffered bytes do. Appending 400 MB of 12.6M lines takes 1272 fsyncs
+    against the 1264 the batch size alone asks for, and the same wall time; with a small
+    buffer it would be one sync per refill instead.
+  - `TestASlowStreamIsWrittenWithoutWaitingForABatch` writes a line into an `io.Pipe` and
+    waits for `cat` to see it while the stream is still open, which times out without the
+    check. The reader's own edges are pinned beside it: a line longer than the buffer
+    collected across reads, a stream ending without a newline, a blank line as an empty
+    entry, and `ErrLineTooLong` past `MaxLineSize` — what the scanner used to give for free.
+
 - The two batch sizes are two variables, not one shared by both flags: cobra writes a flag's
   default into its variable as it registers the flag, so `cmdCat`'s registration would set
   the default `cmdAppend` had just declared. That is how the raised default first shipped

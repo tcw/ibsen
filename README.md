@@ -332,12 +332,12 @@ against 55–86s at 1000, three runs each on an ordinary disk. Nothing about dur
 with the batch size: every `append` that exits zero has its entries on durable media, and a
 batch that fails takes with it only entries no one was told about.
 
-Two things bound a batch besides the flag. It is also written once it holds 16 MiB of entries,
-so the size can stay an entry count without a stream of large entries holding a lot of memory.
-And it is written when it is **full**, or when the stream ends — never because time passed — so
-a trickle waits for the batch to fill. A bulk load wants the default; `tail -F applog | ibsen
-append` wants `--batchSize 1`, which is the old behaviour of one fsync per entry and is what
-makes each line durable as it arrives.
+The size is a ceiling and not a quota. A batch is written when it is full, when it holds 16 MiB
+of entries — the size counts entries, and entries have no size — **or when the stream has
+nothing more ready**. So `tail -F applog | ibsen append` makes each line durable as it arrives
+without being told to, and the same default still reads a file at one sync per 10000 lines: a
+bulk load keeps the reader's buffer full, so its batches fill before they run dry. Appending
+400 MB of 12.6M lines costs 1272 fsyncs against the 1264 the batch size alone asks for.
 
 ### Compression
 
