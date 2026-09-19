@@ -31,7 +31,7 @@ Everything below hangs off that rule: the bugs are the core earning trust, the p
 
 ## What it is
 
-A Go append-only log server, Kafka-like: topics you write entries to and read back by offset, over gRPC, with a sparse index and block-based storage on the filesystem.
+A Go append-only log, Kafka-like: topics you write entries to and read back by offset, with a sparse index and block-based storage on the filesystem. Reached three ways over the one driving port — a gRPC server, a library an embedded program links, and a Unix filter over stdin and stdout (§11).
 
 - Entry wire format (`core/domain/fsUtils.go` `CreateByteEntry`): `crc32c(4) | size uint64 LE (8) | entry | offset uint64 LE (8)`; CRC covers size, entry, offset.
 - A log block is a sequence of **frames** (`core/domain/frame.go`), and a frame holds one
