@@ -82,6 +82,35 @@ ibsen tools read-log   /tmp/ibsen/data/greetings/00000000000000000000.log
 ibsen tools read-index /tmp/ibsen/data/greetings/00000000000000000000.idx
 ```
 
+## Use it as a filter — no server either
+
+The same log, driven over stdin and stdout. No daemon, no socket: `append` and `cat` open the
+data directory themselves.
+
+```shell
+printf 'hello\nworld\n' | ibsen append -d /tmp/ibsen/data greetings
+ibsen cat -d /tmp/ibsen/data greetings
+ibsen cat -d /tmp/ibsen/data greetings 1 --offsets   # from offset 1, with offsets
+ibsen cat -d /tmp/ibsen/data greetings --follow      # keep printing as entries arrive
+ibsen topics -d /tmp/ibsen/data
+```
+
+Entries come out exactly as they went in, so a topic pipes into anything, including another
+topic:
+
+```shell
+ibsen cat -d /tmp/ibsen/data greetings | grep world | ibsen append -d /tmp/ibsen/data hits
+```
+
+One entry per line by default. An entry that holds a newline, or no bytes at all, needs
+`--framing length`, which prefixes each entry with its byte count as a little-endian uint64 —
+readable and writable by both commands, and nothing to do with the format on disk.
+
+**`cat` opens the log read-only and takes no lock**, so it is safe to point at a directory a
+server is writing: it cannot truncate, re-index or create anything. **`append` takes the
+single-writer lease**, so it is refused while a server holds that directory — two writers on
+one log is what the lease exists to prevent.
+
 ## Embed it — no server at all
 
 The gRPC server is an adapter around the log, not the log. Import the embedded composition
