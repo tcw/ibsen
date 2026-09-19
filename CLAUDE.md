@@ -440,9 +440,69 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 27. ~~Switch the server to `filestore`, keeping read-only mode read-only.~~
 28. ~~Delete `aferostore` and the dependency; move every remaining test onto real
     directories.~~
+29. Add the stdio driving adapter, so the log is a Unix filter with no server between a
+    program and the bytes (§11).
 
-Every step ships green. Steps 0 to 28 are done, one commit each.
+Every step ships green. Steps 0 to 28 are done, one commit each; 29 is planned.
 
-Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
-are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
-it stays at 1000, for forward reading speed (§5).
+Next, in the same one-change-at-a-time way: step 29 (§11), which is the smallest of the three
+and touches no core code; dictionaries (§6), which §5's measurements argue are narrower than
+they look; and §7, which is untouched. The frame-bound default is settled — it stays at 1000,
+for forward reading speed (§5).
+
+## 11. The log without a server
+
+The gRPC server is an adapter around the log, not the log. A second driving adapter that reads
+stdin and writes stdout makes the log a Unix filter — `ibsen append` and `ibsen cat` against a
+data directory, with no daemon between a program and the bytes. It is the claim the README
+makes ("SQLite for logs") turned into something you can run.
+
+It is cheap because it is what §8 was for. `wiring/embedded.Open` already returns a `*Log`
+satisfying `driver.LogManager`, which is the same port `grpcapi` drives, and the stdin/stdout
+marshalling already exists in `adapter/driver/cli/ibsenClient.go`, bolted to the gRPC client
+rather than to the port. The work is pointing it at the port and giving `wiring` a composition
+helper that builds `filestore` and the embedded log. The CLI reaches no driven adapter today
+and must not start: it names a directory, and the composition root decides what is under it.
+
+**Reading takes no lock and cannot damage a live directory.** `Topic.LoadOrCreate` writes
+nothing for a topic that exists and is clean: `CreateTopic` returns early, `RecoverBlock`
+truncates only a torn tail, and the index position is read rather than rebuilt. So a reader
+wired with `filestore.ReadOnly` may be pointed at a directory a server owns. On a torn tail it
+fails instead of repairing — `ReadOnly` refuses the truncate and the load reports it — which is
+the right answer for a process that does not own the log.
+
+- **A one-shot `cat` is exact; following a live log across processes is not.** A `Topic` never
+  re-lists blocks from the store after it loads, so a follow started on a directory another
+  process is writing reaches only as far as the log had got when it opened. That is the same
+  cached state that makes a per-topic lock (§7) larger than it looks, and it is not this
+  step's work.
+- **Stdout is the backpressure and EPIPE is the cancel.** The read path already takes a
+  `Cancel` channel, so `ibsen cat topic | head -5` must close it on a failed write rather than
+  block forever. That is the bug the gRPC handler had (§1), and it is the same fix.
+
+**Writing takes the lease, and is therefore refused beside a running server.** `ibsen append`
+is a second writer on the directory, so it acquires the single-writer lock the server acquires
+and loses the race while the server holds it. That is correct rather than unfortunate, and it
+is the one ordering constraint this step has: if per-topic leases are ever built (§7), they
+are what would let `append` take only the topic it writes and run beside a server writing
+others.
+
+- **Framing on the stream is a choice the log does not make.** Newline-delimited is what the
+  gRPC client does today: it composes with `grep`, `jq` and `wc`, and it cannot carry an entry
+  holding a newline or an arbitrary byte, which the log otherwise accepts. So newline-delimited
+  stays the default and `--framing=length` writes the `size | payload` shape the entry codec
+  already uses. Framing is about the pipe, not about the format on disk: a log written through
+  one is readable through either.
+- Durability needs nothing added. `Write` returns once the flush covering its entries has
+  returned, so `append` exiting zero already means they are on durable media (§2).
+
+**Not in this step**: a persistent stdio session — a long-lived process speaking a framed
+request/response protocol over stdin and stdout, so a program in another language drives the
+log without gRPC. It needs a protocol in both directions, and multiplexing once a read and a
+write overlap, and it earns that only if embedding Ibsen in a non-Go process is actually
+wanted. A Unix domain socket is not this either: it is one `net.Listen` in the gRPC adapter,
+and what it gives you is still the server.
+
+The claim to check is the one §8 already checks. A binary carrying the stdio adapter,
+`filestore` and the embedded root links no gRPC and no cobra, so `scripts/embedded-size.sh`
+can weigh it beside the embedded example instead of the claim being asserted.
