@@ -207,6 +207,13 @@ them has returned, so a reader never sees an entry a power cut could take back.
   (how long a batch may be held back hoping for more; 0 never holds one back). Threaded
   through the manager params and `wiring.IbsenServer` to `--flushEntries`/`-f`,
   `--flushIntervalMs`, `IBSEN_FLUSH_ENTRIES` and `IBSEN_FLUSH_INTERVAL_MS`.
+  **The two are a pair, and the count does nothing on its own.** `dueLocked` holds a batch
+  back only while its interval has to run, so with an interval of 0 every batch is due the
+  moment it exists and the entry count never decides anything; raising `--flushEntries` alone
+  changes not one fsync. Set an interval and the count becomes the escape from it — enough
+  entries have arrived, do not wait out the rest — which is worth having only where writers
+  arrive concurrently. One writer has nobody to wait for, so for `ibsen append` the dial is
+  `--batchSize` and these two are not (§11).
 - **No background goroutine.** The writer that needs its entries durable drives the flush;
   writers whose entries joined the same batch wait on it. The core starts no timers it does
   not own and no goroutine outlives a topic. Once driving, a driver takes each batch as it
@@ -547,6 +554,19 @@ logs" something you can run.
   runs at both boundaries.
 - Durability needed nothing: `Write` returns once the flush covering its entries has, so
   `append` exiting zero means they are on durable media (§2).
+- **`--batchSize` is the throughput dial, and the flush flags are not.** One `Write` is one
+  append and one flush, so the batch size is the number of fsyncs a stream costs: appending
+  126,574 lines is 128 fsyncs at the default 1000 and 14 at `--batchSize 10000`, while
+  `--flushEntries 10000` costs the same 128 as not passing it at all. That is the flush
+  policy doing what it says (§2) rather than a limitation: it groups writers that arrive
+  together, and a stream is one writer. Passing `--flushIntervalMs` as well makes it worse
+  than useless — the writer then waits out the interval on every batch with nobody able to
+  join it, which took 4 MB from 0.31s to 14.3s at `-f 10000 --flushIntervalMs 100`. Nothing
+  about durability moves with the batch size, which is why this is a dial and not a trade:
+  `TestBatchSizeIsHowManyEntriesShareAWrite` pins the count of writes a stream becomes, and
+  `TestBatchSizeDoesNotChangeTheStream` pins that the bytes are the same whatever it is set
+  to. The default stays at 1000, since a default that is right for a pipe of a few lines is
+  the one a person types by hand, and the flag is one word away.
 - Compression needed nothing either, beyond sharing the server's resolution: `buildCodecs` is
   now one function used by both roots, so a name means the same thing either way and a topic
   written with `--compression zstd` is read back by a plain `ibsen cat`.

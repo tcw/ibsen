@@ -65,9 +65,14 @@ var ErrTruncatedEntry = errors.New("stdio: stream ended inside an entry")
 type AppendParams struct {
 	// Framing is how the incoming stream delimits entries.
 	Framing Framing
-	// BatchSize is how many entries go in one Write; zero means DefaultBatchSize. It is a
-	// batching choice and not a durability one: a Write returns when the entries it carried
-	// are durable, whatever the size.
+	// BatchSize is how many entries go in one Write; zero means DefaultBatchSize.
+	//
+	// It is a batching choice and not a durability one: a Write returns when the entries it
+	// carried are durable, whatever the size. What it decides is the cost of that — one
+	// Write is one append and, on a store that syncs, one flush — so it is the throughput
+	// dial for a stream, and the only one. The flush policy is not: a stream is a single
+	// writer, so there is never anybody else's batch for its entries to join, and holding a
+	// batch back for company that cannot come only makes it wait.
 	BatchSize int
 }
 

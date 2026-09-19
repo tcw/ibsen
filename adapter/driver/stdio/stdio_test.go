@@ -176,6 +176,42 @@ func TestBatchSizeDoesNotChangeTheStream(t *testing.T) {
 	}
 }
 
+// countingLog counts the writes a stream is turned into. It is the cost side of the batch
+// size, which the test below states: the stream that comes out is the same whatever the
+// batching, but the number of appends it took is not.
+type countingLog struct {
+	driver.LogManager
+	writes int
+}
+
+func (c *countingLog) Write(topic domain.TopicName, entries domain.EntriesPtr) error {
+	c.writes++
+	return c.LogManager.Write(topic, entries)
+}
+
+// TestBatchSizeIsHowManyEntriesShareAWrite pins what the batch size buys. One Write is one
+// append and, on a store that syncs, one flush, so this is the number of fsyncs a stream
+// costs: appending a million lines one thousand at a time is a thousand of them. Nothing
+// about durability changes with it — every Write that returned is on durable media — which
+// is why the size is the throughput dial for a stream and the flush policy is not: a stream
+// is one writer, and there is never anybody else's batch for its entries to join.
+func TestBatchSizeIsHowManyEntriesShareAWrite(t *testing.T) {
+	var stream strings.Builder
+	for i := 0; i < 7; i++ {
+		fmt.Fprintf(&stream, "entry-%d\n", i)
+	}
+	for _, test := range []struct{ batch, writes int }{{1, 7}, {3, 3}, {7, 1}, {8, 1}, {1000, 1}} {
+		t.Run(fmt.Sprintf("batch-%d", test.batch), func(t *testing.T) {
+			log := &countingLog{LogManager: openLog(t)}
+			appendString(t, log, "topic", stream.String(), stdio.AppendParams{BatchSize: test.batch})
+			if log.writes != test.writes {
+				t.Fatalf("7 entries in batches of %d took %d writes, want %d",
+					test.batch, log.writes, test.writes)
+			}
+		})
+	}
+}
+
 // failingWriter fails every write after the first, which is what a closed pipe looks like
 // from inside the process.
 type failingWriter struct {
