@@ -161,7 +161,12 @@ var (
 			if err != nil {
 				log.Fatal().Err(err).Msgf("unable to resolve log file %s", args[0])
 			}
-			err = ReadLogFile(file, uint32(batchSize))
+			codecs, closeCodecs, err := wiring.ReadCodecs()
+			if err != nil {
+				log.Fatal().Err(err).Msg("unable to build the codecs a log file is read with")
+			}
+			defer closeCodecs()
+			err = ReadLogFile(file, uint32(batchSize), codecs)
 			if err != nil {
 				log.Fatal().Err(err).Msgf("unable to read log file %s", file)
 			}
@@ -412,7 +417,7 @@ func init() {
 	indexSparsity, _ = strconv.Atoi(getenv("IBSEN_INDEX_SPARSITY", strconv.FormatUint(uint64(topic.DefaultIndexSparsity), 10)))
 	maxFrameEntries, _ = strconv.Atoi(getenv("IBSEN_MAX_FRAME_ENTRIES", strconv.FormatUint(uint64(topic.DefaultMaxFrameEntries), 10)))
 	maxFrameBytes, _ = strconv.Atoi(getenv("IBSEN_MAX_FRAME_BYTES", strconv.Itoa(topic.DefaultMaxFrameBytes)))
-	compression = getenv("IBSEN_COMPRESSION", "none")
+	compression = getenv("IBSEN_COMPRESSION", wiring.DefaultCompression)
 	compressionLevel = getenv("IBSEN_COMPRESSION_LEVEL", "default")
 	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
 	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")

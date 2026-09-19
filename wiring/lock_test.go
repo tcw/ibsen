@@ -133,13 +133,17 @@ func TestReadonlyStartDoesNotTakeTheLock(t *testing.T) {
 
 // Compression is a name on the command line and an adapter in here: the CLI is a driving
 // adapter and must not reach a driven one, so the composition root is what turns one into
-// the other.
+// the other. Naming nothing is naming DefaultCompression, which is zstd: a deployment that
+// says nothing gets the smaller log, and says "none" to get out of it.
 func TestCompressionNamePicksTheCodec(t *testing.T) {
+	if DefaultCompression != "zstd" {
+		t.Fatalf("the default compression is %q, and the case below is written for zstd", DefaultCompression)
+	}
 	for _, test := range []struct {
 		name string
 		want driven.CodecID
 	}{
-		{name: "", want: driven.CodecNone},
+		{name: "", want: driven.CodecZstd},
 		{name: "none", want: driven.CodecNone},
 		{name: "zstd", want: driven.CodecZstd},
 	} {

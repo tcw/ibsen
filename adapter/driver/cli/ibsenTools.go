@@ -10,9 +10,14 @@ import (
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/index"
 	"github.com/tcw/ibsen/core/logfmt"
+	"github.com/tcw/ibsen/core/port/driven"
 )
 
-func ReadLogFile(fileName string, batchSize uint32) error {
+// ReadLogFile prints a log block file, entry by entry. codecs is what its frames are
+// resolved against: a block written with the default codec cannot be read without one, and
+// this package may not build codecs of its own — a driving adapter does not reach a driven
+// adapter, so the composition root hands them over (wiring.ReadCodecs).
+func ReadLogFile(fileName string, batchSize uint32, codecs driven.Codecs) error {
 	logChan := make(chan *[]domain.LogEntry)
 	var wg sync.WaitGroup
 	terminate := make(chan bool)
@@ -25,6 +30,7 @@ func ReadLogFile(fileName string, batchSize uint32) error {
 	defer file.Close()
 	_, err = logfmt.ReadFile(logfmt.ReadFileParams{
 		Reader:    file,
+		Codecs:    codecs,
 		LogChan:   logChan,
 		Wg:        &wg,
 		BatchSize: batchSize,
