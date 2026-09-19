@@ -212,6 +212,71 @@ func TestBatchSizeIsHowManyEntriesShareAWrite(t *testing.T) {
 	}
 }
 
+// TestBatchIsBoundedByBytesAsWellAsEntries: the batch size counts entries, and entries have
+// no size, so a stream of large ones would otherwise hold the batch size times the largest
+// of them before writing any of it. The byte bound is what makes a larger default entry
+// count safe to ship.
+func TestBatchIsBoundedByBytesAsWellAsEntries(t *testing.T) {
+	const entrySize = 1 << 20
+	const entries = 20
+	var stream strings.Builder
+	stream.Grow(entries * (entrySize + 1))
+	for i := 0; i < entries; i++ {
+		stream.WriteString(strings.Repeat("a", entrySize))
+		stream.WriteByte('\n')
+	}
+	log := &countingLog{LogManager: openLog(t)}
+
+	written := appendString(t, log, "big", stream.String(), stdio.AppendParams{BatchSize: entries})
+
+	if written != entries {
+		t.Fatalf("wrote %d entries, want %d", written, entries)
+	}
+	// 20 MiB of entries against a 16 MiB bound is two writes, however many entries were asked for
+	if log.writes != 2 {
+		t.Fatalf("%d MiB of entries took %d writes, want 2 against the %d MiB bound",
+			entries, log.writes, stdio.MaxBatchBytes>>20)
+	}
+}
+
+// One entry larger than the byte bound is still written, in a batch of its own: a bound on
+// how much is held is not a bound on what may be appended. It takes length framing to get
+// there, since a line is bounded at MaxLineSize well below it.
+func TestAnEntryLargerThanTheByteBoundIsStillWritten(t *testing.T) {
+	entries := [][]byte{
+		bytes.Repeat([]byte("b"), stdio.MaxBatchBytes+1024),
+		[]byte("small"),
+	}
+	var stream bytes.Buffer
+	for _, entry := range entries {
+		var header [8]byte
+		binary.LittleEndian.PutUint64(header[:], uint64(len(entry)))
+		stream.Write(header[:])
+		stream.Write(entry)
+	}
+	log := &countingLog{LogManager: openLog(t)}
+
+	written, err := stdio.Append(log, "big", bytes.NewReader(stream.Bytes()),
+		stdio.AppendParams{Framing: stdio.Length, BatchSize: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if written != 2 {
+		t.Fatalf("wrote %d entries, want 2", written)
+	}
+	if log.writes != 2 {
+		t.Fatalf("took %d writes, want the large entry to have had one of its own", log.writes)
+	}
+	var out bytes.Buffer
+	if _, err := stdio.Cat(log, "big", &out, stdio.CatParams{Framing: stdio.Length}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out.Bytes(), stream.Bytes()) {
+		t.Fatalf("the stream came back %d bytes long, want %d", out.Len(), stream.Len())
+	}
+}
+
 // failingWriter fails every write after the first, which is what a closed pipe looks like
 // from inside the process.
 type failingWriter struct {

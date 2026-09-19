@@ -43,8 +43,20 @@ const (
 )
 
 const (
-	// DefaultBatchSize is how many entries are written, or asked for, in one call.
-	DefaultBatchSize = 1000
+	// DefaultAppendBatchSize is how many entries one Write carries when the caller does not
+	// choose. One Write is one append and, on a store that syncs, one fsync, so this is what
+	// a stream costs: 10000 was where the gain flattened when it was measured, and 100000
+	// bought nothing more. It is larger than the read default because the two are not the
+	// same trade: a large write saves syncs, while a large read only holds more entries in
+	// memory before the first of them reaches the stream.
+	DefaultAppendBatchSize = 10000
+	// DefaultCatBatchSize is how many entries a read asks for at a time.
+	DefaultCatBatchSize = 1000
+	// MaxBatchBytes bounds the entry bytes held for one Write. The batch size counts
+	// entries, and entries have no size: without this, a stream of large ones would hold the
+	// batch size times the largest entry in memory before writing any of it. One entry
+	// larger than this still gets a write, of its own.
+	MaxBatchBytes = 16 << 20
 	// DefaultPollInterval is how long Cat waits before looking again while following.
 	DefaultPollInterval = 100 * time.Millisecond
 	// MaxLineSize bounds one newline-delimited entry, since a stream with no newline in it
@@ -65,7 +77,8 @@ var ErrTruncatedEntry = errors.New("stdio: stream ended inside an entry")
 type AppendParams struct {
 	// Framing is how the incoming stream delimits entries.
 	Framing Framing
-	// BatchSize is how many entries go in one Write; zero means DefaultBatchSize.
+	// BatchSize is how many entries go in one Write; zero means DefaultAppendBatchSize.
+	// MaxBatchBytes bounds it too, since entries have no size of their own.
 	//
 	// It is a batching choice and not a durability one: a Write returns when the entries it
 	// carried are durable, whatever the size. What it decides is the cost of that — one
@@ -85,14 +98,18 @@ type AppendParams struct {
 func Append(log driver.LogManager, topic domain.TopicName, in io.Reader, params AppendParams) (uint64, error) {
 	batchSize := params.BatchSize
 	if batchSize <= 0 {
-		batchSize = DefaultBatchSize
+		batchSize = DefaultAppendBatchSize
 	}
 	next, err := entryReader(in, params.Framing)
 	if err != nil {
 		return 0, err
 	}
 	var written uint64
-	batch := make([][]byte, 0, batchSize)
+	// the batch size comes from a flag, so the room made for it up front is capped; a larger
+	// one is still honoured, it just grows into it
+	prealloc := min(batchSize, DefaultAppendBatchSize)
+	batch := make([][]byte, 0, prealloc)
+	batchBytes := 0
 	flush := func() error {
 		if len(batch) == 0 {
 			return nil
@@ -101,7 +118,8 @@ func Append(log driver.LogManager, topic domain.TopicName, in io.Reader, params 
 			return err
 		}
 		written += uint64(len(batch))
-		batch = make([][]byte, 0, batchSize)
+		batch = make([][]byte, 0, prealloc)
+		batchBytes = 0
 		return nil
 	}
 	for {
@@ -119,7 +137,8 @@ func Append(log driver.LogManager, topic domain.TopicName, in io.Reader, params 
 			return written, err
 		}
 		batch = append(batch, entry)
-		if len(batch) == batchSize {
+		batchBytes = batchBytes + len(entry)
+		if len(batch) == batchSize || batchBytes >= MaxBatchBytes {
 			if err := flush(); err != nil {
 				return written, err
 			}
@@ -184,7 +203,7 @@ func entryReader(in io.Reader, framing Framing) (func() ([]byte, error), error) 
 type CatParams struct {
 	// From is the offset to start at.
 	From domain.Offset
-	// BatchSize is how many entries are asked for at a time; zero means DefaultBatchSize.
+	// BatchSize is how many entries are asked for at a time; zero means DefaultCatBatchSize.
 	BatchSize uint32
 	// Framing is how entries are delimited on the way out.
 	Framing Framing
@@ -218,7 +237,7 @@ func Cat(log driver.LogManager, topic domain.TopicName, out io.Writer, params Ca
 		return params.From, ErrOffsetsNeedLines
 	}
 	if params.BatchSize == 0 {
-		params.BatchSize = DefaultBatchSize
+		params.BatchSize = DefaultCatBatchSize
 	}
 	poll := params.PollInterval
 	if poll == 0 {

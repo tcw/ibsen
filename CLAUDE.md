@@ -556,17 +556,33 @@ logs" something you can run.
   `append` exiting zero means they are on durable media (§2).
 - **`--batchSize` is the throughput dial, and the flush flags are not.** One `Write` is one
   append and one flush, so the batch size is the number of fsyncs a stream costs: appending
-  126,574 lines is 128 fsyncs at the default 1000 and 14 at `--batchSize 10000`, while
-  `--flushEntries 10000` costs the same 128 as not passing it at all. That is the flush
-  policy doing what it says (§2) rather than a limitation: it groups writers that arrive
-  together, and a stream is one writer. Passing `--flushIntervalMs` as well makes it worse
-  than useless — the writer then waits out the interval on every batch with nobody able to
-  join it, which took 4 MB from 0.31s to 14.3s at `-f 10000 --flushIntervalMs 100`. Nothing
-  about durability moves with the batch size, which is why this is a dial and not a trade:
+  126,574 lines is 14 fsyncs at the default 10000 and 128 at `--batchSize 1000`, while
+  `--flushEntries 10000` costs the same as not passing it at all. That is the flush policy
+  doing what it says (§2) rather than a limitation: it groups writers that arrive together,
+  and a stream is one writer. Passing `--flushIntervalMs` as well makes it worse than
+  useless — the writer then waits out the interval on every batch with nobody able to join
+  it, which took 4 MB from 0.31s to 14.3s at `-f 10000 --flushIntervalMs 100`. Nothing about
+  durability moves with the batch size, which is why this is a dial and not a trade:
   `TestBatchSizeIsHowManyEntriesShareAWrite` pins the count of writes a stream becomes, and
   `TestBatchSizeDoesNotChangeTheStream` pins that the bytes are the same whatever it is set
-  to. The default stays at 1000, since a default that is right for a pipe of a few lines is
-  the one a person types by hand, and the flag is one word away.
+  to.
+- **`append` defaults to 10000 entries a batch, `cat` to 1000**
+  (`stdio.DefaultAppendBatchSize`, `stdio.DefaultCatBatchSize`). They are not the same trade:
+  a large write saves fsyncs, while a large read only holds more entries before the first of
+  them reaches the stream. 10000 is where the gain flattened when it was measured — 400 MB of
+  12.6M lines took 11–22s against 55–86s at 1000, three runs each, and 100000 bought nothing
+  more. Two things follow. A batch is also bounded at `stdio.MaxBatchBytes` (16 MiB), since
+  the size counts entries and entries have no size; one entry larger than that still gets a
+  write of its own, and both are pinned by tests. And a batch is written when it is full or
+  when the stream ends, never because time passed, so a trickle waits for it to fill: a
+  `tail -F` into an `append` wants `--batchSize 1`. Making a slow feed flush what it has
+  would mean the appender knowing whether more input is ready, which the line reader is a
+  `bufio.Scanner` and cannot say; it is the obvious next thing here if a live feed ever
+  matters more than a bulk load.
+- The two batch sizes are two variables, not one shared by both flags: cobra writes a flag's
+  default into its variable as it registers the flag, so `cmdCat`'s registration would set
+  the default `cmdAppend` had just declared. That is how the raised default first shipped
+  doing nothing, and the fsync count is what caught it.
 - Compression needed nothing either, beyond sharing the server's resolution: `buildCodecs` is
   now one function used by both roots, so a name means the same thing either way and a topic
   written with `--compression zstd` is read back by a plain `ibsen cat`.

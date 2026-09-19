@@ -294,7 +294,7 @@ writer, so `--batchSize` is what moves the throughput of an `append`. See [Durab
 | flag | commands | default | what it does |
 |---|---|---|---|
 | `--framing` | `append`, `cat` | `lines` | how the stream delimits entries: `lines`, or `length` for a little-endian uint64 byte count before each entry |
-| `--batchSize` | `append`, `cat` | `1000` | entries per write, or per read; for `append` this is one flush, so it is the throughput dial |
+| `--batchSize` | `append`, `cat` | `10000` / `1000` | entries per write, or per read; for `append` this is one flush, so it is the throughput dial |
 | `--offsets` | `cat` | `false` | prefix each entry with its offset and a tab; line framing only |
 | `-F, --follow` | `cat` | `false` | keep printing as entries are written, until Ctrl-C |
 | `--pollMs` | `cat` | `1000` | milliseconds between passes while following |
@@ -325,11 +325,19 @@ append returns.
 
 For `append` none of that applies, because a stream is a single writer and there is nobody
 else's batch for its entries to join: holding one back only makes it wait. **`--batchSize` is
-the dial there.** One write is one append and one flush, so appending 126,574 lines costs 128
-fsyncs at the default 1000 and 14 at `--batchSize 10000`, and `--flushEntries 10000` costs the
-same 128 as not passing it at all. Nothing about durability changes with the batch size: every
-`append` that exits zero has its entries on durable media, and a batch that fails takes with it
-only entries no one was told about.
+the dial there.** One write is one append and one flush, so appending 126,574 lines costs 14
+fsyncs at the default 10000 and 128 at `--batchSize 1000`, while `--flushEntries 10000` costs
+the same as not passing it at all. A 400 MB stream of 12.6M lines took 11–22s at the default
+against 55–86s at 1000, three runs each on an ordinary disk. Nothing about durability changes
+with the batch size: every `append` that exits zero has its entries on durable media, and a
+batch that fails takes with it only entries no one was told about.
+
+Two things bound a batch besides the flag. It is also written once it holds 16 MiB of entries,
+so the size can stay an entry count without a stream of large entries holding a lot of memory.
+And it is written when it is **full**, or when the stream ends — never because time passed — so
+a trickle waits for the batch to fill. A bulk load wants the default; `tail -F applog | ibsen
+append` wants `--batchSize 1`, which is the old behaviour of one fsync per entry and is what
+makes each line durable as it arrives.
 
 ### Compression
 
