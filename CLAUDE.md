@@ -16,7 +16,7 @@ go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
   | grep -v '^github.com/tcw/ibsen'
 ```
 
-(`errore` and `utils` are stdlib-only and reachable from the pure packages, which is why only `github.com/tcw/ibsen` paths are filtered; anything impure they reached would still show up, since `-deps` is transitive.)
+(`errore` is stdlib-only and reachable from the pure packages, which is why only `github.com/tcw/ibsen` paths are filtered; anything impure it reached would still show up, since `-deps` is transitive.)
 
 The script checks two more rules, because purity alone does not make the dependencies point
 inward:
@@ -33,7 +33,7 @@ Everything below hangs off that rule: the bugs are the core earning trust, the p
 
 A Go append-only log, Kafka-like: topics you write entries to and read back by offset, with a sparse index and block-based storage on the filesystem. Reached three ways over the one driving port — a gRPC server, a library an embedded program links, and a Unix filter over stdin and stdout (§11).
 
-- Entry wire format (`core/domain/fsUtils.go` `CreateByteEntry`): `crc32c(4) | size uint64 LE (8) | entry | offset uint64 LE (8)`; CRC covers size, entry, offset.
+- Entry wire format (`core/domain/fsUtils.go` `AppendEntry`): `crc32c(4) | size uint64 LE (8) | entry | offset uint64 LE (8)`; CRC covers size, entry, offset. An entry is encoded straight into the frame payload it will be stored in and parsed back as a window onto the decoded frame, so neither direction allocates per entry.
 - A log block is a sequence of **frames** (`core/domain/frame.go`), and a frame holds one
   write batch of those entries, put through a codec. Header, 36 bytes, little endian:
   `magic(4) | headerCrc(4) | codec(1) | version(1) | reserved(2) | firstOffset(8) | entryCount(4) | storedSize(4) | plainSize(4) | payloadCrc(4)`.
@@ -45,8 +45,8 @@ A Go append-only log, Kafka-like: topics you write entries to and read back by o
 ### Layout
 
 The tree names which side of the hexagon everything is on. Dependencies point inward only:
-an adapter may import `core/`, and `core/` may import nothing but `core/` (plus `errore` and
-`utils`, which are stdlib-only).
+an adapter may import `core/`, and `core/` may import nothing but `core/` (plus `errore`,
+which is stdlib-only).
 
 ```
 core/                       the hexagon
@@ -76,10 +76,10 @@ wiring/                     composition root: builds adapters, owns lifecycle
   embedded/                 the other one: the log as a library, stdlib-only
     example/                the smallest embedded program, built to be weighed
 main.go                     entry point
-errore/ utils/              stdlib-only, shared by both sides
+errore/                     stdlib-only, shared by both sides
 ```
 
-- Pure today: all of `core/`, all of `wiring/embedded/` including its example program, the `stdio` driving adapter, plus the `filestore`, `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
+- Pure today: all of `core/`, all of `wiring/embedded/` including its example program, the `stdio` driving adapter, plus the `filestore`, `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore`. The core reaches nothing outside the standard library, and nothing outside `core/`.
 - Not pure, by design: everything under `adapter/`, and `wiring/` itself. `adapter/driven/locking` imports `uuid` and `zerolog`; `adapter/driven/logging/zerologger` imports `zerolog`; `adapter/driven/compression/zstd` imports `klauspost/compress`; the driving adapters import gRPC and cobra.
 - **afero is gone.** It was the storage port before `BlockStore` existed, and became a second filesystem abstraction underneath our own. Removing it took five steps: in-memory mode to `memstore`, `filestore` on the standard library, the lock adapter onto `os`, the server switched over, and then the deletion. It cost 1.63 MB of binary — the same program was 3.40 MB on `aferostore` and is 1.68 MB on `filestore` — because `github.com/spf13/afero` imports `net/http` and `golang.org/x/text` to carry an HTTP filesystem and unicode normalisation that a log server reading a file has no use for. Its in-memory filesystem also cost correctness twice, both times by behaving unlike a real one: the `O_RDWR|O_EXCL` renewal bug in §1, and `MemMapFs.OpenFile` checking and creating under separate locks, so `O_CREATE|O_EXCL` is not atomic there. Every test that used it now runs against a real directory.
 
@@ -113,6 +113,18 @@ errore/ utils/              stdlib-only, shared by both sides
   read rejecting a corrupt frame, a corrupt entry inside a valid frame, and an unwired codec.
   `core/topic/frame_test.go` covers the frame bounds, a write reaching the store as one
   append however many frames it makes, and one block holding frames of two codecs.
+- **Cost per entry.** An entry is encoded straight into the frame payload it will be stored
+  in (`domain.AppendEntry`) and parsed back as a window onto the decoded frame
+  (`domain.ParseEntry`), so a write allocates the payload it is building, a read allocates the
+  frame it decoded, and neither allocates per entry. `core/domain/fsUtils_test.go` pins both
+  counts at zero and states the ownership rule the read path rests on: the entry aliases the
+  buffer it was parsed from, which nothing reuses. The pin is skipped under `-race`, where the
+  detector allocates on its own account. Measured on 400 MB / 12.64M lines of ~32 bytes:
+  appending with syncing out of the picture (tmpfs) 8.75s -> 6.16s, `ibsen cat` 4.42s ->
+  2.70s, and afterwards both profiles are crc32 and syscalls rather than `mallocgc`. What is
+  left is per *frame*, not per entry: `EncodeFrame` copies the payload through the codec and
+  then into the frame, so a write's bytes are copied three times before the store sees them.
+
 - Indexing coalesces instead of dropping work: `Topic.UpdateIndex` leaves a mark when it finds a run under way, and the run takes that mark before it stops, so the tail of a log is always indexed by somebody. There is no background sweep and no ticker. `core/topic/indexing_test.go` gates the store to hold a run still, proves a request arriving during it is picked up rather than dropped, covers sixteen callers coalescing into one run, and covers a failed run leaving the work for the next call. `core/manager/topicsManager_test.go` pins that building a manager starts no goroutine and that the index is complete once writes stop.
 - Embedded: `wiring/embedded` is the second composition root, and `wiring/embedded/embedded_test.go` covers a store being required, write/list/read with nothing else wired, the log satisfying `driver.LogManager`, the block-size default, every other param reaching the core untouched, and `Close` refusing writes while loaded topics stay readable.
 - Unix filter: `adapter/driver/stdio` drives the log over byte streams and `wiring.OpenLocal`
@@ -143,7 +155,7 @@ errore/ utils/              stdlib-only, shared by both sides
 
 All known bugs below are fixed (2026-09-15), each with a regression test. Remaining known gaps are listed at the end.
 
-- **Entry decoding** is one function, `domain.ReadEntry`: it verifies the CRC, treats a size larger than `MaxEntrySize` (or than the remaining file) as corruption, and distinguishes `io.EOF` (clean boundary), `io.ErrUnexpectedEOF` (partial entry) and `domain.ErrCorruptEntry`. Index building, offset scans, reads and recovery all use it. This fixed the uint64/uint32 size mismatch, the CRC read from the wrong buffer, and unverified reads.
+- **Entry decoding** is one function, `domain.ParseEntry`: it verifies the CRC, treats a size larger than `MaxEntrySize` (or than what is left of the frame) as corruption, and distinguishes `io.EOF` (clean boundary), `io.ErrUnexpectedEOF` (partial entry) and `domain.ErrCorruptEntry`. Since framing it is the read path alone: recovery, indexing and offset scans work on frame headers and decode no entries at all. This fixed the uint64/uint32 size mismatch, the CRC read from the wrong buffer, and unverified reads.
 - **Recovery**: `logfmt.RecoverBlock` replaces `BlockInfo`. It scans the head block from the start, truncates from the first partial or corrupt entry, and errors (without truncating) on a valid entry with an unexpected offset. Complete entries of a batch whose write returned an error can survive recovery, as with any crash; there are no batch markers.
 - **Index after recovery**: pairs past the recovered end and torn partial pairs are dropped from the head index; indexing resumes right after the last kept entry. `IndexPosition.ByteOffset` always means "end of the scanned region", and the builder indexes every entry with `offset % 10 == 0`, including a block's first.
 - **Writes**: open failures return errors; a failed write truncates the block back to `HeadBlockSize`; if that also fails the topic refuses writes until `LoadOrCreate`. Failed index writes are rolled back; index file handles are closed.
@@ -194,6 +206,14 @@ them has returned, so a reader never sees an entry a power cut could take back.
   durability is unknown, so nothing may read them as committed; a later flush covers them and
   then they appear. A failure does not retry inside the same driver, which would spin.
   `Topic.Close` makes one last attempt at whatever a failed flush left behind.
+- **An acknowledged write costs one fsync, not two.** `filestore.Sync` syncs the block, and
+  the directory holding it only when the file is new: a directory sync is what makes a
+  block's *name* durable, and appending to a block already on the media adds no name. Halving
+  the count bought 70.6s -> 66.1s on ext4 over a virtio disk, where a directory with nothing
+  dirty in it is a cheap fsync; on media where it is not, this is the whole of the second
+  sync. Pinned by `adapter/driven/blockstore/filestore/dirsync_test.go`, which counts syncs
+  through the adapter's own seam.
+
 - **Index blocks are deliberately not flushed.** The index is derivable from the log, and
   recovery already drops torn pairs and re-indexes, so paying an fsync for it would buy
   nothing.

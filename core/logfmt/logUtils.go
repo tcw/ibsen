@@ -4,7 +4,6 @@ package logfmt
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
 	"io"
 	"sync"
@@ -246,12 +245,15 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 		if err != nil {
 			return ReadResult{}, errore.Wrap(err)
 		}
-		frame := bytes.NewReader(entries)
+		// the entries handed on alias this frame's buffer, which nothing reuses: one
+		// allocation per frame instead of one per entry, and no copy of bytes already read
+		inFrame := 0
 		for i := uint32(0); i < header.EntryCount; i++ {
-			entry, _, err := domain.ReadEntry(frame, domain.MaxEntrySize)
+			entry, n, err := domain.ParseEntry(entries[inFrame:], domain.MaxEntrySize)
 			if err != nil {
 				return ReadResult{}, errore.Wrap(err)
 			}
+			inFrame = inFrame + n
 			offset := domain.Offset(entry.Offset)
 			if expected := header.FirstOffset + domain.Offset(i); offset != expected {
 				return ReadResult{}, errore.NewF("frame at offset %d holds offset %d where %d was expected",

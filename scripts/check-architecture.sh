@@ -20,7 +20,7 @@ edges() {
 
 # 1. The core, the embedded composition root, and the adapters that claim to be stdlib-only,
 #    may reach nothing outside the standard library. -deps is transitive, so anything errore
-#    or utils reached shows up too.
+#    reached shows up too.
 #
 #    wiring/embedded is in this list rather than relying on a build tag: a tag has to be
 #    trusted, a dependency graph can be read. It is what makes "an embedded build links no
