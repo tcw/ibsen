@@ -4,46 +4,35 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/faultfs"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/core/domain"
 )
 
 // Crash recovery of the core, with the fault injected below the adapter: the process dies
 // with a write half on the media, and a restarted server has to make sense of what is left.
 
-// newCrashStore returns a store whose media can be torn, on both an in-memory filesystem
-// and a real directory.
-func newCrashStore(t *testing.T, fsName string) (*aferostore.Store, *faultfs.CrashFs) {
+// newCrashStore returns a store on a real directory whose media can be torn.
+func newCrashStore(t *testing.T) (*filestore.Store, *faultfs.CrashFiles) {
 	t.Helper()
-	if fsName == "os" {
-		fs := faultfs.NewCrash(afero.NewOsFs())
-		return aferostore.New(&afero.Afero{Fs: fs}, t.TempDir()), fs
-	}
-	fs := faultfs.NewCrash(afero.NewMemMapFs())
-	afs := &afero.Afero{Fs: fs}
-	if err := afs.MkdirAll("tmp", 0744); err != nil {
-		t.Fatal(err)
-	}
-	return aferostore.New(afs, "tmp"), fs
+	fs := faultfs.NewCrashFiles(filestore.OS{})
+	return filestore.New(fs, t.TempDir()), fs
 }
 
-func forEachCrashMedia(t *testing.T, run func(t *testing.T, store *aferostore.Store, fs *faultfs.CrashFs)) {
+// forEachCrashMedia used to run each crash twice, the second time against an emulated
+// filesystem. A torn write is only worth testing where it tears the way real media tears,
+// and the emulation disagreed with real media twice over open flags alone.
+func forEachCrashMedia(t *testing.T, run func(t *testing.T, store *filestore.Store, fs *faultfs.CrashFiles)) {
 	t.Helper()
-	for _, fsName := range []string{"mem", "os"} {
-		t.Run(fsName, func(t *testing.T) {
-			store, fs := newCrashStore(t, fsName)
-			run(t, store, fs)
-		})
-	}
+	store, fs := newCrashStore(t)
+	run(t, store, fs)
 }
 
 // TestTopic_CrashDuringWriteKeepsAcknowledgedEntries is the promise the log makes: a write
 // that was acknowledged is still there after the crash, and the torn entry of the write
 // that was not acknowledged is gone.
 func TestTopic_CrashDuringWriteKeepsAcknowledgedEntries(t *testing.T) {
-	forEachCrashMedia(t, func(t *testing.T, store *aferostore.Store, fs *faultfs.CrashFs) {
+	forEachCrashMedia(t, func(t *testing.T, store *filestore.Store, fs *faultfs.CrashFiles) {
 		topic := newTestTopic(t, store, 2000)
 		acknowledged := writeRandomBatches(t, topic, rand.New(rand.NewSource(11)), 200)
 		topic.indexWg.Wait()
@@ -83,7 +72,7 @@ func TestTopic_CrashDuringWriteKeepsAcknowledgedEntries(t *testing.T) {
 // TestTopic_CrashDuringIndexWriteDropsTheTornPair tears an index block in the middle of an
 // (offset, byteOffset) pair, which is the one place where half a write is not half an entry.
 func TestTopic_CrashDuringIndexWriteDropsTheTornPair(t *testing.T) {
-	forEachCrashMedia(t, func(t *testing.T, store *aferostore.Store, fs *faultfs.CrashFs) {
+	forEachCrashMedia(t, func(t *testing.T, store *filestore.Store, fs *faultfs.CrashFiles) {
 		topic := newTestTopic(t, store, 1<<20)
 		n := writeRandomBatches(t, topic, rand.New(rand.NewSource(13)), 200)
 		topic.indexWg.Wait()

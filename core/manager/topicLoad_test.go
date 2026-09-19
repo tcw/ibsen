@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/port/driven"
 )
@@ -39,8 +39,8 @@ func (g *gatedLoadStore) List(topic domain.TopicName, kind driven.BlockKind) ([]
 }
 
 func TestManager_concurrentFirstRequestsLoadTopicOnce(t *testing.T) {
-	afs := newTestAfs(t)
-	store := &gatedLoadStore{BlockStore: aferostore.New(afs, "data"), topic: "topic", second: make(chan struct{})}
+	afs := newTestRoot(t)
+	store := &gatedLoadStore{BlockStore: filestore.NewOS(afs.path), topic: "topic", second: make(chan struct{})}
 	block := logBlockBytes(t, "topic", 0, 30)
 	if _, err := store.Append(driven.LogRef("topic", 0), block); err != nil {
 		t.Fatal(err)
@@ -77,9 +77,9 @@ func TestManager_concurrentFirstRequestsLoadTopicOnce(t *testing.T) {
 }
 
 func TestManager_waitersOfFailedLoadGetErrorAndLaterRequestsRetry(t *testing.T) {
-	afs := newTestAfs(t)
+	afs := newTestRoot(t)
 	// a regular file where the topic directory should be cannot be loaded as a topic
-	if err := afs.WriteFile("data/topic", []byte("not a topic"), 0600); err != nil {
+	if err := afs.WriteFile("topic", []byte("not a topic"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	m := newTestManager(t, afs)
@@ -96,7 +96,7 @@ func TestManager_waitersOfFailedLoadGetErrorAndLaterRequestsRetry(t *testing.T) 
 	}
 	wg.Wait()
 
-	if err := afs.Remove("data/topic"); err != nil {
+	if err := afs.Remove("topic"); err != nil {
 		t.Fatal(err)
 	}
 	writeTopic(t, m, "topic", 0, 3)

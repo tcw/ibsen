@@ -1,6 +1,8 @@
 package topic
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -12,11 +14,11 @@ import (
 
 func TestTopic_Write(t *testing.T) {
 	store, _ := newTestStore(t)
-	topic := NewLogTopic(Params{
+	topic := stoppedByTest(t, NewLogTopic(Params{
 		Store:        store,
 		TopicName:    "topic1",
 		MaxBlockSize: 1024 * 1024,
-	})
+	}))
 	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
 	blocks, err := store.List("topic1", driven.Log)
@@ -30,11 +32,11 @@ func TestTopic_Write(t *testing.T) {
 
 func TestTopic_Load(t *testing.T) {
 	store, _ := newTestStore(t)
-	topic := NewLogTopic(Params{
+	topic := stoppedByTest(t, NewLogTopic(Params{
 		Store:        store,
 		TopicName:    "topic1",
 		MaxBlockSize: 2000,
-	})
+	}))
 	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
 	err = topic.LoadOrCreate()
@@ -45,11 +47,11 @@ func TestTopic_Load(t *testing.T) {
 
 func TestTopic_Read_one_batch(t *testing.T) {
 	store, _ := newTestStore(t)
-	topic := NewLogTopic(Params{
+	topic := stoppedByTest(t, NewLogTopic(Params{
 		Store:        store,
 		TopicName:    "topic1",
 		MaxBlockSize: 2000,
-	})
+	}))
 	err := topic.Write(createInputEntries(10))
 	assert.Nil(t, err)
 	err = topic.LoadOrCreate()
@@ -65,11 +67,11 @@ func TestTopic_Read_one_batch(t *testing.T) {
 
 func TestTopic_Read_multiple_batches(t *testing.T) {
 	store, _ := newTestStore(t)
-	topic := NewLogTopic(Params{
+	topic := stoppedByTest(t, NewLogTopic(Params{
 		Store:        store,
 		TopicName:    "topic1",
 		MaxBlockSize: 2000,
-	})
+	}))
 	err := topic.Write(createInputEntries(1000))
 	assert.Nil(t, err)
 	err = topic.Write(createInputEntries(1000))
@@ -89,11 +91,11 @@ func TestTopic_Read_multiple_batches(t *testing.T) {
 
 func TestTopic_UpdateIndex_sigle_block(t *testing.T) {
 	store, _ := newTestStore(t)
-	topic := NewLogTopic(Params{
+	topic := stoppedByTest(t, NewLogTopic(Params{
 		Store:        store,
 		TopicName:    "topic1",
 		MaxBlockSize: 20000,
-	})
+	}))
 	writeOneByOne(t, topic, 0, 100)
 	err := topic.LoadOrCreate()
 	assert.Nil(t, err)
@@ -112,11 +114,11 @@ func TestTopic_UpdateIndex_sigle_block(t *testing.T) {
 
 func TestTopic_UpdateIndex_multiple_blocks(t *testing.T) {
 	store, _ := newTestStore(t)
-	topic := NewLogTopic(Params{
+	topic := stoppedByTest(t, NewLogTopic(Params{
 		Store:        store,
 		TopicName:    "topic1",
 		MaxBlockSize: 2000,
-	})
+	}))
 	writeOneByOne(t, topic, 0, 1000)
 	err := topic.LoadOrCreate()
 	assert.Nil(t, err)
@@ -156,14 +158,14 @@ func createInputEntries(numberOfEntries int) *[][]byte {
 }
 
 func TestTopic_rejectsInvalidTopicName(t *testing.T) {
-	store, afs := newTestStore(t)
-	topic := NewLogTopic(Params{Store: store, TopicName: "../escaped", MaxBlockSize: 1000})
+	store, root := newTestStore(t)
+	topic := stoppedByTest(t, NewLogTopic(Params{Store: store, TopicName: "../escaped", MaxBlockSize: 1000}))
 	assert.ErrorIs(t, topic.LoadOrCreate(), domain.ErrInvalidTopicName)
 	assert.ErrorIs(t, topic.Write(createInputEntries(3)), domain.ErrInvalidTopicName)
 	assert.ErrorIs(t, topic.Read(domain.ReadLogParams{BatchSize: 10}), domain.ErrInvalidTopicName)
-	exists, err := afs.Exists("escaped")
-	assert.Nil(t, err)
-	assert.False(t, exists)
+	// "../escaped" would land beside the data directory, not in it
+	_, err := os.Stat(filepath.Join(root, "..", "escaped"))
+	assert.True(t, os.IsNotExist(err), "a topic escaped its directory")
 	topics, err := store.Topics()
 	assert.Nil(t, err)
 	assert.Empty(t, topics)

@@ -8,8 +8,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/adapter/driver/grpcapi"
 	"github.com/tcw/ibsen/core/manager"
 )
@@ -28,18 +27,14 @@ func init() {
 // own server, so a test that leaves streams open cannot affect the next one.
 func startTestServer(t *testing.T) {
 	t.Helper()
-	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
-	rootPath := "/tmp/data"
-	if err := afs.MkdirAll(rootPath, 0700); err != nil {
-		t.Fatal(err)
-	}
+	rootPath := t.TempDir()
 	// how long a tailing read waits for new entries and how often it looks: a gRPC concern,
 	// so it is named here rather than borrowed from the manager's parameters
 	const readTTL = 5 * time.Second
 	const checkForNewEvery = 100 * time.Millisecond
 	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
 		ReadOnly:     false,
-		Store:        aferostore.New(afs, rootPath),
+		Store:        filestore.NewOS(rootPath),
 		MaxBlockSize: 10,
 	})
 	if err != nil {

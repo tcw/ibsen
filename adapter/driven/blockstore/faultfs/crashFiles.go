@@ -1,6 +1,11 @@
+// Package faultfs injects storage faults into a filesystem, so a crash can be tested where it
+// actually happens: below the adapter, in the media. It is test support that ships in the tree
+// because both the adapter's own tests and the core's crash recovery tests need the same
+// faults.
 package faultfs
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -8,9 +13,12 @@ import (
 	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 )
 
-// CrashFiles is CrashFs for the filestore adapter's own filesystem seam. Same faults, same
-// API; it wraps a filestore.FS rather than an afero one, and it does not need the filesystem
-// to tell it a file's name because it knew the name when it opened it.
+// ErrCrashed is what every operation gives once the process is considered gone.
+var ErrCrashed = errors.New("the process crashed")
+
+// CrashFiles lets a single write land only partly on the media and then fails everything, as
+// a filesystem does for a process that is no longer running. Restart brings the media back
+// with exactly the bytes that survived, which is what a restarted server finds.
 type CrashFiles struct {
 	base filestore.FS
 

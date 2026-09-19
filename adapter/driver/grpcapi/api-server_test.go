@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/core/manager"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -40,17 +39,16 @@ func testPayload(offset int) string {
 
 func newTestServer(t *testing.T, entries int) server {
 	t.Helper()
-	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
-	if err := afs.MkdirAll("data", 0744); err != nil {
-		t.Fatal(err)
-	}
 	logManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
-		Store:        aferostore.New(afs, "data"),
+		Store:        filestore.NewOS(t.TempDir()),
 		MaxBlockSize: 2000,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// stop the background indexing before the test's directory is removed: on a real
+	// filesystem an indexer still writing races the cleanup
+	t.Cleanup(logManager.Close)
 	s := server{manager: &logManager, TTL: time.Minute, CheckForNewEvery: time.Millisecond}
 	writeTestEntries(t, s, 0, entries)
 	return s

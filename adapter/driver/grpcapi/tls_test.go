@@ -15,8 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/core/manager"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -89,14 +88,11 @@ func TestSecureServer_loadsCertificateFromRelativePaths(t *testing.T) {
 		t.Fatalf("paths %s and %s are not relative", sec.CertKeyFile, sec.PrivteKeyFile)
 	}
 
-	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
-	if err := afs.MkdirAll("data", 0744); err != nil {
-		t.Fatal(err)
-	}
-	logManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{Store: aferostore.New(afs, "data"), MaxBlockSize: 2000})
+	logManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{Store: filestore.NewOS(t.TempDir()), MaxBlockSize: 2000})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(logManager.Close)
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

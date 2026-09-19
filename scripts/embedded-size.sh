@@ -32,7 +32,7 @@ target="${GOOS:-$(go env GOOS)}/${GOARCH:-$(go env GOARCH)}"
 # awk rather than bc, which is not on every CI image
 awk -v target="$target" -v server="$server" -v embedded="$embedded" 'BEGIN {
 	printf "target        %s\n", target
-	printf "server        %8.2f MB  (gRPC, cobra, OTEL, zerolog, afero, zstd)\n", server / 1048576
+	printf "server        %8.2f MB  (gRPC, cobra, OTEL, zerolog, zstd)\n", server / 1048576
 	printf "embedded      %8.2f MB  (core + memstore, standard library only)\n", embedded / 1048576
 	printf "embedded is   %8.2fx smaller\n", server / embedded
 }'

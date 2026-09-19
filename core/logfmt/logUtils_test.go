@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/port/driven"
 )
@@ -20,7 +20,7 @@ import (
 // the size the store reports. The afero adapter stands in for any BlockStore here.
 func blockWith(t *testing.T, block domain.LogBlock, content []byte) (driven.BlockStore, driven.BlockRef, int64) {
 	t.Helper()
-	store, _ := aferostore.NewMem("tmp")
+	store := filestore.NewOS(t.TempDir())
 	ref := driven.LogRef("topic1", block)
 	if _, err := store.Append(ref, content); err != nil {
 		t.Fatal(err)

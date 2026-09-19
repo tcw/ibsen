@@ -23,16 +23,11 @@ type coreBackend struct {
 	newStore func(t *testing.T) driven.BlockStore
 }
 
-// coreBackends are the stores the core is checked against: the two filesystem adapters, the
-// in-memory one, which offers nothing beyond the port itself, and the flash one, whose pages,
+// coreBackends are the stores the core is checked against: the filesystem adapter it ships
+// with, the in-memory one, which offers nothing beyond the port itself, and the flash one, whose pages,
 // fixed capacity and write-once bytes are as far from a file as the port goes.
 func coreBackends() []coreBackend {
 	return []coreBackend{
-		{name: "afero", newStore: func(t *testing.T) driven.BlockStore {
-			store, _ := newTestStore(t)
-			return store
-		}},
-		// on a real directory, which is the only filesystem this one has
 		{name: "file", newStore: func(t *testing.T) driven.BlockStore {
 			return filestore.NewOS(t.TempDir())
 		}},

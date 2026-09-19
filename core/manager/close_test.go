@@ -4,11 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/spf13/afero"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/index"
 )
@@ -16,38 +17,37 @@ import (
 // gatedWriteFs holds every write to a file with the given suffix until release is closed,
 // and reports the first held write on entered.
 type gatedWriteFs struct {
-	afero.Fs
+	filestore.FS
 	suffix  string
 	entered chan string
 	release chan struct{}
 }
 
-func newGatedWriteAfs(t *testing.T, suffix string) (*afero.Afero, *gatedWriteFs) {
+func newGatedWriteFs(t *testing.T, suffix string) (string, *gatedWriteFs) {
 	t.Helper()
-	fs := &gatedWriteFs{Fs: afero.NewMemMapFs(), suffix: suffix, entered: make(chan string, 1), release: make(chan struct{})}
-	afs := &afero.Afero{Fs: fs}
-	if err := afs.MkdirAll("data", 0744); err != nil {
-		t.Fatal(err)
+	return t.TempDir(), &gatedWriteFs{
+		FS: filestore.OS{}, suffix: suffix,
+		entered: make(chan string, 1), release: make(chan struct{}),
 	}
-	return afs, fs
 }
 
-func (f *gatedWriteFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
-	file, err := f.Fs.OpenFile(name, flag, perm)
+func (f *gatedWriteFs) OpenFile(name string, flag int, perm os.FileMode) (filestore.File, error) {
+	file, err := f.FS.OpenFile(name, flag, perm)
 	if err != nil || !strings.HasSuffix(name, f.suffix) {
 		return file, err
 	}
-	return &gatedWriteFile{File: file, fs: f}, nil
+	return &gatedWriteFile{File: file, name: name, fs: f}, nil
 }
 
 type gatedWriteFile struct {
-	afero.File
-	fs *gatedWriteFs
+	filestore.File
+	name string
+	fs   *gatedWriteFs
 }
 
 func (g *gatedWriteFile) Write(p []byte) (int, error) {
 	select {
-	case g.fs.entered <- g.Name():
+	case g.fs.entered <- g.name:
 	default:
 	}
 	<-g.fs.release
@@ -82,8 +82,8 @@ func waitForClose(t *testing.T, closed <-chan struct{}) {
 }
 
 func TestManager_closeWaitsForInFlightWrite(t *testing.T) {
-	afs, fs := newGatedWriteAfs(t, ".log")
-	m := newTestManager(t, afs)
+	root, fs := newGatedWriteFs(t, ".log")
+	m := newTestManagerWithStore(t, filestore.New(fs, root))
 	written := make(chan error, 1)
 	go func() {
 		entries := make([][]byte, 30)
@@ -115,8 +115,8 @@ func TestManager_closeWaitsForInFlightWrite(t *testing.T) {
 }
 
 func TestManager_closeWaitsForBackgroundIndexing(t *testing.T) {
-	afs, fs := newGatedWriteAfs(t, ".idx")
-	m := newTestManager(t, afs)
+	root, fs := newGatedWriteFs(t, ".idx")
+	m := newTestManagerWithStore(t, filestore.New(fs, root))
 	writeTopic(t, m, "topic", 0, 30)
 	<-fs.entered
 
@@ -127,7 +127,7 @@ func TestManager_closeWaitsForBackgroundIndexing(t *testing.T) {
 
 	// the thirty entries went in one write, so they are one frame, and a pair points at a
 	// frame start: one checksummed (offset, byteOffset) pair is the whole index for them
-	idx, err := afs.ReadFile("data/topic/00000000000000000000.idx")
+	idx, err := os.ReadFile(filepath.Join(root, "topic", "00000000000000000000.idx"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestManager_closeWaitsForBackgroundIndexing(t *testing.T) {
 }
 
 func TestManager_closeTwice(t *testing.T) {
-	m := newTestManager(t, newTestAfs(t))
+	m := newTestManager(t, newTestRoot(t))
 	writeTopic(t, m, "topic", 0, 3)
 	waitForClose(t, closeAsync(m))
 	waitForClose(t, closeAsync(m))
