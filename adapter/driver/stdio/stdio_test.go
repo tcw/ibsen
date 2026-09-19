@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -274,6 +275,82 @@ func TestAnEntryLargerThanTheByteBoundIsStillWritten(t *testing.T) {
 	}
 	if !bytes.Equal(out.Bytes(), stream.Bytes()) {
 		t.Fatalf("the stream came back %d bytes long, want %d", out.Len(), stream.Len())
+	}
+}
+
+// TestASlowStreamIsWrittenWithoutWaitingForABatch is what the line reader is built on a
+// bufio.Reader for. A feed that trickles must not sit in memory until a batch fills: the
+// appender writes what it has whenever nothing more has arrived, so `tail -F applog | ibsen
+// append` makes each line durable as it comes, at the batch size a bulk load wants.
+func TestASlowStreamIsWrittenWithoutWaitingForABatch(t *testing.T) {
+	log := openLog(t)
+	reader, writer := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		_, err := stdio.Append(log, "slow", reader, stdio.AppendParams{BatchSize: 1000})
+		done <- err
+	}()
+
+	for _, line := range []string{"first", "second"} {
+		if _, err := writer.Write([]byte(line + "\n")); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, func() bool {
+			return strings.Contains(catString(t, log, "slow", stdio.CatParams{}), line)
+		}, fmt.Sprintf("%q to be readable while the stream is still open", line))
+	}
+
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if out := catString(t, log, "slow", stdio.CatParams{}); out != "first\nsecond\n" {
+		t.Fatalf("cat gave %q", out)
+	}
+}
+
+// A line longer than the reader's buffer is still one entry: it is collected across the
+// reads it takes rather than cut at a buffer boundary.
+func TestALineLongerThanTheReadBufferIsOneEntry(t *testing.T) {
+	log := openLog(t)
+	long := strings.Repeat("x", 3<<20)
+	stream := "short\n" + long + "\nshort again\n"
+
+	written := appendString(t, log, "long", stream, stdio.AppendParams{})
+
+	if written != 3 {
+		t.Fatalf("wrote %d entries, want 3", written)
+	}
+	if out := catString(t, log, "long", stdio.CatParams{}); out != stream {
+		t.Fatalf("the stream came back %d bytes long, want %d", len(out), len(stream))
+	}
+}
+
+// A stream that does not end with a newline ends with an entry all the same.
+func TestAStreamEndingWithoutANewline(t *testing.T) {
+	log := openLog(t)
+
+	written := appendString(t, log, "unterminated", "first\nlast without a newline", stdio.AppendParams{})
+
+	if written != 2 {
+		t.Fatalf("wrote %d entries, want 2", written)
+	}
+	if out := catString(t, log, "unterminated", stdio.CatParams{}); out != "first\nlast without a newline\n" {
+		t.Fatalf("cat gave %q", out)
+	}
+}
+
+// A line with no end in sight is refused rather than read into memory whole.
+func TestALineLongerThanMaxLineSizeIsRefused(t *testing.T) {
+	log := openLog(t)
+	endless := strings.Repeat("y", stdio.MaxLineSize+1024)
+
+	_, err := stdio.Append(log, "endless", strings.NewReader(endless), stdio.AppendParams{})
+
+	if !errors.Is(err, stdio.ErrLineTooLong) {
+		t.Fatalf("err=%v, want ErrLineTooLong", err)
 	}
 }
 
