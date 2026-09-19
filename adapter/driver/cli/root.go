@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	"github.com/tcw/ibsen/adapter/driver/stdio"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/topic"
 	"github.com/tcw/ibsen/errore"
@@ -57,16 +58,7 @@ var (
 		TraverseChildren: true,
 		Args:             cobra.MinimumNArgs(0),
 		Run: func(cmd *cobra.Command, args []string) {
-			if trace {
-				zerolog.SetGlobalLevel(zerolog.TraceLevel)
-				log.Info().Msg("logger lever at trace")
-			} else if debug {
-				zerolog.SetGlobalLevel(zerolog.DebugLevel)
-				log.Info().Msg("logger lever at debug")
-			} else {
-				zerolog.SetGlobalLevel(zerolog.InfoLevel)
-				log.Info().Msg("logger lever at info")
-			}
+			setLogLevel(zerolog.InfoLevel)
 			inMemory := false
 			absolutePath := "/tmp/data"
 			if rootDirectory == "" {
@@ -384,6 +376,25 @@ func AbsOrEmpty(path string) string {
 	return abs
 }
 
+// setLogLevel puts the global logger at the level the flags ask for, falling back to the one
+// the command chooses. Logs go to stderr, so a command writing entries to stdout stays
+// pipeable whatever the level is.
+//
+// The server runs at info, because a running server with nothing to say has said something.
+// A filter runs at warn: it is one command in a pipeline, and a line of its own on stderr for
+// every successful run is noise the pipeline did not ask for.
+func setLogLevel(quiet zerolog.Level) {
+	if trace {
+		zerolog.SetGlobalLevel(zerolog.TraceLevel)
+		log.Info().Msg("logger lever at trace")
+	} else if debug {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+		log.Info().Msg("logger lever at debug")
+	} else {
+		zerolog.SetGlobalLevel(quiet)
+	}
+}
+
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
@@ -435,7 +446,28 @@ func init() {
 
 	//writeEntryByteSize int, writeEntriesInEachBatch int, writeBatches int, readBatchSize int
 
-	rootCmd.AddCommand(cmdServer, cmdClient, cmdTools)
+	cmdAppend.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to append to")
+	cmdAppend.Flags().StringVarP(&framing, "framing", "", "lines", "How stdin delimits entries: lines or length (a little-endian uint64 byte count before each entry)")
+	cmdAppend.Flags().IntVarP(&batchSize, "batchSize", "", stdio.DefaultBatchSize, "Entries written in one call")
+	cmdAppend.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
+	cmdAppend.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush; 1 makes every write durable before it is acknowledged")
+	cmdAppend.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits")
+	cmdAppend.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
+	cmdAppend.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
+	cmdAppend.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
+	cmdAppend.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
+	cmdAppend.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
+
+	cmdCat.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to read")
+	cmdCat.Flags().StringVarP(&framing, "framing", "", "lines", "How stdout delimits entries: lines or length (a little-endian uint64 byte count before each entry)")
+	cmdCat.Flags().BoolVarP(&offsets, "offsets", "", false, "Prefix each entry with its offset and a tab; line framing only")
+	cmdCat.Flags().BoolVarP(&follow, "follow", "F", false, "Keep reading as entries are written instead of stopping at the end of the log")
+	cmdCat.Flags().IntVarP(&batchSize, "batchSize", "", stdio.DefaultBatchSize, "Entries asked for in one call")
+	cmdCat.Flags().IntVarP(&pollMs, "pollMs", "", 1000, "Milliseconds between passes while following; each pass reopens the log, so a large head block wants a larger value")
+
+	cmdTopics.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to list")
+
+	rootCmd.AddCommand(cmdServer, cmdClient, cmdTools, cmdAppend, cmdCat, cmdTopics)
 	cmdTools.AddCommand(cmdToolsReadIndexLogFile, cmdToolsReadLogFile)
 	cmdClient.AddCommand(cmdClientList, cmdClientWrite, cmdClientRead, cmdClientBench)
 }

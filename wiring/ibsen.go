@@ -144,39 +144,19 @@ func (ibs *IbsenServer) defaults() {
 	}
 }
 
-// resolveCodecs builds the compression adapters. Building them here rather than in the CLI is
-// what keeps a driving adapter from reaching a driven one: the CLI passes a name, and the
-// composition root decides what that name is made of.
-//
-// A read registry holds every codec this binary links, whatever the server writes with, so a
-// block stays readable after compression is turned off or changed. The codec the server does
-// write with is always in it too, including one a caller injected.
+// resolveCodecs builds the compression adapters this server writes and reads frames with.
+// buildCodecs holds the reasoning and is shared with OpenLocal, so a data directory opened
+// without a server resolves a compression name exactly as the server does.
 func (ibs *IbsenServer) resolveCodecs() error {
-	zstd, err := zstdcodec.New(zstdcodec.Level(ibs.CompressionLevel))
+	codec, codecs, zstd, err := buildCodecs(ibs.Compression, ibs.CompressionLevel, ibs.Codec, ibs.Codecs)
 	if err != nil {
-		return errore.Wrap(err)
+		return err
 	}
 	ibs.mu.Lock()
 	ibs.zstdCodec = zstd
 	ibs.mu.Unlock()
-
-	if ibs.Codec == nil {
-		switch ibs.Compression {
-		case "", "none":
-			ibs.Codec = driven.NoCodec{}
-		case "zstd":
-			ibs.Codec = zstd
-		default:
-			return errore.WrapWithContextF(ErrUnknownCompression,
-				"compression %q, want one of none, zstd", ibs.Compression)
-		}
-	}
-	if ibs.Codecs == nil {
-		ibs.Codecs = driven.NewCodecs(zstd)
-	}
-	if _, taken := ibs.Codecs[ibs.Codec.ID()]; !taken {
-		ibs.Codecs[ibs.Codec.ID()] = ibs.Codec
-	}
+	ibs.Codec = codec
+	ibs.Codecs = codecs
 	log.Info().Msgf("writing frames with the %s codec", ibs.Codec.ID())
 	return nil
 }

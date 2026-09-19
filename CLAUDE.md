@@ -6,12 +6,12 @@
 
 Enforced by `scripts/check-architecture.sh`, which CI runs on every push. Its first rule is
 this command; it must print nothing. All of `core/` is pure, so the whole hexagon is covered
-by one pattern, with the embedded composition root and the three stdlib-only adapters named
-beside it:
+by one pattern, with the embedded composition root, the stdio driving adapter and the three
+stdlib-only stores named beside it:
 
 ```sh
 go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
-  ./core/... ./wiring/embedded/... ./adapter/driven/blockstore/filestore/... \
+  ./core/... ./wiring/embedded/... ./adapter/driver/stdio/... ./adapter/driven/blockstore/filestore/... \
   ./adapter/driven/blockstore/memstore/... ./adapter/driven/blockstore/flashstore/... ./adapter/driven/blockstore/conformance/... \
   | grep -v '^github.com/tcw/ibsen'
 ```
@@ -62,6 +62,7 @@ core/                       the hexagon
 adapter/
   driver/                   things that drive the core
     grpcapi/                gRPC server
+    stdio/                  the log as a Unix filter, stdlib-only
     cli/                    cobra CLI
   driven/                   things the core drives
     blockstore/{filestore,memstore,flashstore,faultfs,conformance}
@@ -71,13 +72,14 @@ adapter/
     telemetry/              OTEL
 
 wiring/                     composition root: builds adapters, owns lifecycle
+  local.go                  OpenLocal: a data directory, no server
   embedded/                 the other one: the log as a library, stdlib-only
     example/                the smallest embedded program, built to be weighed
 main.go                     entry point
 errore/ utils/              stdlib-only, shared by both sides
 ```
 
-- Pure today: all of `core/`, all of `wiring/embedded/` including its example program, plus the `filestore`, `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
+- Pure today: all of `core/`, all of `wiring/embedded/` including its example program, the `stdio` driving adapter, plus the `filestore`, `memstore`, `flashstore` and `conformance` packages under `adapter/driven/blockstore`, plus `errore` and `utils`. The core reaches nothing outside the standard library, and nothing outside `core/`.
 - Not pure, by design: everything under `adapter/`, and `wiring/` itself. `adapter/driven/locking` imports `uuid` and `zerolog`; `adapter/driven/logging/zerologger` imports `zerolog`; `adapter/driven/compression/zstd` imports `klauspost/compress`; the driving adapters import gRPC and cobra.
 - **afero is gone.** It was the storage port before `BlockStore` existed, and became a second filesystem abstraction underneath our own. Removing it took five steps: in-memory mode to `memstore`, `filestore` on the standard library, the lock adapter onto `os`, the server switched over, and then the deletion. It cost 1.63 MB of binary — the same program was 3.40 MB on `aferostore` and is 1.68 MB on `filestore` — because `github.com/spf13/afero` imports `net/http` and `golang.org/x/text` to carry an HTTP filesystem and unicode normalisation that a log server reading a file has no use for. Its in-memory filesystem also cost correctness twice, both times by behaving unlike a real one: the `O_RDWR|O_EXCL` renewal bug in §1, and `MemMapFs.OpenFile` checking and creating under separate locks, so `O_CREATE|O_EXCL` is not atomic there. Every test that used it now runs against a real directory.
 
@@ -113,6 +115,14 @@ errore/ utils/              stdlib-only, shared by both sides
   append however many frames it makes, and one block holding frames of two codecs.
 - Indexing coalesces instead of dropping work: `Topic.UpdateIndex` leaves a mark when it finds a run under way, and the run takes that mark before it stops, so the tail of a log is always indexed by somebody. There is no background sweep and no ticker. `core/topic/indexing_test.go` gates the store to hold a run still, proves a request arriving during it is picked up rather than dropped, covers sixteen callers coalescing into one run, and covers a failed run leaving the work for the next call. `core/manager/topicsManager_test.go` pins that building a manager starts no goroutine and that the index is complete once writes stop.
 - Embedded: `wiring/embedded` is the second composition root, and `wiring/embedded/embedded_test.go` covers a store being required, write/list/read with nothing else wired, the log satisfying `driver.LogManager`, the block-size default, every other param reaching the core untouched, and `Close` refusing writes while loaded topics stay readable.
+- Unix filter: `adapter/driver/stdio` drives the log over byte streams and `wiring.OpenLocal`
+  opens a data directory for one process, behind `ibsen append`, `ibsen cat` and `ibsen
+  topics` (§11). `adapter/driver/stdio/stdio_test.go` covers the round trip through both
+  framings, a blank line being an empty entry, a cut stream keeping what was whole at either
+  batch boundary, a failed write cancelling the read, and a follow seeing what arrives during
+  it; `wiring/local_test.go` covers the lease being taken, refused and released, a read-only
+  open taking no lock and leaving the directory byte for byte as it found it, and zstd frames
+  read back by an open that asked for nothing.
 - Frame bounds reach a topic through the manager, and zero still means the topic defaults:
   `core/manager/topicsManager_test.go`. `adapter/driver/cli/root_test.go` covers the flag
   validation, including the largest frame the format allows and the first one past it.
@@ -213,7 +223,7 @@ the core is pure.
 - Adapters, all under `adapter/driven/blockstore`: `filestore` (filesystem, the one the server wires), `memstore` (pure in-memory), `flashstore` (a fixed region of raw flash: fixed pages, write-once bytes, page table in RAM).
 - gRPC is a driving adapter; on embedded, skip it and call the log as a library.
 - Coordination port: `driven.SingleIbsenWriterLock`, satisfied by `adapter/driven/locking` (file lease, which self-fences the moment it cannot prove it still holds the lease) and by `driven.NoFileLock` for a single-process or embedded deployment. The port names none of its adapters; each adapter asserts it satisfies the port.
-- Driving port: `driver.LogManager` (`List`, `Write`, `Read`), implemented by `core/manager` and consumed by `adapter/driver/grpcapi`. A driving adapter names the port, never the implementation.
+- Driving port: `driver.LogManager` (`List`, `Write`, `Read`), implemented by `core/manager` and consumed by `adapter/driver/grpcapi` and `adapter/driver/stdio`. A driving adapter names the port, never the implementation, which is why the same three verbs are a gRPC service and a Unix filter without either knowing about the other.
 - Compression port: `driven.Codec`, three methods (`ID`, `Encode`, `Decode`), named in a frame
   by one byte. `driven.Codecs` is the registry a read resolves that byte against, built at
   wiring time, which is what decides how much compression code a binary links. `driven.NoCodec`
@@ -440,69 +450,76 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 27. ~~Switch the server to `filestore`, keeping read-only mode read-only.~~
 28. ~~Delete `aferostore` and the dependency; move every remaining test onto real
     directories.~~
-29. Add the stdio driving adapter, so the log is a Unix filter with no server between a
-    program and the bytes (§11).
+29. ~~Add the stdio driving adapter, so the log is a Unix filter with no server between a
+    program and the bytes (§11).~~
 
-Every step ships green. Steps 0 to 28 are done, one commit each; 29 is planned.
+Every step ships green. Steps 0 to 29 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: step 29 (§11), which is the smallest of the three
-and touches no core code; dictionaries (§6), which §5's measurements argue are narrower than
-they look; and §7, which is untouched. The frame-bound default is settled — it stays at 1000,
-for forward reading speed (§5).
+Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
+are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
+it stays at 1000, for forward reading speed (§5).
 
 ## 11. The log without a server
 
-The gRPC server is an adapter around the log, not the log. A second driving adapter that reads
-stdin and writes stdout makes the log a Unix filter — `ibsen append` and `ibsen cat` against a
-data directory, with no daemon between a program and the bytes. It is the claim the README
-makes ("SQLite for logs") turned into something you can run.
+Done. `adapter/driver/stdio` is the second driving adapter: it reads entries from a stream and
+writes them to one, so `ibsen append`, `ibsen cat` and `ibsen topics` work on a data directory
+with no daemon between a program and the bytes. It is what makes the README's "SQLite for
+logs" something you can run.
 
-It is cheap because it is what §8 was for. `wiring/embedded.Open` already returns a `*Log`
-satisfying `driver.LogManager`, which is the same port `grpcapi` drives, and the stdin/stdout
-marshalling already exists in `adapter/driver/cli/ibsenClient.go`, bolted to the gRPC client
-rather than to the port. The work is pointing it at the port and giving `wiring` a composition
-helper that builds `filestore` and the embedded log. The CLI reaches no driven adapter today
-and must not start: it names a directory, and the composition root decides what is under it.
+- **It is the same port.** Everything in the package takes a `driver.LogManager`, which is
+  what `grpcapi` drives, so the adapter cannot decide where the log lives and the composition
+  root can put anything under it. `wiring.OpenLocal` is that root: it builds `filestore`, the
+  codecs and the lease, and hands back a `*LocalLog` embedding `*embedded.Log`.
+- **The adapter is stdlib-only, and that is checked.** `adapter/driver/stdio` is in rule 1 of
+  `scripts/check-architecture.sh` beside the core and the embedded root. It is the only
+  driving adapter that can be: it speaks a byte stream and the port, so appending to a log or
+  reading one back links neither a transport nor a command-line framework. The separate
+  binary §8's script could weigh is therefore not needed to make the claim checkable.
+- **Reading takes no lock and writes nothing.** A read-only open builds `filestore.ReadOnly`
+  and takes no lease, so it can be pointed at a directory a server owns — verified against a
+  running server, and pinned by `TestReadOnlyOpenWritesNothing`, which compares the directory
+  before and after a read. It holds because `Topic.LoadOrCreate` writes nothing for a topic
+  that exists and is clean: `CreateTopic` returns early, `RecoverBlock` truncates only a torn
+  tail, and the index position is read rather than rebuilt. A torn tail fails the open instead
+  of being repaired, which is the right answer for a process that does not own the log.
+- **Writing takes the lease**, the same one at the same path the server takes, so `append` is
+  refused with `wiring.ErrWriteLockUnavailable` while a server holds the directory. Nothing
+  fatals while the log is open, because `log.Fatal` exits without running deferred calls and
+  the lease and the indexing have to be let go of first.
+- **Following reopens the log**, at `--pollMs` (1s). It has to, and this is the one thing the
+  step taught: a loaded topic holds the block list it loaded and learns of new offsets only
+  from writes made through it, so a held-open log follows a directory another process appends
+  to exactly as far as it had got when it opened — silently, which is the worst way for a tail
+  to be wrong. A first attempt shipped that bug and a two-process smoke test caught it.
+  Reopening is what a process that does not own the log can do without touching the core; it
+  costs a load per pass, and a load scans the head block, so a large head block wants a larger
+  `--pollMs`. `stdio.CatParams.Follow` is still the right thing for a driver whose manager
+  sees the writes, and `Cat` returns the offset it reached so a caller can carry on across
+  opens.
+- **Stdout is the backpressure and a failed write is the cancel**, which is the bug the gRPC
+  handler had (§1): `stdio` cancels the read and drains the batches already in flight, so
+  `ibsen cat topic | head -5` ends instead of filling a buffer nobody will read.
+  `TestFailedWriteCancelsTheRead` pins it.
+- **Framing is about the pipe, not the format on disk.** Lines is the default, because that is
+  what composes with `grep`, `jq` and `wc`; `--framing length` prefixes each entry with a
+  little-endian uint64 byte count, which carries an entry holding a newline, or no bytes at
+  all. A blank line is an empty entry rather than nothing, unlike the gRPC client, because a
+  stream that comes back shorter than it went in is not a round trip. Offsets are off by
+  default so that `ibsen cat a | ibsen append b` copies a topic, and `--offsets` is refused
+  with length framing rather than ignored.
+- **A cut stream keeps the entries that were whole**, whatever the batch size. The first
+  version dropped whatever was in the unflushed batch, which made the outcome depend on a
+  tuning knob that has nothing to do with the stream; `TestTruncatedLengthFrameIsReported`
+  runs at both boundaries.
+- Durability needed nothing: `Write` returns once the flush covering its entries has, so
+  `append` exiting zero means they are on durable media (§2).
+- Compression needed nothing either, beyond sharing the server's resolution: `buildCodecs` is
+  now one function used by both roots, so a name means the same thing either way and a topic
+  written with `--compression zstd` is read back by a plain `ibsen cat`.
 
-**Reading takes no lock and cannot damage a live directory.** `Topic.LoadOrCreate` writes
-nothing for a topic that exists and is clean: `CreateTopic` returns early, `RecoverBlock`
-truncates only a torn tail, and the index position is read rather than rebuilt. So a reader
-wired with `filestore.ReadOnly` may be pointed at a directory a server owns. On a torn tail it
-fails instead of repairing — `ReadOnly` refuses the truncate and the load reports it — which is
-the right answer for a process that does not own the log.
-
-- **A one-shot `cat` is exact; following a live log across processes is not.** A `Topic` never
-  re-lists blocks from the store after it loads, so a follow started on a directory another
-  process is writing reaches only as far as the log had got when it opened. That is the same
-  cached state that makes a per-topic lock (§7) larger than it looks, and it is not this
-  step's work.
-- **Stdout is the backpressure and EPIPE is the cancel.** The read path already takes a
-  `Cancel` channel, so `ibsen cat topic | head -5` must close it on a failed write rather than
-  block forever. That is the bug the gRPC handler had (§1), and it is the same fix.
-
-**Writing takes the lease, and is therefore refused beside a running server.** `ibsen append`
-is a second writer on the directory, so it acquires the single-writer lock the server acquires
-and loses the race while the server holds it. That is correct rather than unfortunate, and it
-is the one ordering constraint this step has: if per-topic leases are ever built (§7), they
-are what would let `append` take only the topic it writes and run beside a server writing
-others.
-
-- **Framing on the stream is a choice the log does not make.** Newline-delimited is what the
-  gRPC client does today: it composes with `grep`, `jq` and `wc`, and it cannot carry an entry
-  holding a newline or an arbitrary byte, which the log otherwise accepts. So newline-delimited
-  stays the default and `--framing=length` writes the `size | payload` shape the entry codec
-  already uses. Framing is about the pipe, not about the format on disk: a log written through
-  one is readable through either.
-- Durability needs nothing added. `Write` returns once the flush covering its entries has
-  returned, so `append` exiting zero already means they are on durable media (§2).
-
-**Not in this step**: a persistent stdio session — a long-lived process speaking a framed
+**Still not built**: a persistent stdio session — a long-lived process speaking a framed
 request/response protocol over stdin and stdout, so a program in another language drives the
 log without gRPC. It needs a protocol in both directions, and multiplexing once a read and a
 write overlap, and it earns that only if embedding Ibsen in a non-Go process is actually
 wanted. A Unix domain socket is not this either: it is one `net.Listen` in the gRPC adapter,
 and what it gives you is still the server.
-
-The claim to check is the one §8 already checks. A binary carrying the stdio adapter,
-`filestore` and the embedded root links no gRPC and no cobra, so `scripts/embedded-size.sh`
-can weigh it beside the embedded example instead of the claim being asserted.

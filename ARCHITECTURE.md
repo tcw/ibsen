@@ -41,8 +41,8 @@ it is the reason the architecture is checkable rather than merely intended.
 It is enforced by [`scripts/check-architecture.sh`](scripts/check-architecture.sh), which CI
 runs on every push. Three rules:
 
-1. **Purity.** `go list -deps` over `core/...`, `wiring/embedded/...` and the three
-   standard-library storage adapters must name no non-standard package outside
+1. **Purity.** `go list -deps` over `core/...`, `wiring/embedded/...`, `adapter/driver/stdio`
+   and the three standard-library storage adapters must name no non-standard package outside
    `github.com/tcw/ibsen`. Because `-deps` is transitive, anything impure reached indirectly
    shows up too.
 2. **No package under `core/` imports `adapter/` or `wiring/`.** A port that names one of its
@@ -103,6 +103,7 @@ core/                       the hexagon
 adapter/
   driver/
     grpcapi/                gRPC server and Go client
+    stdio/                  the log over two byte streams, stdlib-only
     cli/                    cobra CLI
   driven/
     blockstore/{filestore,memstore,flashstore,faultfs,conformance}
@@ -112,14 +113,16 @@ adapter/
     telemetry/              OpenTelemetry
 
 wiring/                     composition root: builds adapters, owns lifecycle
+  local.go                  OpenLocal: one process over a data directory
   embedded/                 the second one: the log as a library, stdlib-only
     example/                the smallest embedded program, built to be weighed
 main.go                     entry point
 errore/ utils/              stdlib-only, shared by both sides
 ```
 
-Pure today: all of `core/`, all of `wiring/embedded/` including its example, the `filestore`,
-`memstore`, `flashstore` and `conformance` packages, plus `errore` and `utils`.
+Pure today: all of `core/`, all of `wiring/embedded/` including its example, the `stdio`
+driving adapter, the `filestore`, `memstore`, `flashstore` and `conformance` packages, plus
+`errore` and `utils`.
 
 Not pure, by design: everything else under `adapter/`, and `wiring/` itself.
 
@@ -657,6 +660,25 @@ claim — what the linker produced rather than what the imports promised. The sc
 embedded build stops being smaller, rather than enforcing a byte ceiling that would drift with
 each Go release.
 
+### 14.3 `wiring.OpenLocal` — a data directory, no server
+
+```go
+local, err := wiring.OpenLocal(wiring.LocalParams{RootPath: dir})
+```
+
+The root behind `ibsen append`, `ibsen cat` and `ibsen topics`. It builds `filestore`, the
+codecs and the single-writer lease, and returns a `*LocalLog` embedding `*embedded.Log`, so it
+satisfies `driver.LogManager` like everything else.
+
+`ReadOnly` decides two things at once: the store becomes `filestore.ReadOnly` and no lease is
+taken. That is what makes a reader safe to point at a directory another instance owns — a load
+recovers the head block and could otherwise truncate a torn tail underneath the writer. A
+writable open takes the lease at `<root>/.writeLock` and is refused with
+`ErrWriteLockUnavailable` while a server holds it.
+
+`buildCodecs` is shared with the server's root, so a compression name resolves identically in
+both and a topic written by one is read by the other.
+
 ## 15. Concurrency and shutdown
 
 | guarantee | how |
@@ -794,7 +816,9 @@ the composition root, not in a driving adapter.
 ### A new transport
 
 Implement against `driver.LogManager` and nothing else. Do not import a driven adapter —
-rule 3 of the architecture check will catch you, which is the point.
+rule 3 of the architecture check will catch you, which is the point. `adapter/driver/stdio` is
+the smallest example: it drives the log over two byte streams, imports only `core/`, and is
+held to that by rule 1 along with the core itself.
 
 ### A decorator
 

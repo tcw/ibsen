@@ -26,9 +26,14 @@ edges() {
 #    trusted, a dependency graph can be read. It is what makes "an embedded build links no
 #    gRPC, no cobra, no OTEL, no zerolog and no compressor" a thing CI checks
 #    instead of a thing the documentation claims.
+#
+#    The stdio driving adapter is here for the same reason, and it is the only driving adapter
+#    that can be: it speaks a byte stream and the driving port, so a program that appends to a
+#    log or reads one back pays for neither a transport nor a command-line framework.
 impure=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
 	./core/... \
 	./wiring/embedded/... \
+	./adapter/driver/stdio/... \
 	./adapter/driven/blockstore/filestore/... \
 	./adapter/driven/blockstore/memstore/... \
 	./adapter/driven/blockstore/flashstore/... \
