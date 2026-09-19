@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/port/driven"
@@ -28,6 +29,12 @@ const (
 type Store struct {
 	fs       FS
 	rootPath string
+
+	// mu guards newBlocks, which is the set of blocks whose file has been created but whose
+	// directory entry has not been synced yet. Appends and syncs of different topics run
+	// concurrently, so the set needs a lock of its own.
+	mu        sync.Mutex
+	newBlocks map[driven.BlockRef]struct{}
 }
 
 var (
@@ -38,7 +45,7 @@ var (
 // New returns a store that keeps its topics under rootPath, which must exist, on the given
 // filesystem. Pass OS{} unless you are injecting faults.
 func New(fs FS, rootPath string) *Store {
-	return &Store{fs: fs, rootPath: rootPath}
+	return &Store{fs: fs, rootPath: rootPath, newBlocks: make(map[driven.BlockRef]struct{})}
 }
 
 // NewOS returns a store on the real filesystem, which is what the server wires.
@@ -227,7 +234,38 @@ func (s *Store) Append(ref driven.BlockRef, data []byte) (driven.Block, error) {
 	if err = file.Close(); err != nil {
 		return driven.Block{}, errore.Wrap(err)
 	}
+	if size == 0 {
+		// the block was empty, so this append either created the file or filled a file
+		// nothing had been made durable from: its directory entry still has to be synced.
+		// An existing empty block costs one directory sync it does not need, which is the
+		// price of not asking the filesystem whether the open created the file.
+		s.markNewBlock(ref)
+	}
 	return driven.Block{Block: ref.Block, Size: size + int64(n)}, nil
+}
+
+// markNewBlock records that ref's directory entry is not on durable media yet.
+func (s *Store) markNewBlock(ref driven.BlockRef) {
+	s.mu.Lock()
+	s.newBlocks[ref] = struct{}{}
+	s.mu.Unlock()
+}
+
+// blockIsNew reports whether ref's directory entry still has to be synced.
+func (s *Store) blockIsNew(ref driven.BlockRef) bool {
+	s.mu.Lock()
+	_, isNew := s.newBlocks[ref]
+	s.mu.Unlock()
+	return isNew
+}
+
+// dirEntryIsDurable is called once the topic directory has been synced, which is what makes
+// ref's name durable. Only ref is cleared: a block created while that sync was running may
+// not be covered by it, and is left for its own sync to deal with.
+func (s *Store) dirEntryIsDurable(ref driven.BlockRef) {
+	s.mu.Lock()
+	delete(s.newBlocks, ref)
+	s.mu.Unlock()
 }
 
 // openForAppend opens a block for appending, creating the block and its topic if needed.
@@ -315,6 +353,13 @@ func (s *Store) Remove(ref driven.BlockRef) error {
 // this append is found again after a crash. The directory flush is best effort: not every
 // filesystem can do it, and a lost directory entry looks to recovery like a block that was
 // never written.
+// Sync makes the block durable: the file itself, and the directory holding it when the file
+// is new, since an fsync of a file says nothing about the name it was reached by.
+//
+// The directory is synced only then. Appending to a block that is already named on durable
+// media adds no directory entry, so syncing the directory again would buy nothing and cost
+// an fsync — the same fsync a log pays on every write it acknowledges, which is the one it
+// can least afford to pay twice.
 func (s *Store) Sync(ref driven.BlockRef) error {
 	file, err := s.fs.OpenFile(s.blockPath(ref), os.O_WRONLY, blockPerm)
 	if err != nil {
@@ -330,17 +375,27 @@ func (s *Store) Sync(ref driven.BlockRef) error {
 	if err = file.Close(); err != nil {
 		return errore.Wrap(err)
 	}
-	s.syncTopicDir(ref.Topic)
+	if s.blockIsNew(ref) {
+		// a directory sync that failed leaves the block marked, so the next sync of it tries
+		// again. The bytes are on the media either way, which is why this is not the caller's
+		// error the way the block's own sync is.
+		if err = s.syncTopicDir(ref.Topic); err == nil {
+			s.dirEntryIsDurable(ref)
+		}
+	}
 	return nil
 }
 
-func (s *Store) syncTopicDir(topic domain.TopicName) {
+func (s *Store) syncTopicDir(topic domain.TopicName) error {
 	dir, err := s.fs.OpenFile(s.topicPath(topic), os.O_RDONLY, topicPerm)
 	if err != nil {
-		return
+		return err
 	}
-	_ = dir.Sync()
-	_ = dir.Close()
+	if err = dir.Sync(); err != nil {
+		closeQuietly(dir)
+		return err
+	}
+	return dir.Close()
 }
 
 func closeQuietly(file File) {
