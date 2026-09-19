@@ -4,8 +4,8 @@
 //
 // It wires memstore because that keeps the whole program inside the standard library, which
 // is what scripts/check-architecture.sh checks. A microcontroller would wire flashstore
-// instead and stay just as pure; a program with a filesystem under it would wire aferostore
-// and pay for afero.
+// instead, and a program with a filesystem under it would wire filestore; both stay just as
+// pure.
 package main
 
 import (

@@ -24,7 +24,7 @@ edges() {
 #
 #    wiring/embedded is in this list rather than relying on a build tag: a tag has to be
 #    trusted, a dependency graph can be read. It is what makes "an embedded build links no
-#    gRPC, no cobra, no OTEL, no zerolog, no afero and no compressor" a thing CI checks
+#    gRPC, no cobra, no OTEL, no zerolog and no compressor" a thing CI checks
 #    instead of a thing the documentation claims.
 impure=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
 	./core/... \
