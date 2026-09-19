@@ -296,9 +296,16 @@ written with `driven.NoCodec`, so the format is in place and carries no compress
   too.
 - The CPU of a compression attempt that is then discarded is still paid; skipping it below a
   size threshold would save that, and wants its own measurement.
-- Still to do: the default of 1000 entries per frame was chosen before any of this was
-  measured, and the table says 100 is the better all-round answer. Changing it is a
-  behaviour change for every deployment, so it is a decision, not a follow-up.
+- **The default stays at 1000 entries per frame** (decided 2026-09-19). The table offered 100
+  as the better all-round answer, and that was declined deliberately: reading forward through
+  a large log is the workload this log is for, and sequential throughput is 403 MB/s at 1000
+  against 215 MB/s at 100, so 100 would give up nearly half of it. What 1000 costs is paid by
+  the random reader — one 130-byte entry decodes a 137 KB frame in 248 µs, against 14 KB and
+  64 µs at 100 — and by nothing else, since the ratio is flat above 100 either way. A
+  deployment whose readers seek rather than stream should set `--maxFrameEntries 100`; the
+  bound is per-topic state and changing it strands nothing, because a frame says how big it
+  is. The number was a guess before it was measured and is now a choice, which is the only
+  thing that changed about it.
 
 ## 6. Dictionaries
 
@@ -436,6 +443,6 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 
 Every step ships green. Steps 0 to 28 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: the frame-bound default, which the benchmark has
-an answer for and nobody has decided (§5); then dictionaries (§6), which §5's measurements
-argue are narrower than they look; and §7, which is untouched.
+Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
+are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
+it stays at 1000, for forward reading speed (§5).
