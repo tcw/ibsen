@@ -270,7 +270,7 @@ Every server flag has an environment variable, so containers need no command lin
 | `-i, --indexSparsity` | `IBSEN_INDEX_SPARSITY` | `10` | entries between index pairs |
 | `--maxFrameEntries` | `IBSEN_MAX_FRAME_ENTRIES` | `1000` | entries that may share a frame |
 | `--maxFrameBytes` | `IBSEN_MAX_FRAME_BYTES` | `1 MiB` | entry bytes that may share a frame, before compression |
-| `--compression` | `IBSEN_COMPRESSION` | `none` | codec for new frames: `none` or `zstd` |
+| `--compression` | `IBSEN_COMPRESSION` | `zstd` | codec for new frames: `zstd` or `none` |
 | `--compressionLevel` | `IBSEN_COMPRESSION_LEVEL` | `default` | `fastest`, `default`, `better`, `best` |
 | `-o, --readOnly` | `IBSEN_READ_ONLY` | `false` | serve a directory without changing a byte of it |
 | `-e, --OTELExporter` | | | OpenTelemetry collector address, e.g. `0.0.0.0:4317` |
@@ -341,12 +341,32 @@ bulk load keeps the reader's buffer full, so its batches fill before they run dr
 
 ### Compression
 
-Off by default. `--compression zstd` compresses new frames only; every codec the binary links
-stays in the read registry, so turning compression on or off never strands a block written
-under the old setting. A frame carries one byte naming the codec that wrote it, which is also
-why a block can hold frames of several codecs and why changing the setting rewrites nothing.
+**zstd by default.** A log is mostly text that repeats — the same field names, the same hosts,
+the same shapes of message, entry after entry — so the bytes are worth compressing and the
+choice is between disk and CPU rather than between features.
 
-On ~130-byte JSON events, zstd at the default level took a test log from 42926 to 3945 bytes.
+A setting only decides what is *written*. Every codec the binary links stays in the read
+registry, so turning compression on, off or over never strands a block written under the old
+setting; a frame carries one byte naming the codec that wrote it, which is also why one block
+can hold frames of several codecs and why changing the setting rewrites nothing. Compression
+that did not pay is thrown away per frame, so a frame a codec cannot shrink is stored plain
+and a small write is never made larger.
+
+What it costs and buys, appending 1.1 GB of wiki XML (21.7M lines) and reading it back, on an
+ordinary ext4 disk with the page cache warm:
+
+| | `--compression none` | `zstd` (default) |
+|---|---|---|
+| log on disk | 1.41 GiB | **456 MiB** |
+| append, CPU | 10.7 s | 18.8 s |
+| `cat > /dev/null` | 4.5–5.0 s | 6.2–6.9 s |
+
+So it is a third of the disk for about three quarters more write CPU, and reads that are
+slower when the bytes were already in memory and faster when they have to come off slower
+storage than this. Two cases want `--compression none`: entries that are already compressed —
+on incompressible payloads zstd measured 72 MB/s against 315 MB/s through the codec, for 10%
+— and readers that seek rather than stream, since a frame is decoded whole and a single-entry
+read at the default frame bound decodes 137 KB in 213 µs against 98 µs plain.
 
 ### Read-only mode
 

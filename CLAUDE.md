@@ -308,15 +308,43 @@ written with `driven.NoCodec`, so the format is in place and carries no compress
   the CLI, since a driving adapter must not reach a driven one: the CLI passes a name
   (`--compression` / `IBSEN_COMPRESSION`, `--compressionLevel` /
   `IBSEN_COMPRESSION_LEVEL`) and the composition root decides what it is made of. A name with
-  no adapter behind it is `wiring.ErrUnknownCompression`, not a quiet fallback to none.
+  no adapter behind it is `wiring.ErrUnknownCompression`, not a quiet fallback to none, and an
+  empty name is `wiring.DefaultCompression` rather than none, so the CLI flag and a
+  programmatic `wiring.IbsenServer{}` or `OpenLocal` agree on what a deployment that said
+  nothing gets.
   `wiring.IbsenServer.Codec`/`Codecs` remain the injection points underneath, for a program
   that embeds the log and brings its own.
 - **Compression chooses only what is written.** The read registry holds every codec the binary
   links, so turning compression off, or changing it, never strands a block written under the
   old setting. The level is not part of the format either: a frame says only that zstd wrote
   it.
-- The default is `none`. Nothing about an existing deployment changes until someone asks for
-  it.
+- **The default is `zstd`** (decided 2026-09-19, `wiring.DefaultCompression`), at the default
+  level, for the server and for the filter commands alike. A log is mostly text that repeats,
+  so the bytes are worth compressing, and the frame fallback means a frame a codec cannot
+  shrink is stored plain rather than made larger. Appending 1.1 GB of wiki XML, 21.7M lines:
+  1.41 GiB on disk against **456 MiB**, for 18.8s of write CPU against 10.7s and a warm-cache
+  `cat` of 6.2-6.9s against 4.5-5.0s. So it is a third of the disk for about three quarters
+  more write CPU, and reads that lose when the bytes were already in memory and win when they
+  have to come off slower storage than an ext4 disk on this machine.
+  - It costs most where there is nothing to find: on incompressible entries the codec
+    measured 72 MB/s against 315 MB/s for 10% (`BenchmarkFrameWrite/random`), because the
+    attempt is paid for whether or not it is kept. And a random reader pays twice, since a
+    frame is decoded whole: one entry at the default frame bound is 137 KB decoded in 213 µs
+    against 98 µs plain (`BenchmarkFrameReadOne`). Both cases say `--compression none`, which
+    is one word.
+  - What it does not cost is compatibility. An existing deployment's blocks are read exactly
+    as before — the read registry holds every codec the binary links — and turning the
+    default back off strands nothing either.
+  - **An embedded build is not covered by it.** `wiring/embedded` takes the codec it is given
+    and defaults to `NoCodec`, because linking zstd is what §8 measures the absence of. The
+    consequence is new: a build that wires no codec can no longer read a directory the server
+    or the CLI wrote with the default. It has to bring the adapter, or the deployment has to
+    write with `none`.
+  - `ibsen tools read-log` opens a block file outside any store, so nothing was handing it a
+    registry and a default-written block would have read back as an unknown codec. It takes
+    one now, from `wiring.ReadCodecs`, since a driving adapter may not build a driven one.
+    `adapter/driver/cli/tools_test.go` writes a thousand entries that really do compress —
+    two short ones fall back to plain and would pass without the fix — and reads the block.
 - `cli.validateFrameBounds` refuses a frame the format could not hold: without it, a
   `maxFrameBytes` above `domain.MaxFrameSize` would start a server that fails on the first
   write large enough to reach the bound, rather than not starting.
