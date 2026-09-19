@@ -34,7 +34,7 @@ import (
 //
 // The header checksum covers the payload checksum, so a header that verifies can be trusted
 // about how big its payload is and what it must hash to. No length read from a block is
-// acted on before it has been checked, which is the same rule ReadEntry follows.
+// acted on before it has been checked, which is the same rule ParseEntry follows.
 const (
 	// FrameHeaderSize is the bytes a frame adds in front of its payload.
 	FrameHeaderSize = 36
@@ -93,9 +93,12 @@ func (h FrameHeader) Contains(offset Offset) bool {
 	return offset >= h.FirstOffset && offset < h.EndOffset()
 }
 
-// AppendFrameHeader encodes h onto dst and returns the result, the way append does.
-func AppendFrameHeader(dst []byte, h FrameHeader) []byte {
-	var encoded [FrameHeaderSize]byte
+// PutFrameHeader encodes h into the first FrameHeaderSize bytes of dst, which must be at
+// least that long. It is how a frame written straight into the buffer it will be stored from
+// gets its header: the room is reserved, the payload goes in after it, and the header is
+// written once its size and checksum are known.
+func PutFrameHeader(dst []byte, h FrameHeader) {
+	encoded := dst[:FrameHeaderSize]
 	binary.LittleEndian.PutUint32(encoded[0:], FrameMagic)
 	body := encoded[8:]
 	body[0] = h.Codec
@@ -107,6 +110,12 @@ func AppendFrameHeader(dst []byte, h FrameHeader) []byte {
 	binary.LittleEndian.PutUint32(body[20:], h.PlainSize)
 	binary.LittleEndian.PutUint32(body[24:], h.PayloadCrc)
 	binary.LittleEndian.PutUint32(encoded[4:], crc32.Checksum(body, crc32q))
+}
+
+// AppendFrameHeader encodes h onto dst and returns the result, the way append does.
+func AppendFrameHeader(dst []byte, h FrameHeader) []byte {
+	var encoded [FrameHeaderSize]byte
+	PutFrameHeader(encoded[:], h)
 	return append(dst, encoded[:]...)
 }
 

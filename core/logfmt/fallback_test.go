@@ -21,7 +21,7 @@ func headerOf(t *testing.T, frame []byte) domain.FrameHeader {
 
 // A codec is taken up on its offer only when what comes back is smaller. Compression that
 // did not pay is thrown away, and the header says the frame holds plain bytes.
-func TestEncodeFrame_keepsCompressionOnlyWhenItPays(t *testing.T) {
+func TestAppendFrame_keepsCompressionOnlyWhenItPays(t *testing.T) {
 	tests := []struct {
 		name      string
 		payload   string
@@ -36,7 +36,7 @@ func TestEncodeFrame_keepsCompressionOnlyWhenItPays(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			entries := entriesFrom(0, test.payload)
 
-			frame, err := EncodeFrame(rleCodec{}, 0, 1, entries)
+			frame, err := AppendFrame(nil, rleCodec{}, 0, 1, entries)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,7 +59,7 @@ func TestEncodeFrame_keepsCompressionOnlyWhenItPays(t *testing.T) {
 // The guarantee, stated as a property: whatever a codec does, a frame never stores more
 // bytes than the entries handed to it. Without this, turning compression on could make a
 // topic larger, which is the opposite of the point.
-func TestEncodeFrame_neverStoresMoreThanThePlainEntries(t *testing.T) {
+func TestAppendFrame_neverStoresMoreThanThePlainEntries(t *testing.T) {
 	for _, payload := range []string{
 		"",
 		"a",
@@ -70,7 +70,7 @@ func TestEncodeFrame_neverStoresMoreThanThePlainEntries(t *testing.T) {
 		for _, codec := range []driven.Codec{driven.NoCodec{}, rleCodec{}, expandingCodec{}} {
 			entries := entriesFrom(0, payload)
 
-			frame, err := EncodeFrame(codec, 0, 1, entries)
+			frame, err := AppendFrame(nil, codec, 0, 1, entries)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -87,9 +87,9 @@ func TestEncodeFrame_neverStoresMoreThanThePlainEntries(t *testing.T) {
 // A frame that fell back is readable by a build carrying no codec at all, which is the
 // second thing the fallback buys: the smallest frames, the ones a codec could do nothing
 // with, stop depending on that codec being wired.
-func TestEncodeFrame_aFrameThatFellBackNeedsNoCodec(t *testing.T) {
+func TestAppendFrame_aFrameThatFellBackNeedsNoCodec(t *testing.T) {
 	entries := entriesFrom(0, "abcdefghijklmnopqrstuvwxyz")
-	frame, err := EncodeFrame(rleCodec{}, 0, 1, entries)
+	frame, err := AppendFrame(nil, rleCodec{}, 0, 1, entries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,11 +106,11 @@ func TestEncodeFrame_aFrameThatFellBackNeedsNoCodec(t *testing.T) {
 }
 
 // Both ways round, the entries come back exactly as they went in.
-func TestEncodeFrame_roundTripsEitherWay(t *testing.T) {
+func TestAppendFrame_roundTripsEitherWay(t *testing.T) {
 	codecs := driven.NewCodecs(rleCodec{})
 	for _, payload := range []string{strings.Repeat("a", 300), "abcdefghijklmnopqrstuvwxyz"} {
 		entries := entriesFrom(0, payload)
-		frame, err := EncodeFrame(rleCodec{}, 0, 1, entries)
+		frame, err := AppendFrame(nil, rleCodec{}, 0, 1, entries)
 		if err != nil {
 			t.Fatal(err)
 		}
