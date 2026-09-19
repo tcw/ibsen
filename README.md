@@ -265,7 +265,7 @@ Every server flag has an environment variable, so containers need no command lin
 | `-d, --rootDirectory` | `IBSEN_ROOT_DIRECTORY` | *(unset)* | where the log is kept; unset means in memory |
 | `-l, --host` / `-p, --port` | `IBSEN_HOST` / `IBSEN_PORT` | `0.0.0.0` / `50001` | gRPC listener |
 | `-m, --maxBlockSize` | `IBSEN_MAX_BLOCK_SIZE` | `1000` | MB per block before rolling over |
-| `-f, --flushEntries` | `IBSEN_FLUSH_ENTRIES` | `1` | entries that may wait for a flush; `1` makes every write durable before it is acknowledged |
+| `-f, --flushEntries` | `IBSEN_FLUSH_ENTRIES` | `1` | entries that may wait for a flush before `--flushIntervalMs` is up; on its own it does nothing |
 | `--flushIntervalMs` | `IBSEN_FLUSH_INTERVAL_MS` | `0` | how long a batch may wait for company; `0` never waits |
 | `-i, --indexSparsity` | `IBSEN_INDEX_SPARSITY` | `10` | entries between index pairs |
 | `--maxFrameEntries` | `IBSEN_MAX_FRAME_ENTRIES` | `1000` | entries that may share a frame |
@@ -287,12 +287,14 @@ server, and there is no in-memory fallback for them: a log that lives in one pro
 shared with nobody has nothing to append to. `append` also takes every write-side server flag
 above — `--maxBlockSize`, `--flushEntries`, `--flushIntervalMs`, `--indexSparsity`,
 `--maxFrameEntries`, `--maxFrameBytes`, `--compression`, `--compressionLevel` — because those
-describe what is written, and a filter writes the same log a server does.
+describe what is written, and a filter writes the same log a server does. The two flush flags
+are the exception worth knowing about: they group concurrent writers, and a stream is one
+writer, so `--batchSize` is what moves the throughput of an `append`. See [Durability](#durability).
 
 | flag | commands | default | what it does |
 |---|---|---|---|
 | `--framing` | `append`, `cat` | `lines` | how the stream delimits entries: `lines`, or `length` for a little-endian uint64 byte count before each entry |
-| `--batchSize` | `append`, `cat` | `1000` | entries per write, or per read |
+| `--batchSize` | `append`, `cat` | `1000` | entries per write, or per read; for `append` this is one flush, so it is the throughput dial |
 | `--offsets` | `cat` | `false` | prefix each entry with its offset and a tab; line framing only |
 | `-F, --follow` | `cat` | `false` | keep printing as entries are written, until Ctrl-C |
 | `--pollMs` | `cat` | `1000` | milliseconds between passes while following |
@@ -312,10 +314,22 @@ has returned. A reader never sees an entry that a power cut could take back. The
 background flusher goroutine: the writer that needs its entries durable drives the sync, and
 writers whose entries joined the same batch wait on the same one.
 
-The default (`--flushEntries 1`) is an fsync per write. Raising it trades write latency for
-fewer syncs — the entries are still never *readable* before they are durable, you are only
-allowing more of them to wait together. A store that cannot sync, like `memstore`, pays none
-of this: its entries are durable the moment the append returns.
+The default is an fsync per write. The two flush flags work as a pair, and raising
+`--flushEntries` on its own changes nothing: with `--flushIntervalMs 0` a batch is never held
+back, so every write is flushed at once whatever the entry count says. Set an interval and the
+count becomes the escape from it — "enough have arrived, do not wait out the rest" — and what
+you are buying is writers whose entries wait together, at the cost of the latency of the ones
+that arrive early. The entries are still never *readable* before they are durable. A store
+that cannot sync, like `memstore`, pays none of this: its entries are durable the moment the
+append returns.
+
+For `append` none of that applies, because a stream is a single writer and there is nobody
+else's batch for its entries to join: holding one back only makes it wait. **`--batchSize` is
+the dial there.** One write is one append and one flush, so appending 126,574 lines costs 128
+fsyncs at the default 1000 and 14 at `--batchSize 10000`, and `--flushEntries 10000` costs the
+same 128 as not passing it at all. Nothing about durability changes with the batch size: every
+`append` that exits zero has its entries on durable media, and a batch that fails takes with it
+only entries no one was told about.
 
 ### Compression
 

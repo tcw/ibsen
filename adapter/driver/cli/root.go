@@ -426,7 +426,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&trace, "trace", "t", false, "set logging to trace level")
 
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
-	cmdServer.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush; 1 makes every write durable before it is acknowledged")
+	cmdServer.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush before --flushIntervalMs is up; it does nothing on its own, since an interval of 0 flushes every batch at once")
 	cmdServer.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits")
 	cmdServer.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
 	cmdServer.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
@@ -448,10 +448,10 @@ func init() {
 
 	cmdAppend.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to append to")
 	cmdAppend.Flags().StringVarP(&framing, "framing", "", "lines", "How stdin delimits entries: lines or length (a little-endian uint64 byte count before each entry)")
-	cmdAppend.Flags().IntVarP(&batchSize, "batchSize", "", stdio.DefaultBatchSize, "Entries written in one call")
+	cmdAppend.Flags().IntVarP(&batchSize, "batchSize", "", stdio.DefaultBatchSize, "Entries written in one call, which is one append and one flush: the throughput dial for a stream")
 	cmdAppend.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
-	cmdAppend.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush; 1 makes every write durable before it is acknowledged")
-	cmdAppend.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits")
+	cmdAppend.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush; it groups concurrent writers, of which a stream has none, so use --batchSize instead")
+	cmdAppend.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits. A stream has nobody to wait for, so this only delays it")
 	cmdAppend.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
 	cmdAppend.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
 	cmdAppend.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
