@@ -24,11 +24,15 @@ import (
 // opens a read-only store. Appending takes the same single-writer lease the server takes, and
 // is therefore refused while a server holds the directory. That is the lock doing its job.
 var (
-	framing   string
-	offsets   bool
-	follow    bool
-	batchSize int
-	pollMs    int
+	framing string
+	offsets bool
+	follow  bool
+	// append and cat have a batch size each, and not one between them: cobra writes a flag's
+	// default into its variable as the flag is registered, so a shared one would end up
+	// holding whichever command was registered last.
+	appendBatchSize int
+	catBatchSize    int
+	pollMs          int
 
 	cmdAppend = &cobra.Command{
 		Use:              "append [topic]",
@@ -110,7 +114,7 @@ func runAppend(topic domain.TopicName) error {
 	defer local.Close()
 	written, err := stdio.Append(local, topic, os.Stdin, stdio.AppendParams{
 		Framing:   chosen,
-		BatchSize: batchSize,
+		BatchSize: appendBatchSize,
 	})
 	if err != nil {
 		return errore.WrapWithContextF(err, "wrote %d entries before failing", written)
@@ -143,7 +147,7 @@ func runCat(topic domain.TopicName, from domain.Offset) error {
 	}
 	params := stdio.CatParams{
 		From:      from,
-		BatchSize: uint32(batchSize),
+		BatchSize: uint32(catBatchSize),
 		Framing:   chosen,
 		Offsets:   offsets,
 	}

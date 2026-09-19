@@ -448,7 +448,7 @@ func init() {
 
 	cmdAppend.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to append to")
 	cmdAppend.Flags().StringVarP(&framing, "framing", "", "lines", "How stdin delimits entries: lines or length (a little-endian uint64 byte count before each entry)")
-	cmdAppend.Flags().IntVarP(&batchSize, "batchSize", "", stdio.DefaultBatchSize, "Entries written in one call, which is one append and one flush: the throughput dial for a stream")
+	cmdAppend.Flags().IntVarP(&appendBatchSize, "batchSize", "", stdio.DefaultAppendBatchSize, "Entries written in one call, which is one append and one flush: the throughput dial for a stream. A batch is written when it is full, so a trickle of entries waits for one")
 	cmdAppend.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
 	cmdAppend.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush; it groups concurrent writers, of which a stream has none, so use --batchSize instead")
 	cmdAppend.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits. A stream has nobody to wait for, so this only delays it")
@@ -462,7 +462,7 @@ func init() {
 	cmdCat.Flags().StringVarP(&framing, "framing", "", "lines", "How stdout delimits entries: lines or length (a little-endian uint64 byte count before each entry)")
 	cmdCat.Flags().BoolVarP(&offsets, "offsets", "", false, "Prefix each entry with its offset and a tab; line framing only")
 	cmdCat.Flags().BoolVarP(&follow, "follow", "F", false, "Keep reading as entries are written instead of stopping at the end of the log")
-	cmdCat.Flags().IntVarP(&batchSize, "batchSize", "", stdio.DefaultBatchSize, "Entries asked for in one call")
+	cmdCat.Flags().IntVarP(&catBatchSize, "batchSize", "", stdio.DefaultCatBatchSize, "Entries asked for in one call")
 	cmdCat.Flags().IntVarP(&pollMs, "pollMs", "", 1000, "Milliseconds between passes while following; each pass reopens the log, so a large head block wants a larger value")
 
 	cmdTopics.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to list")
