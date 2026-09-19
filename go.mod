@@ -6,7 +6,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.20.0
 	github.com/rs/zerolog v1.35.1
-	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.71.0

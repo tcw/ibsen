@@ -7,11 +7,11 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
-	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/index"
 	"github.com/tcw/ibsen/core/port/driven"
@@ -19,40 +19,30 @@ import (
 
 var errInjected = errors.New("injected failure")
 
-// newTestStore returns a store on a fresh in-memory filesystem, together with that
-// filesystem for the few tests that look at the bytes behind the port.
-func newTestStore(t *testing.T) (*aferostore.Store, *afero.Afero) {
+// newTestStore returns a store on a fresh directory, together with that directory for the
+// few tests that look at the bytes behind the port.
+func newTestStore(t *testing.T) (*filestore.Store, string) {
 	t.Helper()
-	return aferostore.NewMem("tmp")
+	root := t.TempDir()
+	return filestore.NewOS(root), root
 }
 
-// faultyFs wraps an in-memory afero.Fs to count open file handles and inject write and truncate failures.
+// faultyFs counts open file handles and injects write and truncate failures.
 type faultyFs struct {
-	afero.Fs
+	filestore.FS
 	openFiles     atomic.Int64
 	failWrites    atomic.Bool
 	failTruncates atomic.Bool
 }
 
-func newFaultyStore(t *testing.T) (*aferostore.Store, *faultyFs) {
+func newFaultyStore(t *testing.T) (*filestore.Store, *faultyFs) {
 	t.Helper()
-	fs := &faultyFs{Fs: afero.NewMemMapFs()}
-	afs := &afero.Afero{Fs: fs}
-	if err := afs.MkdirAll("tmp", 0744); err != nil {
-		t.Fatal(err)
-	}
-	return aferostore.New(afs, "tmp"), fs
+	fs := &faultyFs{FS: filestore.OS{}}
+	return filestore.New(fs, t.TempDir()), fs
 }
 
-func (f *faultyFs) Open(name string) (afero.File, error) {
-	return f.track(f.Fs.Open(name))
-}
-
-func (f *faultyFs) OpenFile(name string, flag int, perm os.FileMode) (afero.File, error) {
-	return f.track(f.Fs.OpenFile(name, flag, perm))
-}
-
-func (f *faultyFs) track(file afero.File, err error) (afero.File, error) {
+func (f *faultyFs) OpenFile(name string, flag int, perm os.FileMode) (filestore.File, error) {
+	file, err := f.FS.OpenFile(name, flag, perm)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +51,7 @@ func (f *faultyFs) track(file afero.File, err error) (afero.File, error) {
 }
 
 type faultyFile struct {
-	afero.File
+	filestore.File
 	fs     *faultyFs
 	closed atomic.Bool
 }
@@ -95,6 +85,15 @@ func newTestTopic(t *testing.T, store driven.BlockStore, maxBlockSize int) *Topi
 	if err := topic.LoadOrCreate(); err != nil {
 		t.Fatalf("load: %v", err)
 	}
+	return stoppedByTest(t, topic)
+}
+
+// stoppedByTest ends a topic's background indexing before the test's directory is removed.
+// On a real filesystem an indexer still writing races that cleanup; the emulated filesystem
+// these tests used to run on had no directory to remove, so nothing showed it.
+func stoppedByTest(t *testing.T, topic *Topic) *Topic {
+	t.Helper()
+	t.Cleanup(topic.Close)
 	return topic
 }
 
@@ -344,11 +343,11 @@ func TestTopic_WritesRefusedAfterFailedRollback(t *testing.T) {
 }
 
 func TestTopic_WriteToUnwritableBlockReturnsError(t *testing.T) {
-	mem := afero.NewMemMapFs()
-	if err := mem.MkdirAll("tmp/t", 0744); err != nil {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "t"), 0744); err != nil {
 		t.Fatal(err)
 	}
-	store := aferostore.New(&afero.Afero{Fs: afero.NewReadOnlyFs(mem)}, "tmp")
+	store := filestore.New(filestore.ReadOnly{FS: filestore.OS{}}, root)
 	topic := newTestTopic(t, store, 500)
 	batch := payloads(0, 3)
 	if err := topic.Write(&batch); err == nil {

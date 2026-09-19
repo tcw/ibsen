@@ -2,14 +2,14 @@ package manager
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/spf13/afero"
-	"github.com/tcw/ibsen/adapter/driven/blockstore/aferostore"
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/index"
 	"github.com/tcw/ibsen/core/logfmt"
@@ -18,18 +18,38 @@ import (
 	"github.com/tcw/ibsen/core/topic"
 )
 
-func newTestAfs(t *testing.T) *afero.Afero {
-	t.Helper()
-	afs := &afero.Afero{Fs: afero.NewMemMapFs()}
-	if err := afs.MkdirAll("data", 0744); err != nil {
-		t.Fatal(err)
-	}
-	return afs
+// testRoot is a real data directory, with the handful of filesystem calls these tests make
+// against it. Paths are relative to the directory itself.
+type testRoot struct {
+	t    *testing.T
+	path string
 }
 
-func newTestManager(t *testing.T, afs *afero.Afero) *LogTopicsManager {
+func newTestRoot(t *testing.T) *testRoot {
 	t.Helper()
-	return newTestManagerWithStore(t, aferostore.New(afs, "data"))
+	return &testRoot{t: t, path: t.TempDir()}
+}
+
+func (r *testRoot) join(name string) string { return filepath.Join(r.path, name) }
+
+// WriteFile creates the parent directories first, which the emulated filesystem these tests
+// used to run on did implicitly and a real one does not.
+func (r *testRoot) WriteFile(name string, content []byte, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(r.join(name)), 0744); err != nil {
+		return err
+	}
+	return os.WriteFile(r.join(name), content, perm)
+}
+
+func (r *testRoot) ReadFile(name string) ([]byte, error) { return os.ReadFile(r.join(name)) }
+
+func (r *testRoot) ReadDir(name string) ([]os.DirEntry, error) { return os.ReadDir(r.join(name)) }
+
+func (r *testRoot) Remove(name string) error { return os.Remove(r.join(name)) }
+
+func newTestManager(t *testing.T, root *testRoot) *LogTopicsManager {
+	t.Helper()
+	return newTestManagerWithStore(t, filestore.NewOS(root.path))
 }
 
 func newTestManagerWithStore(t *testing.T, store driven.BlockStore) *LogTopicsManager {
@@ -42,6 +62,9 @@ func newTestManagerWithStore(t *testing.T, store driven.BlockStore) *LogTopicsMa
 	if err != nil {
 		t.Fatal(err)
 	}
+	// stop the background indexing before the test's directory goes away: on a real
+	// filesystem an indexer still writing races the cleanup, which the emulated one hid
+	t.Cleanup(m.Close)
 	return &m
 }
 
@@ -93,17 +116,17 @@ func readTopic(m *LogTopicsManager, topic string) ([]domain.LogEntry, error) {
 }
 
 func TestManager_loadsTopicWithStrayFiles(t *testing.T) {
-	afs := newTestAfs(t)
+	afs := newTestRoot(t)
 	// a topic as a previous run left it, written directly so no background indexing is still
 	// running when the manager loads it: one log block plus files that are not blocks
 	block := logBlockBytes(t, "topic", 0, 30)
 	files := map[string][]byte{
-		"data/topic/00000000000000000000.log": block,
-		"data/topic/README":                   []byte("not a block"),
-		"data/topic/.DS_Store":                []byte("not a block"),
-		"data/topic/backup.tar":               []byte("not a block"),
-		"data/topic/123.log":                  []byte("not a block"),
-		"data/notes.txt":                      []byte("not a topic"),
+		"topic/00000000000000000000.log": block,
+		"topic/README":                   []byte("not a block"),
+		"topic/.DS_Store":                []byte("not a block"),
+		"topic/backup.tar":               []byte("not a block"),
+		"topic/123.log":                  []byte("not a block"),
+		"notes.txt":                      []byte("not a topic"),
 	}
 	for name, content := range files {
 		if err := afs.WriteFile(name, content, 0600); err != nil {
@@ -129,9 +152,9 @@ func TestManager_loadsTopicWithStrayFiles(t *testing.T) {
 }
 
 func TestManager_topicThatFailsToLoadReturnsError(t *testing.T) {
-	afs := newTestAfs(t)
+	afs := newTestRoot(t)
 	// a regular file where a topic directory should be cannot be loaded as a topic
-	if err := afs.WriteFile("data/notes.txt", []byte("not a topic"), 0600); err != nil {
+	if err := afs.WriteFile("notes.txt", []byte("not a topic"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	m := newTestManager(t, afs)
@@ -153,9 +176,9 @@ func TestManager_topicThatFailsToLoadReturnsError(t *testing.T) {
 // The frame bounds are a knob on a topic, and the manager is what builds topics, so a
 // deployment that sets them has to see them arrive there.
 func TestManager_frameBoundsReachTheTopic(t *testing.T) {
-	afs := newTestAfs(t)
+	afs := newTestRoot(t)
 	m, err := NewLogTopicsManager(LogTopicManagerParams{
-		Store:           aferostore.New(afs, "data"),
+		Store:           filestore.NewOS(afs.path),
 		TTL:             time.Minute,
 		MaxBlockSize:    1 << 20,
 		MaxFrameEntries: 7,
@@ -183,7 +206,7 @@ func TestManager_frameBoundsReachTheTopic(t *testing.T) {
 
 // Zero means the topic defaults, the way every other knob the manager passes through works.
 func TestManager_zeroFrameBoundsMeanTheTopicDefaults(t *testing.T) {
-	m := newTestManager(t, newTestAfs(t))
+	m := newTestManager(t, newTestRoot(t))
 
 	writeTopic(t, m, "topic", 0, 3)
 
@@ -202,7 +225,7 @@ func TestManager_zeroFrameBoundsMeanTheTopicDefaults(t *testing.T) {
 // that work itself, so there is nothing to sweep and nothing to wake the CPU on a device that
 // would rather be asleep.
 func TestManager_startsNoBackgroundGoroutine(t *testing.T) {
-	store := aferostore.New(newTestAfs(t), "data")
+	store := filestore.NewOS(newTestRoot(t).path)
 
 	before := runtime.NumGoroutine()
 	m, err := NewLogTopicsManager(LogTopicManagerParams{Store: store, MaxBlockSize: 1 << 20})
@@ -220,7 +243,7 @@ func TestManager_startsNoBackgroundGoroutine(t *testing.T) {
 
 // And the index is still complete once writes stop, which is what the sweep was there for.
 func TestManager_indexIsCompleteOnceWritesStop(t *testing.T) {
-	afs := newTestAfs(t)
+	afs := newTestRoot(t)
 	m := newTestManager(t, afs)
 
 	for i := 0; i < 30; i++ {
@@ -232,7 +255,7 @@ func TestManager_indexIsCompleteOnceWritesStop(t *testing.T) {
 	// 20 each earn a pair. They are spread over several blocks, since 30 frames do not fit in
 	// this manager's block size, so the count is taken across all of them.
 	pairs := 0
-	entries, err := afs.ReadDir("data/topic")
+	entries, err := afs.ReadDir("topic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +263,7 @@ func TestManager_indexIsCompleteOnceWritesStop(t *testing.T) {
 		if filepath.Ext(entry.Name()) != ".idx" {
 			continue
 		}
-		idx, err := afs.ReadFile(filepath.Join("data/topic", entry.Name()))
+		idx, err := afs.ReadFile(filepath.Join("topic", entry.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
