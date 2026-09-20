@@ -239,6 +239,21 @@ them has returned, so a reader never sees an entry a power cut could take back.
   recovery already drops torn pairs and re-indexes, so paying an fsync for it would buy
   nothing.
 
+- **Known gap, found 2026-09-20 by `BenchmarkGrpcWriteFlushPolicy`: nothing reaching the log
+  through the manager can coalesce a flush.** `LogTopicsManager.Write` takes a per-topic
+  mutex and holds it across the whole of `Topic.Write`, which includes waiting for the flush.
+  Two clients writing to one topic are therefore never inside the policy at the same time,
+  so a batch never has anybody to wait for: eight concurrent gRPC writers measure 1.00
+  fsyncs per write at every policy, and an interval only adds itself to each write's latency
+  (2.03 ms at the default against 7.65 ms at `--flushIntervalMs 5`). The core is not at
+  fault — `core/topic/flush_test.go` drives concurrent writers straight at a `Topic` and they
+  do share one sync — but that path has no user. Removing the mutex locally turns the 5 ms
+  case into 0.132 fsyncs/op at 1.07 ms/op, seven times fewer syncs and seven times the
+  throughput, which is the size of what is being left on the table. `Topic.Write` is already
+  guarded by `Topic.mu` and assigns offsets under it, so what the manager's mutex adds beyond
+  that is the open question; answering it is a change to the core's concurrency and wants its
+  own step rather than a quiet removal.
+
 ## 3. Index
 
 - ~~Binary search over the already-sorted offsets instead of the linear scan.~~ `Index.FindNearestByteOffset` is a `sort.Search` for the first pair past the offset, returning the one before it. The pairs are appended in scan order, so they are already sorted; a zero pair still means "nothing at or before this, scan from the start of the block", which is reachable for a block that does not begin on a multiple of the sparsity. `core/index/find_test.go` holds the scan it replaced and asserts the two agree for every query across seven index shapes.
@@ -511,6 +526,20 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
   - A read has no count: it runs from the offset asked for to the end of the log. So the
     single-entry benchmark reads the *last* offset, where the stream ends by itself; from the
     middle it would measure hanging up on a server that is still sending.
+  - **`BenchmarkGrpcWriteFlushPolicy`** measures the §2 pair — `--flushEntries` and
+    `--flushIntervalMs` — with eight clients writing ten entries each at once, and counts the
+    fsyncs through the store's own seam, since the port cannot see one. ext4, 2s per case:
+
+    | policy | ns/op | fsyncs/op | entries/fsync |
+    |---|---|---|---|
+    | default | 2.03 ms | 1.001 | 10.0 |
+    | `entries=1000` | 2.13 ms | 1.001 | 10.0 |
+    | `entries=1000,interval=1ms` | 3.52 ms | 1.001 | 10.0 |
+    | `entries=1000,interval=5ms` | 7.65 ms | 1.003 | 10.0 |
+    | `entries=40,interval=5ms` | 7.47 ms | 1.003 | 10.0 |
+
+    The count alone changes nothing, which is §2 stating its own semantics. The interval
+    changing nothing either is **not** §2, and is the finding: see the gap below.
 
 ## 10. Migration order: strangler, never two changes at once
 
