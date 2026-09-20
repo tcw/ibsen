@@ -477,6 +477,40 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 - Crash and torn-write fault injection at the storage adapter.
 - Race-detector concurrency tests.
 - Cross-dictionary-version read test.
+- **End-to-end benchmarks over gRPC, at the defaults, on a real directory**:
+  `adapter/driver/grpcapi/test/bench_test.go`, run with
+  `go test ./adapter/driver/grpcapi/test/ -run XXX -bench . -benchtime 1s`. A client, the
+  wire, the handler, the core, a zstd frame and a file with an fsync in front of the
+  acknowledgement. Every parameter is left zero, which is what the core reads as its own
+  defaults; only `MaxBlockSize`, the read TTL and the poll interval are named, because zero
+  means something else for those. The codec is pinned against `wiring.DefaultCompression`
+  rather than copied, so a change of default fails the benchmark instead of quietly changing
+  what it measures. The stack is assembled in the file rather than taken from
+  `wiring.IbsenServer`: the composition root also takes the lease, installs signal handlers
+  and prints a banner on stdout, and a table of numbers can do without all three.
+  - **Where `TMPDIR` points decides the write numbers**, because the default policy is one
+    fsync per `Write`. On tmpfs against ext4 on a virtio disk, 130-byte JSON entries, 2-core
+    AMD Ryzen 5 2600X:
+
+    | entries per Write | tmpfs | ext4 |
+    |---|---|---|
+    | 1 | 194 µs | 2.28 ms |
+    | 10 | 210 µs | 2.36 ms |
+    | 100 | 397 µs | 2.81 ms |
+    | 1000 | 1.81 ms | 4.84 ms |
+
+    So on real media the fsync is the write: a call costs about 2.3 ms whatever it carries,
+    and batching is what amortises it — 4.8 ms for a thousand entries is 4.8 µs each against
+    2.3 ms each alone. That is `--batchSize` doing for a gRPC client what §11 measured it
+    doing for `ibsen append`.
+  - Reads do not move with the media, since they come off the page cache either way: reading
+    50000 entries back is 145-160 MB/s at every batch size from 100 to 10000. One entry on
+    its own is 420-450 µs, which is a stream opened, the index consulted, a whole frame
+    decoded for the one entry wanted, and the stream closed again — the random reader's half
+    of the frame-bound trade in §5, now measured through the server rather than under it.
+  - A read has no count: it runs from the offset asked for to the end of the log. So the
+    single-entry benchmark reads the *last* offset, where the stream ends by itself; from the
+    middle it would measure hanging up on a server that is still sending.
 
 ## 10. Migration order: strangler, never two changes at once
 
