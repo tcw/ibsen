@@ -409,7 +409,7 @@ func Execute() {
 
 func init() {
 
-	port, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(50001)))
+	port, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(54321)))
 	host = getenv("IBSEN_HOST", "0.0.0.0")
 	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "1000"))
 	flushEntries, _ = strconv.Atoi(getenv("IBSEN_FLUSH_ENTRIES", strconv.FormatUint(uint64(topic.DefaultFlushEntries), 10)))

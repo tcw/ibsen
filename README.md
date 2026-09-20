@@ -263,7 +263,7 @@ Every server flag has an environment variable, so containers need no command lin
 | flag | env | default | what it does |
 |---|---|---|---|
 | `-d, --rootDirectory` | `IBSEN_ROOT_DIRECTORY` | *(unset)* | where the log is kept; unset means in memory |
-| `-l, --host` / `-p, --port` | `IBSEN_HOST` / `IBSEN_PORT` | `0.0.0.0` / `50001` | gRPC listener |
+| `-l, --host` / `-p, --port` | `IBSEN_HOST` / `IBSEN_PORT` | `0.0.0.0` / `54321` | gRPC listener |
 | `-m, --maxBlockSize` | `IBSEN_MAX_BLOCK_SIZE` | `1000` | MB per block before rolling over |
 | `-f, --flushEntries` | `IBSEN_FLUSH_ENTRIES` | `1` | entries that may wait for a flush before `--flushIntervalMs` is up; on its own it does nothing |
 | `--flushIntervalMs` | `IBSEN_FLUSH_INTERVAL_MS` | `0` | how long a batch may wait for company; `0` never waits |
@@ -386,7 +386,7 @@ a directory a server is writing without taking a lock or changing a byte.
 
 ```shell
 docker build -t ibsen .
-docker run --name ibsen -p 50001:50001 ibsen
+docker run --name ibsen -p 54321:54321 ibsen
 ```
 
 ### TLS
