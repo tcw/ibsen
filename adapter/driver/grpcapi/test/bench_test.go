@@ -6,6 +6,9 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -62,9 +65,17 @@ const (
 	benchCorpus = 50_000
 )
 
+// benchServer is a running server and the count of what it asked the disk to do.
+type benchServer struct {
+	target string
+	syncs  *countingFS
+}
+
 // startBenchServer starts a server over a real directory on a free local port, with the
-// adapters and the parameters a deployment gets, and stops it when the benchmark ends.
-func startBenchServer(b *testing.B) string {
+// adapters a deployment gets, and stops it when the benchmark ends. flushEntries and
+// flushInterval are the durability policy; both zero is the default, which flushes every
+// write before acknowledging it.
+func startBenchServer(b *testing.B, flushEntries uint32, flushInterval time.Duration) benchServer {
 	b.Helper()
 	if wiring.DefaultCompression != "zstd" {
 		b.Fatalf("the default compression is %q, and these benchmarks are written for zstd",
@@ -75,12 +86,15 @@ func startBenchServer(b *testing.B) string {
 		b.Fatal(err)
 	}
 	b.Cleanup(codec.Close)
+	syncs := newCountingFS()
 	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
-		Store:        filestore.NewOS(b.TempDir()),
-		MaxBlockSize: benchMaxBlockSizeMB * 1024 * 1024,
-		TTL:          benchTTL,
-		Codec:        codec,
-		Codecs:       driven.NewCodecs(codec),
+		Store:         filestore.New(syncs, b.TempDir()),
+		MaxBlockSize:  benchMaxBlockSizeMB * 1024 * 1024,
+		TTL:           benchTTL,
+		Codec:         codec,
+		Codecs:        driven.NewCodecs(codec),
+		FlushEntries:  flushEntries,
+		FlushInterval: flushInterval,
 		// the log has nothing to say per entry, and what it would say does not belong in a
 		// table of numbers
 		Logger: zerologger.New(zerolog.New(io.Discard)),
@@ -112,14 +126,20 @@ func startBenchServer(b *testing.B) string {
 		server.Shutdown()
 		<-stopped
 	})
-	return target
+	return benchServer{target: target, syncs: syncs}
 }
 
 // benchClient is one client for the whole benchmark, since connecting is not what is being
 // measured. It is what a program holding a connection open does.
 func benchClient(b *testing.B) IbsenClient {
 	b.Helper()
-	client, err := newIbsenClient(startBenchServer(b))
+	return connect(b, startBenchServer(b, 0, 0).target)
+}
+
+// connect opens one client against a running benchmark server.
+func connect(b *testing.B, target string) IbsenClient {
+	b.Helper()
+	client, err := newIbsenClient(target)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -246,5 +266,121 @@ func drainRead(b *testing.B, client IbsenClient, topic string, offset uint64, ba
 			b.Fatal(err)
 		}
 		read += len(in.Entries)
+	}
+}
+
+// countingFS is the real filesystem with a tally of the syncs made through it. What is
+// counted is what a disk was actually asked to do, which is the only honest way to say what
+// a flush policy bought: the port cannot see a sync, so this counts at the store's own seam,
+// the way the filestore tests do.
+type countingFS struct {
+	filestore.FS
+	syncs atomic.Int64
+}
+
+func newCountingFS() *countingFS { return &countingFS{FS: filestore.OS{}} }
+
+func (c *countingFS) OpenFile(name string, flag int, perm os.FileMode) (filestore.File, error) {
+	file, err := c.FS.OpenFile(name, flag, perm)
+	if err != nil {
+		return nil, err
+	}
+	return &countingFile{File: file, fs: c}, nil
+}
+
+type countingFile struct {
+	filestore.File
+	fs *countingFS
+}
+
+func (f *countingFile) Sync() error {
+	f.fs.syncs.Add(1)
+	return f.File.Sync()
+}
+
+// benchFlushWriters is how many clients write at once. The flush policy is about writers that
+// arrive together — one writer has nobody to wait for — so a benchmark of it with a single
+// stream would measure nothing the default does not already do.
+const benchFlushWriters = 8
+
+// benchFlushWrite is the entries one client sends per call, small enough that a batch needs
+// several writers before it reaches the entry bound.
+const benchFlushWrite = 10
+
+// BenchmarkGrpcWriteFlushPolicy measures the pair in §2: --flushEntries, how many entries may
+// wait, and --flushIntervalMs, how long a batch may be held back hoping for more.
+//
+// They are a pair, and the count does nothing on its own: a batch is due the moment its
+// interval is zero, so raising the count alone changes not one fsync. Set an interval and the
+// count becomes the escape from it — enough entries have arrived, stop waiting. The cases
+// below are that claim, in order: the default, the count alone, the interval alone, and the
+// two together with the count low enough that eight writers of ten entries reach it first.
+//
+// What it costs is latency: every writer in a batch waits for the batch. So the number to
+// read beside fsyncs/op is ns/op, which here is wall time divided by the writes all eight
+// clients made — throughput, not the latency one of them saw.
+//
+// On tmpfs an fsync is nearly free and the policy has almost nothing to buy. TMPDIR on real
+// media is what makes this benchmark say anything.
+//
+// What it says today is that the interval buys nothing through a server, and costs: every
+// case below comes out at about one fsync per write, and the two with an interval are slower
+// by roughly the interval. That is not the flusher failing. LogTopicsManager.Write holds a
+// per-topic mutex across the whole of Topic.Write, including the wait for the flush, so two
+// clients writing to one topic are never inside the policy at the same time and there is
+// nobody for a batch to wait for. The core does coalesce — core/topic/flush_test.go drives
+// concurrent writers straight at a Topic and they share one sync — but nothing that reaches
+// the log through the manager can. Taking that mutex out locally turns the 5 ms case from
+// 1.006 fsyncs/op at 7.74 ms/op into 0.132 at 1.07 ms/op, which is what these numbers would
+// look like if writers could meet. Whether the mutex is needed is a separate question from
+// this benchmark; measuring it is what this benchmark is for.
+func BenchmarkGrpcWriteFlushPolicy(b *testing.B) {
+	for _, policy := range []struct {
+		name     string
+		entries  uint32
+		interval time.Duration
+	}{
+		{name: "default", entries: 0, interval: 0},
+		{name: "entries=1000", entries: 1000, interval: 0},
+		{name: "entries=1000,interval=1ms", entries: 1000, interval: time.Millisecond},
+		{name: "entries=1000,interval=5ms", entries: 1000, interval: 5 * time.Millisecond},
+		{name: "entries=40,interval=5ms", entries: 40, interval: 5 * time.Millisecond},
+	} {
+		b.Run(policy.name, func(b *testing.B) {
+			server := startBenchServer(b, policy.entries, policy.interval)
+			clients := make([]IbsenClient, benchFlushWriters)
+			for i := range clients {
+				clients[i] = connect(b, server.target)
+			}
+			entries := benchEntries("bench", benchFlushWrite)
+			ctx := context.Background()
+			b.SetBytes(int64(benchFlushWrite * benchEntrySize))
+			b.ResetTimer()
+			before := server.syncs.syncs.Load()
+
+			var writers sync.WaitGroup
+			for i, client := range clients {
+				calls := b.N / benchFlushWriters
+				if i < b.N%benchFlushWriters {
+					calls++
+				}
+				writers.Add(1)
+				go func(client IbsenClient, calls int) {
+					defer writers.Done()
+					for c := 0; c < calls; c++ {
+						if _, err := client.Client.Write(ctx, entries); err != nil {
+							b.Error(err)
+							return
+						}
+					}
+				}(client, calls)
+			}
+			writers.Wait()
+
+			b.StopTimer()
+			synced := server.syncs.syncs.Load() - before
+			b.ReportMetric(float64(synced)/float64(b.N), "fsyncs/op")
+			b.ReportMetric(float64(b.N*benchFlushWrite)/float64(max(synced, 1)), "entries/fsync")
+		})
 	}
 }
