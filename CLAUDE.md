@@ -580,6 +580,20 @@ logs" something you can run.
   version dropped whatever was in the unflushed batch, which made the outcome depend on a
   tuning knob that has nothing to do with the stream; `TestTruncatedLengthFrameIsReported`
   runs at both boundaries.
+- **A mistake is a message, a failure is a diagnostic.** A topic that is not there, a data
+  directory that is not there, a flag value that is not allowed, or the lease being held by
+  somebody else is reported as one line on stderr — `ibsen: topic greetings not found in
+  /srv/data` — and exit 1. It used to be a zerolog `FTL` carrying what `errore` had collected,
+  down to `at github.com/tcw/ibsen/adapter/driver/cli.catPass(localCmd.go:184)`, which reads
+  as Ibsen having broken rather than as an answer about the log. `cli.userErrorf` builds those
+  messages instead of `errore.NewF`, `cli.userMessage` recognises them (and the stdio errors
+  that are about the command rather than the log), and `cli.fail` prints them; everything else
+  still fatals with its full trace, because that one is a diagnostic and wants to look like
+  one. `wiring.ErrRootNotFound` joins `ErrWriteLockUnavailable` and `ErrUnknownCompression` as
+  a sentinel so the translation is `errors.Is` rather than string matching. It stays an error
+  and a non-zero exit: a script catting a topic that does not exist should not look like it
+  read an empty one. `adapter/driver/cli/userError_test.go` pins that no message names a
+  source line.
 - Durability needed nothing: `Write` returns once the flush covering its entries has, so
   `append` exiting zero means they are on durable media (§2).
 - **`--batchSize` is the throughput dial, and the flush flags are not.** One `Write` is one

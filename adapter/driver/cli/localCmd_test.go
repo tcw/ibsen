@@ -79,3 +79,22 @@ func TestHoldsTopic(t *testing.T) {
 		t.Error("gamma was found among topics that do not hold it")
 	}
 }
+
+// TestCatOfAMissingTopicIsAnAnswer: a topic that is not there is something the person running
+// the command can act on, not a failure of the log, so catPass reports it as a plain message.
+// It is still an error, and the command still exits non-zero, because a script piping a topic
+// that does not exist should not look like it read an empty one.
+func TestCatOfAMissingTopicIsAnAnswer(t *testing.T) {
+	root := t.TempDir()
+	_, err := catPass(root, "greetings", stdio.CatParams{BatchSize: 10})
+	if err == nil {
+		t.Fatal("reading a topic that does not exist succeeded")
+	}
+	msg, ok := userMessage(err)
+	if !ok {
+		t.Fatalf("reported as a failure: %v", err)
+	}
+	if msg != "topic greetings not found in "+root {
+		t.Errorf("message %q, want the topic and the directory and nothing else", msg)
+	}
+}
