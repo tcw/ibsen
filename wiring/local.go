@@ -1,6 +1,7 @@
 package wiring
 
 import (
+	"errors"
 	"path/filepath"
 	"time"
 
@@ -62,6 +63,12 @@ type LocalParams struct {
 	Logger driven.Logger
 }
 
+// ErrRootNotFound is returned by OpenLocal for a data directory that is not there. It is a
+// sentinel because a caller wants to tell it apart from a failure: a directory that does not
+// exist is something the person running the command can correct, and nothing has gone wrong
+// with the log.
+var ErrRootNotFound = errors.New("data directory does not exist")
+
 // OpenLocal opens a data directory for one process.
 //
 // A writable open takes the single-writer lease, so it is refused with ErrWriteLockUnavailable
@@ -74,8 +81,8 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 		return nil, errore.Wrap(err)
 	}
 	if !exists {
-		return nil, errore.NewF("path [%s] does not exist, will not open unless existing path is specified",
-			params.RootPath)
+		return nil, errore.WrapWithContextF(ErrRootNotFound,
+			"path [%s] will not be opened unless it exists", params.RootPath)
 	}
 
 	codec, codecs, zstd, err := buildCodecs(params.Compression, params.CompressionLevel, nil, nil)

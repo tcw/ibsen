@@ -43,7 +43,7 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			setLogLevel(zerolog.WarnLevel)
 			if err := runAppend(domain.TopicName(args[0])); err != nil {
-				log.Fatal().Err(err).Msgf("unable to append to topic %s", args[0])
+				fail(err, "unable to append to topic %s", args[0])
 			}
 		},
 	}
@@ -58,10 +58,10 @@ var (
 			setLogLevel(zerolog.WarnLevel)
 			from, err := parseOffsetArg(args)
 			if err != nil {
-				log.Fatal().Err(err).Msgf("unable to read topic %s", args[0])
+				fail(err, "unable to read topic %s", args[0])
 			}
 			if err := runCat(domain.TopicName(args[0]), from); err != nil {
-				log.Fatal().Err(err).Msgf("unable to read topic %s", args[0])
+				fail(err, "unable to read topic %s", args[0])
 			}
 		},
 	}
@@ -75,7 +75,7 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			setLogLevel(zerolog.WarnLevel)
 			if err := runTopics(); err != nil {
-				log.Fatal().Err(err).Msg("unable to list topics")
+				fail(err, "unable to list topics")
 			}
 		},
 	}
@@ -109,7 +109,7 @@ func runAppend(topic domain.TopicName) error {
 		CompressionLevel: compressionLevel,
 	})
 	if err != nil {
-		return err
+		return localOpenError(root, err)
 	}
 	defer local.Close()
 	written, err := stdio.Append(local, topic, os.Stdin, stdio.AppendParams{
@@ -177,11 +177,11 @@ func runCat(topic domain.TopicName, from domain.Offset) error {
 func catPass(root string, topic domain.TopicName, params stdio.CatParams) (domain.Offset, error) {
 	local, err := wiring.OpenLocal(wiring.LocalParams{RootPath: root, ReadOnly: true})
 	if err != nil {
-		return params.From, err
+		return params.From, localOpenError(root, err)
 	}
 	defer local.Close()
 	if !holdsTopic(local.List(), topic) {
-		return params.From, errore.NewF("topic %s not found in %s", topic, root)
+		return params.From, userErrorf("topic %s not found in %s", topic, root)
 	}
 	return stdio.Cat(local, topic, os.Stdout, params)
 }
@@ -193,7 +193,7 @@ func runTopics() error {
 	}
 	local, err := wiring.OpenLocal(wiring.LocalParams{RootPath: root, ReadOnly: true})
 	if err != nil {
-		return err
+		return localOpenError(root, err)
 	}
 	defer local.Close()
 	return stdio.List(local, os.Stdout)
@@ -213,7 +213,7 @@ func holdsTopic(topics []domain.TopicName, wanted domain.TopicName) bool {
 // have nothing to append to and nothing to read back.
 func localRoot() (string, error) {
 	if rootDirectory == "" {
-		return "", errore.New("a data directory is required, give one with --rootDirectory or IBSEN_ROOT_DIRECTORY")
+		return "", userErrorf("a data directory is required, give one with --rootDirectory or IBSEN_ROOT_DIRECTORY")
 	}
 	return AbsOrEmpty(rootDirectory), nil
 }
@@ -226,7 +226,7 @@ func parseFraming(name string) (stdio.Framing, error) {
 	case "length":
 		return stdio.Length, nil
 	default:
-		return 0, errore.NewF("framing %q, want one of lines, length", name)
+		return 0, userErrorf("framing %q is not one of lines, length", name)
 	}
 }
 
@@ -238,7 +238,7 @@ func parseOffsetArg(args []string) (domain.Offset, error) {
 	}
 	parsed, err := strconv.ParseUint(args[1], 10, 64)
 	if err != nil {
-		return 0, errore.NewF("offset %q is not a number", args[1])
+		return 0, userErrorf("offset %q is not a number", args[1])
 	}
 	return domain.Offset(parsed), nil
 }

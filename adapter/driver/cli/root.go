@@ -358,13 +358,13 @@ func parseReadArgs(args []string) (uint64, uint32, error) {
 // fail instead of the server refusing to start.
 func validateFrameBounds(entries, bytes int) error {
 	if entries < 1 {
-		return errore.NewF("maxFrameEntries must be at least 1, got %d", entries)
+		return userErrorf("maxFrameEntries must be at least 1, got %d", entries)
 	}
 	if bytes < 1 {
-		return errore.NewF("maxFrameBytes must be at least 1, got %d", bytes)
+		return userErrorf("maxFrameBytes must be at least 1, got %d", bytes)
 	}
 	if bytes > domain.MaxFrameSize {
-		return errore.NewF("maxFrameBytes must be at most %d, got %d", domain.MaxFrameSize, bytes)
+		return userErrorf("maxFrameBytes must be at most %d, got %d", domain.MaxFrameSize, bytes)
 	}
 	return nil
 }
