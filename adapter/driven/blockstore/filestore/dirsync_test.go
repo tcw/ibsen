@@ -128,10 +128,12 @@ func TestSync_SyncsTheDirectoryAgainForTheNextBlock(t *testing.T) {
 	}
 }
 
-// TestSync_RetriesTheDirectoryWhenItFails pins that a failed directory sync is not forgotten:
-// the block stays new, so the next sync of it tries again. The bytes are durable either way,
-// which is why the failure is not returned.
-func TestSync_RetriesTheDirectoryWhenItFails(t *testing.T) {
+// TestSync_ReportsAFailedDirectorySync pins that a failed directory sync fails the block's:
+// the bytes are durable, but a block whose name is not is lost to a power cut, so nothing may
+// be acknowledged on the strength of it. It used to be swallowed, and the history checker
+// found the acknowledged write a power cut then took. The block stays new, so the next sync
+// of it syncs the directory again.
+func TestSync_ReportsAFailedDirectorySync(t *testing.T) {
 	fs := &failingDirFS{countingFS: newCountingFS(), failDirSync: true}
 	root := t.TempDir()
 	store := filestore.New(fs, root)
@@ -141,17 +143,14 @@ func TestSync_RetriesTheDirectoryWhenItFails(t *testing.T) {
 	if _, err := store.Append(ref, []byte("first")); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Sync(ref); err != nil {
-		t.Fatalf("a failed directory sync must not fail the block's: %v", err)
+	if err := store.Sync(ref); err == nil {
+		t.Fatal("a failed directory sync was reported as a durable block")
 	}
 	if got := fs.count(topicDir); got != 1 {
 		t.Fatalf("the directory was synced %d times, want 1", got)
 	}
 
 	fs.failDirSync = false
-	if _, err := store.Append(ref, []byte("second")); err != nil {
-		t.Fatal(err)
-	}
 	if err := store.Sync(ref); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +159,7 @@ func TestSync_RetriesTheDirectoryWhenItFails(t *testing.T) {
 	}
 }
 
-// failingDirFS fails the sync of a directory, which is the one error Sync swallows.
+// failingDirFS fails the sync of a directory.
 type failingDirFS struct {
 	*countingFS
 	failDirSync bool

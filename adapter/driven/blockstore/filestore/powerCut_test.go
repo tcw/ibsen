@@ -1,6 +1,9 @@
 package filestore_test
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/tcw/ibsen/adapter/driven/blockstore/faultfs"
@@ -34,5 +37,45 @@ func TestPowerCut_aSyncedBlockInANewTopicSurvives(t *testing.T) {
 	}
 	if got := readAll(t, filestore.NewOS(dir), ref, 0); got != "acknowledged" {
 		t.Fatalf("a synced block holds %q after a power cut", got)
+	}
+}
+
+// crashAtDirSync cuts the power the moment a directory is opened to be synced: after the
+// block's own fsync, before the fsync that makes its name durable.
+type crashAtDirSync struct {
+	*faultfs.PageCache
+}
+
+func (c crashAtDirSync) OpenFile(name string, flag int, perm os.FileMode) (filestore.File, error) {
+	if info, err := os.Stat(name); err == nil && info.IsDir() {
+		c.Crash()
+	}
+	return c.PageCache.OpenFile(name, flag, perm)
+}
+
+// The block's bytes are on the media and its name is not, so the block is gone after the power
+// cut, and Sync must not have said otherwise. It used to swallow the failed directory sync and
+// report the block durable, which acknowledged a write the power cut then took. Found by the
+// nemesis test in adapter/driver/history.
+func TestPowerCut_aSyncCutBeforeTheDirectoryIsNotDurable(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "topic"), 0744); err != nil {
+		t.Fatal(err)
+	}
+	cache := faultfs.NewPageCache()
+	store := filestore.New(crashAtDirSync{cache}, dir)
+	ref := driven.BlockRef{Topic: "topic", Kind: driven.Log, Block: 0}
+	if _, err := store.Append(ref, []byte("unacknowledged")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Sync(ref); err == nil {
+		t.Fatal("Sync reported a block durable whose name was not")
+	}
+
+	if err := cache.Recover(faultfs.LoseEverything()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := filestore.NewOS(dir).Open(ref, 0); !errors.Is(err, driven.ErrBlockNotFound) {
+		t.Fatalf("the model kept the block after all (%v), so this test proves nothing", err)
 	}
 }
