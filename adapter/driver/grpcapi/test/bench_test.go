@@ -323,17 +323,15 @@ const benchFlushWrite = 10
 // On tmpfs an fsync is nearly free and the policy has almost nothing to buy. TMPDIR on real
 // media is what makes this benchmark say anything.
 //
-// What it says today is that the interval buys nothing through a server, and costs: every
-// case below comes out at about one fsync per write, and the two with an interval are slower
-// by roughly the interval. That is not the flusher failing. LogTopicsManager.Write holds a
-// per-topic mutex across the whole of Topic.Write, including the wait for the flush, so two
-// clients writing to one topic are never inside the policy at the same time and there is
-// nobody for a batch to wait for. The core does coalesce — core/topic/flush_test.go drives
-// concurrent writers straight at a Topic and they share one sync — but nothing that reaches
-// the log through the manager can. Taking that mutex out locally turns the 5 ms case from
-// 1.006 fsyncs/op at 7.74 ms/op into 0.132 at 1.07 ms/op, which is what these numbers would
-// look like if writers could meet. Whether the mutex is needed is a separate question from
-// this benchmark; measuring it is what this benchmark is for.
+// It used to say that nothing reaching the log through a server could coalesce a flush:
+// LogTopicsManager.Write held a per-topic mutex across the whole of Topic.Write, flush
+// included, so every case came out at one fsync per write and an interval only added itself
+// to each one. With that mutex gone the default policy already coalesces, since writers that
+// arrive while a sync runs append behind it and share the next one: eight clients measured
+// 0.33 fsyncs/op at 0.78 ms/op on ext4, against 1.00 at 2.03 ms before. An interval halves
+// the syncs again, to 0.14 at 5 ms, but is slower than the default here, because eight
+// clients that each wait for their own acknowledgement have nothing to send while they are
+// held back. It pays where syncs are dearer than on this disk, or writers are more numerous.
 func BenchmarkGrpcWriteFlushPolicy(b *testing.B) {
 	for _, policy := range []struct {
 		name     string

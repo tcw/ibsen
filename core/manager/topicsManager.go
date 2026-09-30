@@ -42,10 +42,9 @@ type LogTopicManagerParams struct {
 }
 
 type LogTopicsManager struct {
-	Params           LogTopicManagerParams
-	TopicWriteLocker *sync.Map
-	Topics           *sync.Map
-	StatusAccess     topic.StatusAccess
+	Params       LogTopicManagerParams
+	Topics       *sync.Map
+	StatusAccess topic.StatusAccess
 	// loads holds a *topicLoad for each topic whose first load is running
 	loads *sync.Map
 	state *managerState
@@ -76,12 +75,11 @@ func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error)
 		params.Logger = driven.NopLogger{}
 	}
 	manager := LogTopicsManager{
-		Params:           params,
-		TopicWriteLocker: &sync.Map{},
-		Topics:           &sync.Map{},
-		loads:            &sync.Map{},
-		state:            &managerState{},
-		StatusAccess:     &topic.Status{Store: params.Store, Log: params.Logger},
+		Params:       params,
+		Topics:       &sync.Map{},
+		loads:        &sync.Map{},
+		state:        &managerState{},
+		StatusAccess: &topic.Status{Store: params.Store, Log: params.Logger},
 	}
 	return manager, nil
 }
@@ -129,10 +127,8 @@ func (l *LogTopicsManager) Write(topicName domain.TopicName, entries domain.Entr
 	if err != nil {
 		return err
 	}
-	locker, _ := l.TopicWriteLocker.LoadOrStore(string(topicName), &sync.Mutex{})
-	var mutex = locker.(*sync.Mutex)
-	mutex.Lock()
-	defer mutex.Unlock()
+	// no lock of our own: the topic assigns offsets under its own, and writers to one topic
+	// have to be inside it together for their entries to share a flush
 	return loaded.Write(entries)
 }
 
