@@ -1,6 +1,8 @@
 package topic
 
 import (
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -12,6 +14,13 @@ import (
 // every write is flushed before it is acknowledged, which is the safe default: raising it
 // trades the latency of a write for fewer syncs.
 const DefaultFlushEntries uint32 = 1
+
+// ErrFlushFailed is what every write to a topic gets once a flush of it has failed. A failed
+// fsync is not retryable: Linux marks the pages it could not write clean, so the next fsync
+// succeeds without writing them, and a write acknowledged after it would sit behind a hole a
+// power cut exposes. The topic takes no more writes until it is opened again, which in a
+// server means a restart — PostgreSQL's answer to the same fsync, for the same reason.
+var ErrFlushFailed = errors.New("a flush of this topic failed; it takes no more writes until it is opened again")
 
 // flusher decides when appended entries reach durable media and tells a writer when its own
 // entries got there. A write is acknowledged, and becomes visible to readers, only once the
@@ -34,6 +43,8 @@ type flusher struct {
 	durable domain.Offset
 	pending *pendingFlush
 	running bool
+	// failed is set by the first flush that fails, and never cleared: see ErrFlushFailed
+	failed error
 	// changed is closed and replaced whenever a flush finishes or a driver stops, so a
 	// writer waiting on a batch it cannot drive yet knows to look again
 	changed chan struct{}
@@ -79,11 +90,24 @@ func (f *flusher) durableOffset() domain.Offset {
 	return f.durable
 }
 
+// failure is the error a flush of this topic failed with, or nil.
+func (f *flusher) failure() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.failed
+}
+
 // appended records count entries written into ref, taking the log up to target, and returns
 // the batch that will make them durable. It returns nil when there is nothing to wait for.
 func (f *flusher) appended(ref driven.BlockRef, target domain.Offset, count int) *pendingFlush {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failed != nil {
+		// a flush failed after the caller checked: these entries are behind the hole too
+		failed := &pendingFlush{done: make(chan struct{}), err: f.failed}
+		close(failed.done)
+		return failed
+	}
 	if !f.syncable {
 		if target > f.durable {
 			f.durable = target
@@ -148,18 +172,6 @@ func (f *flusher) wait(p *pendingFlush) error {
 	}
 }
 
-// flushRemaining pushes whatever a failed flush left behind. A writer waits for its own
-// batch, so the only way unflushed entries outlive their writer is a flush that failed.
-func (f *flusher) flushRemaining() {
-	f.mu.Lock()
-	pending, running := f.pending, f.running
-	f.mu.Unlock()
-	if pending == nil || running {
-		return
-	}
-	f.drive()
-}
-
 // drive flushes batches until none is left. Only one goroutine drives at a time; the others
 // wait on the batch they joined.
 //
@@ -181,21 +193,25 @@ func (f *flusher) drive() {
 		err := f.syncBlocks(batch)
 
 		f.mu.Lock()
-		batch.err = err
-		if err == nil && batch.target > f.durable {
+		if err != nil {
+			// the batch is lost to the media, and so is every batch behind it: no later sync
+			// can make them durable, so none of them may ever be acknowledged or read
+			f.failed = fmt.Errorf("%w: %w", ErrFlushFailed, err)
+			batch.err = f.failed
+			close(batch.done)
+			if f.pending != nil {
+				f.pending.err = f.failed
+				close(f.pending.done)
+				f.pending = nil
+			}
+			f.announceLocked()
+			break
+		}
+		if batch.target > f.durable {
 			f.durable = batch.target
-		} else if err != nil {
-			// the entries are written but their durability is unknown, so they stay in the
-			// next batch and are tried again
-			f.requeueLocked(batch)
 		}
 		close(batch.done)
 		f.announceLocked()
-		if err != nil {
-			// a sync that just failed is not worth an immediate retry, which would spin;
-			// the next write, or Close, tries again
-			break
-		}
 	}
 	f.running = false
 	f.announceLocked()
@@ -206,28 +222,6 @@ func (f *flusher) drive() {
 func (f *flusher) announceLocked() {
 	close(f.changed)
 	f.changed = make(chan struct{})
-}
-
-// requeueLocked folds a failed batch's blocks back into the next one, so a later flush covers
-// them. Its target is kept too: those entries are still not known to be durable.
-func (f *flusher) requeueLocked(batch *pendingFlush) {
-	if f.pending == nil {
-		f.pending = &pendingFlush{
-			blocks: make(map[driven.BlockRef]struct{}),
-			opened: batch.opened,
-			done:   make(chan struct{}),
-		}
-	}
-	for ref := range batch.blocks {
-		f.pending.blocks[ref] = struct{}{}
-	}
-	f.pending.entries += batch.entries
-	if batch.target > f.pending.target {
-		f.pending.target = batch.target
-	}
-	if batch.opened.Before(f.pending.opened) {
-		f.pending.opened = batch.opened
-	}
 }
 
 // dueLocked reports whether a batch has waited long enough or grown big enough to flush. An

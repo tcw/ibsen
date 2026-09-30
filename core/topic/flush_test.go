@@ -145,27 +145,61 @@ func TestAFailedFlushIsReportedAndLeavesNothingReadable(t *testing.T) {
 	}
 }
 
-// The entries a failed flush left behind are written, just not known to be durable. A later
-// flush covers them, and then they are readable.
-func TestEntriesFromAFailedFlushBecomeReadableOnceOneSucceeds(t *testing.T) {
+// A failed flush stops the topic. Retrying it is what Linux makes unsafe: the pages the
+// fsync could not write are marked clean, so the retry succeeds without writing them and a
+// write acknowledged after it sits behind a hole. So the next write is refused before it
+// reaches the store, nothing becomes readable, and Close does not try again either.
+func TestAFailedFlushStopsTheTopic(t *testing.T) {
 	store := newSyncGate()
 	topic := newGatedTopic(t, store, 1, 0)
-	store.failWith(errors.New("disk on fire"))
-	if err := writeOne(topic, "one"); err == nil {
-		t.Fatal("the first write should have failed")
+	diskOnFire := errors.New("disk on fire")
+	store.failWith(diskOnFire)
+	if err := writeOne(topic, "one"); !errors.Is(err, ErrFlushFailed) || !errors.Is(err, diskOnFire) {
+		t.Fatalf("the write returned %v, want ErrFlushFailed carrying the sync's error", err)
 	}
 
 	store.failWith(nil)
-	if err := writeOne(topic, "two"); err != nil {
-		t.Fatalf("the second write failed: %v", err)
+	if err := writeOne(topic, "two"); !errors.Is(err, ErrFlushFailed) {
+		t.Fatalf("a write after a failed flush returned %v, want ErrFlushFailed", err)
 	}
+	if next := nextOffsetOf(topic); next != 1 {
+		t.Errorf("the refused write reached the store: NextOffset is %d", next)
+	}
+	if _, err := readAllFrom(topic, 0, 10); !errors.Is(err, domain.NoEntriesFound) {
+		t.Fatalf("a read saw an entry behind the failed flush: %v", err)
+	}
+	syncs := store.syncCalls()
+	topic.Close()
+	if store.syncCalls() != syncs {
+		t.Error("Close tried the failed flush again")
+	}
+}
 
-	got, err := readAllFrom(topic, 0, 10)
-	if err != nil {
-		t.Fatal(err)
+// A batch that formed while the failing sync ran is behind the same hole, so it fails with it
+// rather than being synced on its own and acknowledged.
+func TestABatchBehindAFailedFlushFailsWithIt(t *testing.T) {
+	store := newSyncGate()
+	topic := newGatedTopic(t, store, 1, 0)
+	release := store.holdSyncs()
+	store.failWith(errors.New("disk on fire"))
+
+	errs := make(chan error, 2)
+	go func() { errs <- writeOne(topic, "first") }()
+	eventually(t, "the first write to be appended", func() bool { return nextOffsetOf(topic) == 1 })
+	go func() { errs <- writeOne(topic, "behind") }()
+	eventually(t, "the second write to be appended", func() bool { return nextOffsetOf(topic) == 2 })
+
+	close(release)
+	for i := 0; i < 2; i++ {
+		if err := <-errs; !errors.Is(err, ErrFlushFailed) {
+			t.Fatalf("a write returned %v, want ErrFlushFailed", err)
+		}
 	}
-	if len(got) != 2 || string(got[0].Entry) != "one" || string(got[1].Entry) != "two" {
-		t.Fatalf("got %d entries, want both once a flush succeeded", len(got))
+	if calls := store.syncCalls(); calls != 1 {
+		t.Errorf("the batch behind the failed flush was synced on its own: %d syncs", calls)
+	}
+	if topic.durableOffset() != 0 {
+		t.Errorf("durable offset advanced to %d over a failed flush", topic.durableOffset())
 	}
 }
 

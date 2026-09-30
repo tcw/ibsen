@@ -200,8 +200,9 @@ func (t *Topic) UpdateIndex() (bool, error) {
 		for atomic.SwapInt32(&t.indexPending, 0) == 1 {
 			if err := t.indexOnce(); err != nil {
 				// the work is still outstanding, so put the mark back for the next write or
-				// the next explicit call. Retrying here would spin on a store that is failing,
-				// which is the rule a failed flush follows too.
+				// the next explicit call. Retrying here would spin on a store that is failing.
+				// An index can be retried where a flush cannot: it is derived from the log and
+				// never synced, so nothing is acknowledged on the strength of it.
 				atomic.StoreInt32(&t.indexPending, 1)
 				atomic.StoreInt32(&t.indexing, 0)
 				return true, err
@@ -473,6 +474,9 @@ func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 	if t.closed {
 		return nil, ErrTopicClosed
 	}
+	if err := t.flush.failure(); err != nil {
+		return nil, err
+	}
 
 	// if topic is empty create the first log block
 	if t.logBlockIsEmpty() {
@@ -524,15 +528,14 @@ func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 }
 
 // Close refuses further writes and waits for the background indexing started by earlier
-// writes. It does not wait for UpdateIndex calls made by others; stop those first.
+// writes. It does not wait for UpdateIndex calls made by others; stop those first. Every
+// writer waits for its own batch, so nothing is left to flush: a flush that failed is not
+// tried again here either (see ErrFlushFailed).
 func (t *Topic) Close() {
 	t.mu.Lock()
 	t.closed = true
 	t.mu.Unlock()
 	t.indexWg.Wait()
-	// every writer waits for its own batch, so the only entries left unflushed are those a
-	// failed flush put back; try once more before the topic goes away
-	t.flush.flushRemaining()
 }
 
 func (t *Topic) debugLogLoadResult(logBlocks []driven.Block, indexBlocks []driven.Block) {

@@ -102,7 +102,7 @@ errore/                     stdlib-only, shared by both sides
 - In-memory mode (`--rootDirectory` unset) wires `memstore`, not the filesystem adapter over an emulated filesystem, so it reaches no filesystem at all and takes no write lock: the log lives in the process and is shared with nobody. `IbsenServer.Afs` may be nil in that mode. Pinned by `wiring/ibsen_test.go`, which writes through a running in-memory server and then walks the filesystem it was given to check nothing landed on it.
 - Composition: `wiring.IbsenServer` builds every adapter. `Lock` is an optional injection point — `defaults()` builds a `FileLock` at `<root>/.writeLock` when none is given, which `wiring/lock_test.go` pins — and the OTEL exporter's lifetime is held by `Start`, not by `grpcapi.StartGRPC`.
 - Index checksums: `core/index/checksum_test.go` covers the round trip, every byte of a pair being covered by its CRC, parsing stopping at a corrupt pair, torn trailing pairs, and the old format being rejected; `core/topic/indexChecksum_test.go` shows a corrupted pair and an unchecksummed block both being rebuilt into exactly what a clean scan of the log gives, with every offset still readable.
-- Durability: `core/topic/flush_test.go` drives a `Syncable` store whose `Sync` the test gates, and covers the guarantee itself (a reader sees nothing until the flush returns, and `Write` does not return either), a failed flush being reported and leaving nothing readable, those entries appearing once a later flush succeeds, concurrent writers sharing one sync, the interval releasing a writer that never reaches the threshold, a non-syncable store never waiting, and a reloaded topic counting its recovered block as durable.
+- Durability: `core/topic/flush_test.go` drives a `Syncable` store whose `Sync` the test gates, and covers the guarantee itself (a reader sees nothing until the flush returns, and `Write` does not return either), a failed flush being reported, leaving nothing readable and refusing every later write, a batch behind a failed flush failing with it, concurrent writers sharing one sync, the interval releasing a writer that never reaches the threshold, a non-syncable store never waiting, and a reloaded topic counting its recovered block as durable.
 - Logging port: `adapter/driven/logging/zerologger` has its own tests (level mapping, every field kind, `Enabled` agreeing with what is emitted, nil error dropped); `core/topic/logging_test.go` proves the core reaches its logger only through the port.
 - Framing: `core/domain/frame_test.go` covers the header round trip, every one of its 36
   bytes being caught by its checksum, a missing magic, a future version, a stored size larger
@@ -222,11 +222,16 @@ them has returned, so a reader never sees an entry a power cut could take back.
 - A store that is not `Syncable` has nothing to push, so its entries are durable when
   `Append` returns and none of the waiting applies. That is why `memstore` and `flashstore`
   pay nothing for this.
-- A failed flush is returned to every writer waiting on it, leaves the durable offset where
-  it was, and puts its blocks back into the next batch. The entries are written but their
-  durability is unknown, so nothing may read them as committed; a later flush covers them and
-  then they appear. A failure does not retry inside the same driver, which would spin.
-  `Topic.Close` makes one last attempt at whatever a failed flush left behind.
+- **A failed flush stops the topic** (step 33, `topic.ErrFlushFailed`). It is returned to
+  every writer waiting on it and to every batch that formed behind it, leaves the durable
+  offset where it was, and every later write is refused before it reaches the store, until
+  the topic is opened again — in a server, a restart. It used to be retried, which Linux
+  makes unsafe: a failed fsync marks the pages it could not write clean, so the retry
+  succeeds without writing them and a write acknowledged after it sits behind a hole (§12).
+  PostgreSQL stops on a failed fsync for the same reason. What this cannot close: a process
+  restarted *without* a power cut reads the failed batch back from the page cache, where it
+  is intact but not on the media, so those entries — never acknowledged — become readable
+  and a later power cut can still take them.
 - **An acknowledged write costs one fsync, not two.** `filestore.Sync` syncs the block, and
   the directory holding it only when the file is new: a directory sync is what makes a
   block's *name* durable, and appending to a block already on the media adds no name. Halving
@@ -592,12 +597,12 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 31. ~~Add the history checker and the page-cache fault model, and make a new topic's name
     durable (§12).~~
 32. ~~Read up to one durable offset for the whole of a read (§12).~~
-33. Stop a topic whose fsync failed instead of retrying it (§12).
+33. ~~Stop a topic whose fsync failed instead of retrying it (§2, §12).~~
 34. Sync the old head block before rolling over to a new one, and add the nemesis test (§12).
 
-Every step ships green. Steps 0 to 32 are done, one commit each.
+Every step ships green. Steps 0 to 33 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: steps 33 and 34, which fix what §12's harness found;
+Next, in the same one-change-at-a-time way: step 34, which fix what §12's harness found;
 then dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
@@ -770,7 +775,12 @@ unsynced data is modelled instead.
      anything, so a later write is acknowledged behind a hole; after a power cut recovery
      truncates at the hole and takes the acknowledged write with it. When the hole is at the
      start of a block, the zeros read as a block written before framing and the topic does
-     not load at all. Step 33.
+     not load at all. Fixed in step 33: a failed flush stops the topic (§2), so there is
+     never a later fsync for a write to be acknowledged behind
+     (`core/topic/powerCut_test.go`, and `flush_test.go` for the contract). With nothing
+     synced after the hole the model can no longer produce zeros at a block's start; a real
+     filesystem that commits the file size without the data still could, and recovery would
+     still refuse that block as pre-framing rather than truncate it.
   4. **Recovery looks only at the head block**, but a power cut during a rollover can leave
      the block before it with its unsynced tail missing or torn while the new block survives.
      Missing is a permanent hole in the offsets; torn is a topic that cannot be read past it.
