@@ -599,12 +599,11 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 32. ~~Read up to one durable offset for the whole of a read (§12).~~
 33. ~~Stop a topic whose fsync failed instead of retrying it (§2, §12).~~
 34. ~~Sync the old head block before rolling over to a new one (§12).~~
-35. Return a failed directory sync instead of swallowing it, and add the nemesis test (§12).
+35. ~~Return a failed directory sync instead of swallowing it, and add the nemesis test (§12).~~
 
-Every step ships green. Steps 0 to 34 are done, one commit each.
+Every step ships green. Steps 0 to 35 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: step 35, which fixes the last of what §12's harness found;
-then dictionaries (§6), which §5's measurements argue
+Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
 
@@ -797,3 +796,27 @@ unsynced data is modelled instead.
      The read-skip test of step 32 held a flush of the old block while the next write rolled
      over, which the barrier makes impossible; it now reaches the same state through a
      flush interval instead, and still fails against the old read path.
+  5. **A failed directory sync was swallowed.** `filestore.Sync` synced a new block, then its
+     directory, and reported success whatever the directory sync did, on the grounds that
+     the bytes were durable. They were, and the name was not: a power cut between the two
+     fsyncs took the block and the write acknowledged into it. Found only once the other four
+     were fixed, as one lost write in a few hundred seeds, always the first write into a new
+     block. Fixed in step 35: the directory sync's error is returned, which the flusher treats
+     as any failed flush (§2), and the block stays marked so a later sync tries the directory
+     again (`filestore/powerCut_test.go` cuts the power between the two fsyncs;
+     `dirsync_test.go` pins the error and the retry). The root sync of step 31 had copied the
+     same pattern and is fixed with it.
+- **`TestNemesis`** (`adapter/driver/history/nemesis_test.go`) is the whole of it at once:
+  four writers and two readers on two topics, three lives each ended by a power cut, twelve
+  seeds, in four scenarios — lose everything unsynced, lose some of it, the same under
+  coalesced flushes, and a failed fsync followed by a power cut. Blocks and frames are small
+  so a life rolls over and a write is several frames. The crash is brought by whichever
+  writer reaches a random write count, so the others are wherever they are. About 4s under
+  `-race`. It found all five of the above and has run clean for 480 seed runs since.
+- **Not covered**, and worth knowing before trusting it further: reads and writes run through
+  the manager, never gRPC or a client that retries (a retry would duplicate, since writes
+  carry no idempotency key); the lease is not in play; the crash is chosen by write count,
+  not by storage call, so the lineage-driven enumeration of every crash point that the
+  design started from (Molly) is the next step rather than a done one; and a real process
+  restarted without a power cut can still read back a failed flush from the page cache
+  (§2).

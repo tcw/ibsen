@@ -404,18 +404,21 @@ func (s *Store) Sync(ref driven.BlockRef) error {
 		return errore.Wrap(err)
 	}
 	if s.blockIsNew(ref) {
-		// a directory sync that failed leaves the block marked, so the next sync of it tries
-		// again. The bytes are on the media either way, which is why this is not the caller's
-		// error the way the block's own sync is.
-		if err = s.syncDir(s.topicPath(ref.Topic)); err == nil {
-			s.dirEntryIsDurable(ref)
+		// a failed directory sync is the caller's error as much as the block's own: the bytes
+		// are on the media, but a block whose name is not is a block a power cut takes, and
+		// acknowledging a write into it would be acknowledging nothing. It leaves the block
+		// marked, so a later sync of it syncs the directory again.
+		if err = s.syncDir(s.topicPath(ref.Topic)); err != nil {
+			return errore.Wrap(err)
 		}
+		s.dirEntryIsDurable(ref)
 	}
 	if s.topicIsNew(ref.Topic) {
-		// the same rule one level up, and it is retried the same way
-		if err = s.syncDir(s.rootPath); err == nil {
-			s.topicNameIsDurable(ref.Topic)
+		// the same rule one level up, for the topic's name in the root
+		if err = s.syncDir(s.rootPath); err != nil {
+			return errore.Wrap(err)
 		}
+		s.topicNameIsDurable(ref.Topic)
 	}
 	return nil
 }
