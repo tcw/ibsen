@@ -504,6 +504,41 @@ func (c *PageCache) Remove(name string) error {
 	return nil
 }
 
+// DropCache is posix_fadvise(DONTNEED) on the model. The pages a failed fsync dropped are clean,
+// so they are evicted, and the next read of them comes from the media, which never held them:
+// they read as zeros. Every other page either matches the media or is dirty, and a dirty page
+// stays. It is not a call that changes the media, so it is not in the trace.
+func (c *PageCache) DropCache(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.crashed {
+		return ErrCrashed
+	}
+	file, tracked := c.files[filepath.Clean(name)]
+	if !tracked || len(file.lost) == 0 {
+		return nil
+	}
+	real, err := os.OpenFile(name, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer real.Close()
+	info, err := real.Stat()
+	if err != nil {
+		return err
+	}
+	for _, r := range file.lost {
+		to := min(r.to, info.Size())
+		if r.from >= to {
+			continue
+		}
+		if _, err = real.WriteAt(make([]byte, to-r.from), r.from); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *PageCache) OpenFile(name string, flag int, perm os.FileMode) (filestore.File, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

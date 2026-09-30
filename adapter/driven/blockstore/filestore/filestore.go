@@ -37,6 +37,8 @@ type Store struct {
 	mu          sync.Mutex
 	namedBlocks map[driven.BlockRef]struct{}
 	namedTopics map[domain.TopicName]struct{}
+	// evicted holds the topics whose head block this store has dropped from the cache
+	evicted map[domain.TopicName]struct{}
 }
 
 var (
@@ -51,6 +53,7 @@ func New(fs FS, rootPath string) *Store {
 		fs: fs, rootPath: rootPath,
 		namedBlocks: make(map[driven.BlockRef]struct{}),
 		namedTopics: make(map[domain.TopicName]struct{}),
+		evicted:     make(map[domain.TopicName]struct{}),
 	}
 }
 
@@ -168,7 +171,41 @@ func (s *Store) List(topic domain.TopicName, kind driven.BlockKind) ([]driven.Bl
 		blocks = append(blocks, driven.Block{Block: block, Size: info.Size()})
 	}
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i].Block < blocks[j].Block })
+	if kind == driven.Log && len(blocks) > 0 {
+		if err = s.evictHead(driven.BlockRef{Topic: topic, Kind: kind, Block: blocks[len(blocks)-1].Block}); err != nil {
+			return nil, err
+		}
+	}
 	return blocks, nil
+}
+
+// evictHead drops the head block of a topic from the page cache, the first time this store
+// lists the topic, which is before the core recovers that block.
+//
+// A failed fsync on Linux marks the pages it could not write clean without writing them, so
+// they stay in the cache, readable and intact, while the media holds none of it. The process
+// that saw the failure stops writing (topic.ErrFlushFailed), but a process started after it
+// cannot tell: it would recover the head block from the cache, find it whole, append behind
+// the hole, and acknowledge writes a power cut then takes. Dropping the clean pages first
+// makes the read come from the media, where the hole is, and recovery truncates at it.
+//
+// Only the head: a failed fsync stops the topic before it can roll over, so no block before
+// the head ever holds such a hole. Only once per topic in the life of a store, since only a
+// store's first recovery of a topic can meet a hole left by a process before it.
+func (s *Store) evictHead(head driven.BlockRef) error {
+	s.mu.Lock()
+	_, done := s.evicted[head.Topic]
+	s.mu.Unlock()
+	if done {
+		return nil
+	}
+	if err := s.fs.DropCache(s.blockPath(head)); err != nil {
+		return errore.Wrap(err)
+	}
+	s.mu.Lock()
+	s.evicted[head.Topic] = struct{}{}
+	s.mu.Unlock()
+	return nil
 }
 
 // StrayFiles lists the names in a topic directory that are not block files, so wiring can

@@ -397,3 +397,25 @@ func TestPageCache_durableContainsFollowsDataAndEveryName(t *testing.T) {
 		t.Fatal("bytes a failed fsync dropped count as durable")
 	}
 }
+
+// posix_fadvise(DONTNEED) on the model: the pages a failed fsync dropped are clean, so they are
+// evicted and read back from the media, which never held them. Everything else stays.
+func TestPageCache_droppingTheCacheShowsWhatAFailedFsyncLost(t *testing.T) {
+	dir := durableDir(t)
+	path := filepath.Join(dir, "block")
+	cache := faultfs.NewPageCache()
+	appendTo(t, cache, path, "one")
+	mustSync(t, cache, path)
+	mustSync(t, cache, dir)
+	appendTo(t, cache, path, "two")
+	cache.FailSyncs("block", 1)
+	_ = syncPath(cache, path)
+	appendTo(t, cache, path, "three")
+
+	if err := cache.DropCache(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := readThrough(t, cache, path); got != "one\x00\x00\x00three" {
+		t.Fatalf("after dropping the cache the file reads %q", got)
+	}
+}

@@ -87,7 +87,7 @@ errore/                     stdlib-only, shared by both sides
 
 - `go test -race ./...` passes through migration step 30. Run it before and after every migration step.
 - Port conformance suite: `adapter/driven/blockstore/conformance`, run by every adapter (`filestore` on a real directory, `memstore`, `flashstore`).
-- `filestore` is the filesystem adapter, and the only one. Its seam is `filestore.FS`: six methods and a handle, which exists so a crash can be injected below the store and for nothing else, and which `*os.File` already satisfies. The other implementations are `faultfs.CrashFiles`, which tears writes, and `filestore.ReadOnly`, which refuses them. It keeps the layout the adapter it replaced used, so an existing data directory is read and written unchanged, and it passes all three suites: the conformance suite, the adapter's own crash and durability tests, and the core property tests, which run against it on a real directory. Each of those used to run twice for the filesystem adapter, the second time against an emulated filesystem; that second run is deliberately gone, since an emulation that disagrees with a real filesystem is worse than not running at all and this one disagreed twice. Its crash tests are an external test package, because `faultfs` is built on the seam and an internal test importing it back would be a cycle.
+- `filestore` is the filesystem adapter, and the only one. Its seam is `filestore.FS`: seven methods and a handle, which exists so a crash can be injected below the store, and which `*os.File` already satisfies. The seventh, `DropCache`, is the one call the store makes for itself rather than for a file: it drops a head block from the page cache before recovery (§2). The other implementations are `faultfs.CrashFiles`, which tears writes, and `filestore.ReadOnly`, which refuses them. It keeps the layout the adapter it replaced used, so an existing data directory is read and written unchanged, and it passes all three suites: the conformance suite, the adapter's own crash and durability tests, and the core property tests, which run against it on a real directory. Each of those used to run twice for the filesystem adapter, the second time against an emulated filesystem; that second run is deliberately gone, since an emulation that disagrees with a real filesystem is worse than not running at all and this one disagreed twice. Its crash tests are an external test package, because `faultfs` is built on the seam and an internal test importing it back would be a cycle.
 - Core property tests: `core/topic/topicAccess_property_test.go` (read-from-every-offset across block sizes and reload modes; concurrent write/read/index), run against every adapter. Only `coreBackends()` at the top of that file knows which store is behind the port.
 - **Tests run against real directories.** Nothing emulates a filesystem any more, and two habits follow from that. A test that writes a file must create its parent directory, which the emulated filesystem did implicitly. And a test that builds a manager or a topic on a `t.TempDir()` must close it, because the background indexing a write starts will otherwise race Go's removal of that directory; it surfaces as `TempDir RemoveAll cleanup: directory not empty`, attributed to whichever test was unlucky. `newTestManagerWithStore`, `newTestTopic` and `stoppedByTest` register that cleanup.
 - Crash and torn-write fault injection: `adapter/driven/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `adapter/driven/blockstore/filestore/crash_test.go` and `core/topic/topicAccess_crash_test.go`, on real directories. Nothing writes to the log while a crash is armed for the index: a write waits on a flush of its log block, and a crash tripped by the background indexer fails that flush too, so the write fails for a reason the test is not about. `TestTopic_CrashDuringIndexWriteDropsTheTornPair` lags the index by truncating it and reloading instead, which is the same state without the race.
@@ -228,10 +228,21 @@ them has returned, so a reader never sees an entry a power cut could take back.
   the topic is opened again — in a server, a restart. It used to be retried, which Linux
   makes unsafe: a failed fsync marks the pages it could not write clean, so the retry
   succeeds without writing them and a write acknowledged after it sits behind a hole (§12).
-  PostgreSQL stops on a failed fsync for the same reason. What this cannot close: a process
-  restarted *without* a power cut reads the failed batch back from the page cache, where it
-  is intact but not on the media, so those entries — never acknowledged — become readable
-  and a later power cut can still take them.
+  PostgreSQL stops on a failed fsync for the same reason.
+- **A restart after a failed fsync reads the media, not the cache** (step 38). The pages the
+  fsync could not write are clean, so they outlive the process in the page cache, intact and
+  readable; a process started after it used to recover the head block from there, find it
+  whole, append behind the hole and acknowledge writes the next power cut took. The first
+  time a store lists a topic it drops the head block's clean pages
+  (`posix_fadvise(DONTNEED)` through `filestore.FS.DropCache`, via `syscall` on linux/amd64,
+  arm64 and arm, a no-op elsewhere), so recovery reads the hole and cuts there. Only the
+  head, since a failed fsync stops the topic before it can roll over, and only for a
+  writable store: `filestore.ReadOnly` keeps the cache, or every `ibsen cat` would read the
+  log cold. It is advice, and the kernel keeps pages that are dirty, mapped or under
+  writeback — a dirty page is one it will still write, so that is not a hole. A head block
+  that then starts with zeros is torn from byte 0, not a block written before framing
+  (`logfmt.scanValidFrames`). Off Linux, or where the kernel declines, what the cache holds
+  is still what recovery sees.
 - **An acknowledged write costs one fsync, not two.** `filestore.Sync` syncs the block, and
   the directory holding it only on the block's first sync in the life of the store (and the
   root on a topic's first): a directory sync is what makes a block's *name* durable, and
@@ -607,12 +618,12 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 36. ~~Crash at every storage call, and check every promise for durable support (§12).~~
 37. ~~Sync a block's directory and its topic's root on the first sync of it in every process,
     not only the process that created it (§12).~~
-38. Drop a head block's clean cached pages before recovering it, so a restart after a failed
-    fsync reads what the media holds; enumerate a failed sync at every sync call (§2, §12).
+38. ~~Drop a head block's clean cached pages before recovering it, so a restart after a failed
+    fsync reads what the media holds; enumerate a failed sync at every sync call (§2, §12).~~
 
-Every step ships green. Steps 0 to 37 are done, one commit each.
+Every step ships green. Steps 0 to 38 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: step 38, then dictionaries (§6), which §5's measurements argue
+Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
 
@@ -786,9 +797,9 @@ unsynced data is modelled instead.
      not load at all. Fixed in step 33: a failed flush stops the topic (§2), so there is
      never a later fsync for a write to be acknowledged behind
      (`core/topic/powerCut_test.go`, and `flush_test.go` for the contract). With nothing
-     synced after the hole the model can no longer produce zeros at a block's start; a real
-     filesystem that commits the file size without the data still could, and recovery would
-     still refuse that block as pre-framing rather than truncate it.
+     synced after the hole the model can no longer produce zeros at a block's start within a
+     process. A restart could, and one does since step 38 makes the hole visible; recovery
+     now cuts a block that starts with zeros as torn instead of refusing it as pre-framing.
   4. **Recovery looks only at the head block**, but a power cut during a rollover can leave
      the block before it with its unsynced tail missing or torn while the new block survives.
      Missing is a permanent hole in the offsets; torn is a topic that cannot be read past it.
@@ -839,8 +850,9 @@ unsynced data is modelled instead.
     unsynced, keep everything (a process crash), a random prefix, and **writeback newest
     first** — the newest block of each topic reached the media and the older blocks' unsynced
     tails did not. That last one is aimed at what a rollover rests on, and it is the only one
-    that catches step 34 being reverted. The space is small enough to enumerate (63 calls,
-    252 runs, about 7s under `-race`), which is stronger than pruning it.
+    that catches step 34 being reverted. Then every sync of the trace is failed in turn, with
+    the power cut at the end. The space is small enough to enumerate (67 calls, 268 crash runs
+    and 38 failed-sync runs, about 9s under `-race`), which is stronger than pruning it.
   - **Deterministic by construction.** The trace counts only calls outside `.idx` files,
     since the indexer writes those on its own schedule and nothing is promised on them; the
     flusher syncs a batch's blocks oldest first (`flusher.syncBlocks`), which used to be map
@@ -862,7 +874,10 @@ unsynced data is modelled instead.
     restarts). For data, the page cache still serves what the
     failed fsync dropped, so the reopened topic looks whole, appends behind the hole, and
     acknowledges writes a power cut then takes, or leaves a block nobody can read past; that
-    is worse than §2 said (step 38).
+    was worse than §2 said. Fixed in step 38 by dropping the head block's clean pages before
+    recovering it (§2); `core/topic/powerCut_test.go` restarts after a failed fsync with the
+    hole in and at the start of the block, and the crash test now also fails every sync of
+    its trace in turn (38 runs) and passes.
   - **Not reached:** step 32's read skip, which needs a flush to land inside a read; the
     nemesis test and `readAcrossFlush_test.go` hold that. A second crash during the recovery
     of the first is not enumerated either.

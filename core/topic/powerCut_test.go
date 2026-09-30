@@ -102,6 +102,69 @@ func TestPowerCut_aFailedFsyncIsNotRetryable(t *testing.T) {
 	}
 }
 
+// A restart after a failed fsync, without a power cut between: the page cache still holds what
+// the fsync failed to write, intact and readable, and the media does not. The process that saw
+// the failure stopped the topic; the one after it used to recover the head block from the
+// cache, find it whole, append behind the hole and acknowledge writes the next power cut took.
+// The store now drops the head block's clean pages before it is recovered, so recovery reads
+// the hole and cuts there. Found by the crash at every storage call in adapter/driver/history.
+func TestPowerCut_aRestartAfterAFailedFsyncDoesNotWriteBehindTheHole(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		before []string
+	}{
+		{"the failed write was not the block's first", []string{"before"}},
+		// the hole is then at the very start of the block, where it must read as torn rather
+		// than as a block written before framing
+		{"the failed write was the block's first", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := Params{MaxBlockSize: 1 << 20}
+			topic, cache, dir := newPowerCutTopic(t, params)
+			for _, payload := range tc.before {
+				if err := writeOne(topic, payload); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cache.FailSyncs(".log", 1)
+			if err := writeOne(topic, "lost"); err == nil {
+				t.Fatal("a write whose fsync failed was acknowledged")
+			}
+			topic.Close()
+
+			// a new process on the same machine: same page cache, new store
+			params.Store = filestore.New(cache, dir)
+			params.TopicName = "t"
+			restarted := NewLogTopic(params)
+			if err := restarted.LoadOrCreate(); err != nil {
+				t.Fatalf("the topic does not load after the restart: %v", err)
+			}
+			got, err := readPayloads(t, restarted)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(got, ",") != strings.Join(tc.before, ",") {
+				t.Fatalf("after the restart the log reads %v: the failed write is back from the cache", got)
+			}
+			if err = writeOne(restarted, "after"); err != nil {
+				t.Fatalf("the restarted topic refused a write: %v", err)
+			}
+
+			recovered, err := afterPowerCut(t, restarted, cache, faultfs.LoseEverything(), dir, params)
+			if err != nil {
+				t.Fatalf("the topic does not load after the power cut: %v", err)
+			}
+			got, err = readPayloads(t, recovered)
+			if err != nil {
+				t.Fatalf("the topic cannot be read after the power cut: %v", err)
+			}
+			if want := strings.Join(append(append([]string(nil), tc.before...), "after"), ","); strings.Join(got, ",") != want {
+				t.Fatalf("after the power cut the log holds %v, want %s", got, want)
+			}
+		})
+	}
+}
+
 // A write that rolls over to a new block used to leave the old block's tail unsynced until
 // the batch was flushed, and writeback may put the new block on the media before it. Recovery
 // looks only at the head block, so an old block left short was a permanent hole in the

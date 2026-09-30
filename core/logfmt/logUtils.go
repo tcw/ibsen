@@ -97,6 +97,14 @@ func scanValidFrames(store driven.BlockStore, ref driven.BlockRef, firstOffset d
 	reader := bufio.NewReader(block)
 	nextOffset := firstOffset
 	var validSize int64
+	// a block that starts with zeros where its first header should be is a hole, not a block
+	// written before framing: the page cache held a first write the media never got, because
+	// its fsync failed and a later one set the size without writing it. Zeros are torn, and
+	// cut; a block written before framing starts with the checksum of its first entry, which
+	// is zero once in four billion.
+	if head, _ := reader.Peek(domain.FrameHeaderSize); len(head) > 0 && allZero(head) {
+		return nextOffset, 0, nil
+	}
 	for {
 		// a payload cannot be larger than what is left of the block
 		var maxStored uint64
@@ -136,6 +144,15 @@ func scanValidFrames(store driven.BlockStore, ref driven.BlockRef, firstOffset d
 		nextOffset = header.EndOffset()
 		validSize = validSize + header.Size()
 	}
+}
+
+func allZero(bytes []byte) bool {
+	for _, b := range bytes {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 type ReadFileParams struct {

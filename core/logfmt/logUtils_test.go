@@ -151,6 +151,23 @@ func TestRecoverBlock_blockWrittenBeforeFramingIsReported(t *testing.T) {
 	assert.Equal(t, int64(len(content)), blocks[0].Size, "must not truncate a block it does not understand")
 }
 
+// A block that starts with zeros is a hole, not a block from before framing: its first write
+// was in the page cache and never on the media, because its fsync failed, and a later fsync
+// wrote the size and the frames after it. It is torn from its first byte and cut there, the
+// frames behind the hole with it, since nothing behind a hole was ever acknowledged.
+func TestRecoverBlock_blockStartingWithZerosIsTornNotPreFraming(t *testing.T) {
+	hole := make([]byte, len(oneFrame(t, 0, "lost")))
+	content := append(hole, oneFrame(t, 1, "behind")...)
+	store, ref, size := blockWith(t, 0, content)
+
+	next, valid, truncated, err := RecoverBlock(store, ref, 0, size)
+
+	assert.Nil(t, err)
+	assert.Equal(t, domain.Offset(0), next)
+	assert.Equal(t, int64(0), valid)
+	assert.Equal(t, int64(len(content)), truncated)
+}
+
 // Recovery checks frames against their two checksums and decodes nothing, so a torn tail is
 // found and cut even by a build carrying none of the codecs the block was written with.
 func TestRecoverBlock_needsNoCodec(t *testing.T) {
