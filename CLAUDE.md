@@ -591,13 +591,13 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
     flush (§2, §9).~~
 31. ~~Add the history checker and the page-cache fault model, and make a new topic's name
     durable (§12).~~
-32. Read up to one durable offset for the whole of a read (§12).
+32. ~~Read up to one durable offset for the whole of a read (§12).~~
 33. Stop a topic whose fsync failed instead of retrying it (§12).
 34. Sync the old head block before rolling over to a new one, and add the nemesis test (§12).
 
-Every step ships green. Steps 0 to 31 are done, one commit each.
+Every step ships green. Steps 0 to 32 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: steps 32 to 34, which fix what §12's harness found;
+Next, in the same one-change-at-a-time way: steps 33 and 34, which fix what §12's harness found;
 then dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
@@ -762,7 +762,10 @@ unsynced data is modelled instead.
      topic).
   2. **A read spanning two blocks skipped the end of the first** when a flush landed during
      it, because each block after the first re-read the durable offset. No crash needed, and
-     a tailing consumer loses those entries for good. Step 32.
+     a tailing consumer loses those entries for good. Fixed in step 32: a read runs to the
+     boundary it began with and stops at the first block that starts at or past it, and the
+     next read picks up from there (`core/topic/readAcrossFlush_test.go` releases a held
+     flush between two batches of one read).
   3. **A failed fsync was retried.** Under Linux semantics the retry succeeds without writing
      anything, so a later write is acknowledged behind a hole; after a power cut recovery
      truncates at the hole and takes the acknowledged write with it. When the hole is at the
