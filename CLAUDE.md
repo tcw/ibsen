@@ -598,11 +598,12 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
     durable (§12).~~
 32. ~~Read up to one durable offset for the whole of a read (§12).~~
 33. ~~Stop a topic whose fsync failed instead of retrying it (§2, §12).~~
-34. Sync the old head block before rolling over to a new one, and add the nemesis test (§12).
+34. ~~Sync the old head block before rolling over to a new one (§12).~~
+35. Return a failed directory sync instead of swallowing it, and add the nemesis test (§12).
 
-Every step ships green. Steps 0 to 33 are done, one commit each.
+Every step ships green. Steps 0 to 34 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: step 34, which fix what §12's harness found;
+Next, in the same one-change-at-a-time way: step 35, which fixes the last of what §12's harness found;
 then dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
@@ -784,4 +785,15 @@ unsynced data is modelled instead.
   4. **Recovery looks only at the head block**, but a power cut during a rollover can leave
      the block before it with its unsynced tail missing or torn while the new block survives.
      Missing is a permanent hole in the offsets; torn is a topic that cannot be read past it.
-     Step 34.
+     Fixed in step 34 by not letting it happen rather than by recovering more: a rollover
+     syncs the old head before the new block exists (`flusher.barrier`), so a block before
+     the head is always whole. It costs one fsync per block — one per gigabyte at the default
+     `--maxBlockSize` — taken under `Topic.mu`, so readers wait out that one fsync to take
+     their snapshot. A failed barrier is a failed flush and stops the topic. Every sync the
+     flusher makes now holds `flusher.syncing` across the sync and the recording of its
+     outcome: without it a flush that returned just after a barrier failed could still be
+     acknowledged, which `TestAFailedRolloverSyncStopsTheTopic` caught. Blocks written by an
+     older build may already be damaged this way, and recovery still does not look for it.
+     The read-skip test of step 32 held a flush of the old block while the next write rolled
+     over, which the barrier makes impossible; it now reaches the same state through a
+     flush interval instead, and still fails against the old read path.

@@ -482,8 +482,16 @@ func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 	if t.logBlockIsEmpty() {
 		t.addNewLogBlock()
 	}
-	// if block has excited is max size create a new block
+	// if block has excited is max size create a new block, once the old one is durable:
+	// otherwise writeback may put the new block on the media ahead of the old block's
+	// unsynced tail, and a power cut then leaves a block before the head torn or short,
+	// which recovery never looks at since it only recovers the head
 	if t.HeadBlockSize > t.MaxBlockSize {
+		if old, ok := t.logBlockHead(); ok {
+			if err := t.flush.barrier(t.logRef(old)); err != nil {
+				return nil, err
+			}
+		}
 		t.addNewLogBlock()
 		t.resetHeadBlockSize()
 	}

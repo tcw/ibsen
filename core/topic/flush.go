@@ -45,6 +45,10 @@ type flusher struct {
 	running bool
 	// failed is set by the first flush that fails, and never cleared: see ErrFlushFailed
 	failed error
+	// syncing is held across every sync and the recording of its outcome, so syncs and
+	// failures have one order: a sync that returns after another has failed cannot be taken
+	// as proof of anything, and with this it cannot happen. Taken before mu, never under it.
+	syncing sync.Mutex
 	// changed is closed and replaced whenever a flush finishes or a driver stops, so a
 	// writer waiting on a batch it cannot drive yet knows to look again
 	changed chan struct{}
@@ -95,6 +99,28 @@ func (f *flusher) failure() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.failed
+}
+
+// barrier makes ref durable now, outside any batch, for a caller that must not go on until
+// it is: rolling over to a new block, which writeback could otherwise put on the media ahead
+// of the old block's unsynced tail. A failure is a failed flush like any other and stops the
+// topic. It does not move the durable offset; the batches covering ref still do that.
+func (f *flusher) barrier(ref driven.BlockRef) error {
+	if !f.syncable {
+		return nil
+	}
+	f.syncing.Lock()
+	defer f.syncing.Unlock()
+	if err := f.failure(); err != nil {
+		return err
+	}
+	if _, err := driven.Sync(f.store, ref); err != nil {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.failLocked(err)
+		return f.failed
+	}
+	return nil
 }
 
 // appended records count entries written into ref, taking the log up to target, and returns
@@ -190,21 +216,27 @@ func (f *flusher) drive() {
 		f.pending = nil
 		f.mu.Unlock()
 
-		err := f.syncBlocks(batch)
+		f.syncing.Lock()
+		// a barrier may have failed since the batch was taken; syncing after it would
+		// succeed without writing what it dropped, so the batch fails with it
+		failedBefore := f.failure()
+		var err error
+		if failedBefore == nil {
+			err = f.syncBlocks(batch)
+		}
 
 		f.mu.Lock()
-		if err != nil {
-			// the batch is lost to the media, and so is every batch behind it: no later sync
-			// can make them durable, so none of them may ever be acknowledged or read
-			f.failed = fmt.Errorf("%w: %w", ErrFlushFailed, err)
-			batch.err = f.failed
+		f.syncing.Unlock()
+		if failedBefore != nil {
+			batch.err = failedBefore
 			close(batch.done)
-			if f.pending != nil {
-				f.pending.err = f.failed
-				close(f.pending.done)
-				f.pending = nil
-			}
 			f.announceLocked()
+			break
+		}
+		if err != nil {
+			batch.err = fmt.Errorf("%w: %w", ErrFlushFailed, err)
+			close(batch.done)
+			f.failLocked(err)
 			break
 		}
 		if batch.target > f.durable {
@@ -216,6 +248,21 @@ func (f *flusher) drive() {
 	f.running = false
 	f.announceLocked()
 	f.mu.Unlock()
+}
+
+// failLocked stops the topic after a failed sync. What was being synced is lost to the media,
+// and so is every batch behind it: no later sync can make them durable, so none of them may
+// ever be acknowledged or read. Only the first failure is kept.
+func (f *flusher) failLocked(err error) {
+	if f.failed == nil {
+		f.failed = fmt.Errorf("%w: %w", ErrFlushFailed, err)
+	}
+	if f.pending != nil {
+		f.pending.err = f.failed
+		close(f.pending.done)
+		f.pending = nil
+	}
+	f.announceLocked()
 }
 
 // announceLocked tells everyone waiting that the flusher's state moved.
