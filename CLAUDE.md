@@ -600,10 +600,15 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 33. ~~Stop a topic whose fsync failed instead of retrying it (§2, §12).~~
 34. ~~Sync the old head block before rolling over to a new one (§12).~~
 35. ~~Return a failed directory sync instead of swallowing it, and add the nemesis test (§12).~~
+36. ~~Crash at every storage call, and check every promise for durable support (§12).~~
+37. Sync a block's directory and its topic's root on the first sync of it in every process,
+    not only the process that created it (§12).
+38. Drop a head block's clean cached pages before recovering it, so a restart after a failed
+    fsync reads what the media holds; enumerate a failed sync at every sync call (§2, §12).
 
-Every step ships green. Steps 0 to 35 are done, one commit each.
+Every step ships green. Steps 0 to 36 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
+Next, in the same one-change-at-a-time way: steps 37 and 38, then dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
 
@@ -815,8 +820,43 @@ unsynced data is modelled instead.
   `-race`. It found all five of the above and has run clean for 480 seed runs since.
 - **Not covered**, and worth knowing before trusting it further: reads and writes run through
   the manager, never gRPC or a client that retries (a retry would duplicate, since writes
-  carry no idempotency key); the lease is not in play; the crash is chosen by write count,
-  not by storage call, so the lineage-driven enumeration of every crash point that the
-  design started from (Molly) is the next step rather than a done one; and a real process
-  restarted without a power cut can still read back a failed flush from the page cache
-  (§2).
+  carry no idempotency key); the lease is not in play; and the crash is chosen by write
+  count, not by storage call, which is what `TestCrashAtEveryStorageCall` below is for.
+- **`TestCrashAtEveryStorageCall`** (`adapter/driver/history/crashpoints_test.go`) is Molly's
+  lineage-driven fault injection, as far as it fits a go test. Molly asks what each good
+  outcome rested on and whether taking that away breaks it.
+  - **Lineage, checked at the promise.** Whenever a write is acknowledged or an entry handed
+    to a reader, `faultfs.PageCache.DurableContains` is asked whether those bytes are on the
+    media under names durable all the way to the root. A promise without that support fails
+    the run it is made in, crash or no crash: with step 31 reverted, the fault-free run fails
+    on its first acknowledged write.
+  - **Every call, by brute force.** One deterministic workload (two topics, small blocks and
+    frames, reads between writes, a restart halfway) is traced once, and then run again with
+    the power cut as each call of the trace begins, under four losses: lose everything
+    unsynced, keep everything (a process crash), a random prefix, and **writeback newest
+    first** — the newest block of each topic reached the media and the older blocks' unsynced
+    tails did not. That last one is aimed at what a rollover rests on, and it is the only one
+    that catches step 34 being reverted. The space is small enough to enumerate (63 calls,
+    252 runs, about 7s under `-race`), which is stronger than pruning it.
+  - **Deterministic by construction.** The trace counts only calls outside `.idx` files,
+    since the indexer writes those on its own schedule and nothing is promised on them; the
+    flusher syncs a batch's blocks oldest first (`flusher.syncBlocks`), which used to be map
+    order; and the test checks that two fault-free runs give the same trace and that every
+    crash run reaches the call it was aimed at.
+  - **Pairs.** A lone writer never finds another write's tail unsynced, since each write is
+    durable before the next begins, so the rollover barrier of step 34 went untested at
+    first — reverting it passed. Every fourth write is now a pair: the first is held at its
+    flush by a gate in the store (armed to start holding after the next log append, so it
+    does not hold a rollover of the first write's own), and the second, sized to roll over
+    now and then, arrives beside it.
+  - **What it found:** a restart after a failed sync. Every failed sync before the workload's
+    restart broke something and every one after it was clean, so the fail-stop of step 33
+    holds within a process and a new process forgets what is not durable. For names, a new
+    `filestore` takes every existing block and topic name as durable and never retries the
+    directory sync that failed (step 37). For data, the page cache still serves what the
+    failed fsync dropped, so the reopened topic looks whole, appends behind the hole, and
+    acknowledges writes a power cut then takes, or leaves a block nobody can read past; that
+    is worse than §2 said (step 38).
+  - **Not reached:** step 32's read skip, which needs a flush to land inside a read; the
+    nemesis test and `readAcrossFlush_test.go` hold that. A second crash during the recovery
+    of the first is not enumerated either.

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tcw/ibsen/adapter/driven/blockstore/conformance"
@@ -296,4 +297,103 @@ func TestPageCache_storeConformance(t *testing.T) {
 	conformance.Run(t, func(t *testing.T) driven.BlockStore {
 		return filestore.New(faultfs.NewPageCache(), t.TempDir())
 	})
+}
+
+func TestPageCache_theTraceIsTheCallsThatChangeTheMedia(t *testing.T) {
+	dir := durableDir(t)
+	cache := faultfs.NewPageCache()
+	cache.CountOnly(func(path string) bool { return !strings.HasSuffix(path, ".skip") })
+	appendTo(t, cache, filepath.Join(dir, "block"), "data")
+	appendTo(t, cache, filepath.Join(dir, "ignored.skip"), "data")
+	mustSync(t, cache, filepath.Join(dir, "block"))
+	_ = readThrough(t, cache, filepath.Join(dir, "block"))
+
+	var got []string
+	for _, call := range cache.Trace() {
+		got = append(got, call.Kind+" "+filepath.Base(call.Path))
+	}
+	if want := "create block,write block,sync block"; strings.Join(got, ",") != want {
+		t.Fatalf("trace %v, want %s", got, want)
+	}
+}
+
+func TestPageCache_aCrashAtACallStopsItHappening(t *testing.T) {
+	dir := durableDir(t)
+	path := filepath.Join(dir, "block")
+	cache := faultfs.NewPageCache()
+	cache.CrashAtCall(4) // create, write, sync, then this write
+	appendTo(t, cache, path, "synced")
+	mustSync(t, cache, path)
+	// the directory sync is the fourth call, and the power goes out as it begins
+	if err := syncPath(cache, dir); !errors.Is(err, faultfs.ErrCrashed) {
+		t.Fatalf("the fourth call gave %v, want the crash", err)
+	}
+	if !cache.Crashed() {
+		t.Fatal("the fourth call did not cut the power")
+	}
+	if err := cache.Recover(faultfs.LoseEverything()); err != nil {
+		t.Fatal(err)
+	}
+	if _, there := onDisk(t, path); there {
+		t.Fatal("the directory sync the power went out at happened anyway")
+	}
+}
+
+func TestPageCache_aFailedDirectorySyncLeavesItsNamesUndurable(t *testing.T) {
+	dir := durableDir(t)
+	path := filepath.Join(dir, "block")
+	cache := faultfs.NewPageCache()
+	appendTo(t, cache, path, "data")
+	mustSync(t, cache, path)
+	cache.FailAtCall(4)
+	if err := syncPath(cache, dir); !errors.Is(err, faultfs.ErrSyncFailed) {
+		t.Fatalf("the directory sync gave %v", err)
+	}
+	crashAndRecover(t, cache, faultfs.LoseEverything())
+	if _, there := onDisk(t, path); there {
+		t.Fatal("a name whose directory sync failed survived the power cut")
+	}
+}
+
+func TestPageCache_durableContainsFollowsDataAndEveryName(t *testing.T) {
+	root := durableDir(t)
+	topic := filepath.Join(root, "topic")
+	path := filepath.Join(topic, "block")
+	cache := faultfs.NewPageCache()
+	durable := func() bool {
+		t.Helper()
+		found, err := cache.DurableContains(root, []byte("needle"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return found
+	}
+	if err := cache.Mkdir(topic, 0744); err != nil {
+		t.Fatal(err)
+	}
+	appendTo(t, cache, path, "hay-needle-hay")
+	for _, step := range []struct {
+		sync string
+		want bool
+	}{
+		{"", false},    // in the cache only
+		{path, false},  // the data is on the media, the file's name is not
+		{topic, false}, // the file's name is, the topic's is not
+		{root, true},   // every name on the way is
+	} {
+		if step.sync != "" {
+			mustSync(t, cache, step.sync)
+		}
+		if got := durable(); got != step.want {
+			t.Fatalf("after syncing %q DurableContains is %v, want %v", step.sync, got, step.want)
+		}
+	}
+
+	cache.FailSyncs("block2", 1)
+	appendTo(t, cache, filepath.Join(topic, "block2"), "lost-needle2")
+	_ = syncPath(cache, filepath.Join(topic, "block2"))
+	mustSync(t, cache, topic)
+	if found, _ := cache.DurableContains(root, []byte("needle2")); found {
+		t.Fatal("bytes a failed fsync dropped count as durable")
+	}
 }

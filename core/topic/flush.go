@@ -3,6 +3,7 @@ package topic
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -284,9 +285,25 @@ func (f *flusher) dueLocked(p *pendingFlush) bool {
 	return time.Since(p.opened) >= f.interval
 }
 
+// syncBlocks syncs every block of a batch, oldest first, and returns the first error. The
+// order is fixed so that the same writes make the same syncs, which is what lets a test aim a
+// crash at one of them by its place in the trace.
 func (f *flusher) syncBlocks(batch *pendingFlush) error {
-	var firstErr error
+	refs := make([]driven.BlockRef, 0, len(batch.blocks))
 	for ref := range batch.blocks {
+		refs = append(refs, ref)
+	}
+	sort.Slice(refs, func(i, j int) bool {
+		if refs[i].Topic != refs[j].Topic {
+			return refs[i].Topic < refs[j].Topic
+		}
+		if refs[i].Kind != refs[j].Kind {
+			return refs[i].Kind < refs[j].Kind
+		}
+		return refs[i].Block < refs[j].Block
+	})
+	var firstErr error
+	for _, ref := range refs {
 		if _, err := driven.Sync(f.store, ref); err != nil && firstErr == nil {
 			firstErr = err
 		}
