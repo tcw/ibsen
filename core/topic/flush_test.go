@@ -300,3 +300,90 @@ func TestALoadedTopicCountsItsBlockAsDurable(t *testing.T) {
 		t.Fatalf("read %d entries (%v) from a reloaded topic, want 3", len(got), err)
 	}
 }
+
+// secondSyncFails holds the first sync it is armed for until released, and fails the second:
+// a flush of the old block still running when a rollover needs to sync it.
+type secondSyncFails struct {
+	driven.BlockStore
+	mu      sync.Mutex
+	armed   bool
+	calls   int
+	release chan struct{}
+}
+
+func (s *secondSyncFails) arm() {
+	s.mu.Lock()
+	s.armed = true
+	s.mu.Unlock()
+}
+
+func (s *secondSyncFails) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func (s *secondSyncFails) Sync(driven.BlockRef) error {
+	s.mu.Lock()
+	if !s.armed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.calls++
+	call := s.calls
+	s.mu.Unlock()
+	switch call {
+	case 1:
+		<-s.release
+	case 2:
+		return errors.New("disk on fire")
+	}
+	return nil
+}
+
+// A rollover syncs the old block before the new one exists, and that sync is a flush like any
+// other: when it fails, the rollover's write is refused and the topic stops. It waits for a
+// flush of the same block that is already running rather than overlapping it, so what that
+// flush acknowledged was synced before anything failed, and nothing after the failure is.
+func TestAFailedRolloverSyncStopsTheTopic(t *testing.T) {
+	store := &secondSyncFails{BlockStore: memstore.New(), release: make(chan struct{})}
+	one := [][]byte{[]byte("a0")}
+	frame, _, err := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: 1}).buildFrames(&one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the first write fills the block to its bound, the second takes it over, the third rolls
+	topic := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: len(frame)})
+	if err = topic.LoadOrCreate(); err != nil {
+		t.Fatal(err)
+	}
+	if err = writeOne(topic, "a0"); err != nil {
+		t.Fatal(err)
+	}
+	store.arm()
+
+	first := make(chan error, 1)
+	go func() { first <- writeOne(topic, "a1") }()
+	eventually(t, "a1's flush to be syncing", func() bool { return store.callCount() == 1 })
+	rolled := make(chan error, 1)
+	go func() { rolled <- writeOne(topic, "b2") }()
+	select {
+	case err = <-rolled:
+		t.Fatalf("the rollover did not wait for the flush of the old block: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(store.release)
+	if err = <-first; err != nil {
+		t.Fatalf("a flush that finished before anything failed was refused: %v", err)
+	}
+	if err = <-rolled; !errors.Is(err, ErrFlushFailed) {
+		t.Fatalf("the rollover's write returned %v, want ErrFlushFailed", err)
+	}
+	if err = writeOne(topic, "later"); !errors.Is(err, ErrFlushFailed) {
+		t.Fatalf("a write after the failed rollover returned %v, want ErrFlushFailed", err)
+	}
+	if topic.durableOffset() != 2 {
+		t.Errorf("durable offset is %d, want a0 and a1", topic.durableOffset())
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tcw/ibsen/core/domain"
 )
@@ -18,30 +19,34 @@ import (
 // test in adapter/driver/history.
 func TestReadDoesNotSkipTheEndOfABlockWhenAFlushLandsDuringIt(t *testing.T) {
 	store := newSyncGate()
-	two := [][]byte{[]byte("a0"), []byte("a1")}
-	frames, _, err := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: 1 << 20}).buildFrames(&two)
+	three := [][]byte{[]byte("a0"), []byte("a1"), []byte("a2")}
+	frames, _, err := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: 1 << 20}).buildFrames(&three)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// the first write fills block A exactly to the bound, so the second lands in A too and
-	// the third rolls over to B
-	topic := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: len(frames), FlushEntries: 1})
+	// a batch is due at three entries and otherwise waits an hour. The first write fills
+	// block A exactly to the bound and is due at once; a3 takes A over the bound and waits;
+	// b4 rolls over to B, which syncs A but leaves a3's batch, and so the durable offset, where
+	// they were
+	topic := NewLogTopic(Params{
+		Store: store, TopicName: "t", MaxBlockSize: len(frames), FlushEntries: 3, FlushInterval: time.Hour,
+	})
 	if err = topic.LoadOrCreate(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(topic.Close)
-	if err = topic.Write(&two); err != nil {
+	if err = topic.Write(&three); err != nil {
 		t.Fatal(err)
 	}
-
-	release := store.holdSyncs()
 	var writes sync.WaitGroup
-	for _, payload := range []string{"a2", "b3"} {
-		// one at a time, so a2 goes to A and b3 to B
+	for _, payload := range []string{"a3", "b4"} {
 		want := nextOffsetOf(topic) + 1
 		writes.Add(1)
 		go func() { defer writes.Done(); _ = writeOne(topic, payload) }()
 		eventually(t, "the write to be appended", func() bool { return nextOffsetOf(topic) == want })
+	}
+	if durable := topic.durableOffset(); durable != 3 {
+		t.Fatalf("durable offset is %d before the read, want 3", durable)
 	}
 
 	logChan := make(chan *[]domain.LogEntry)
@@ -56,10 +61,11 @@ func TestReadDoesNotSkipTheEndOfABlockWhenAFlushLandsDuringIt(t *testing.T) {
 				got = append(got, string(entry.Entry))
 			}
 			if first {
-				// the read has begun with offsets 0 and 1 durable; make 2 and 3 durable before
-				// it is let go of
+				// the read has begun with offsets 0 to 2 durable; the third entry of the
+				// waiting batch makes it due, and it is flushed before the read goes on
 				first = false
-				close(release)
+				writes.Add(1)
+				go func() { defer writes.Done(); _ = writeOne(topic, "b5") }()
 				writes.Wait()
 			}
 			wg.Done()
@@ -72,8 +78,8 @@ func TestReadDoesNotSkipTheEndOfABlockWhenAFlushLandsDuringIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	all := []string{"a0", "a1", "a2", "b3"}
-	if len(got) < 2 {
+	all := []string{"a0", "a1", "a2", "a3", "b4", "b5"}
+	if len(got) < 3 {
 		t.Fatalf("the read gave %v, less than was durable when it began", got)
 	}
 	for i, entry := range got {
