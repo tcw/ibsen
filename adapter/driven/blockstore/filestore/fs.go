@@ -22,7 +22,13 @@ type FS interface {
 	MkdirAll(name string, perm os.FileMode) error
 	OpenFile(name string, flag int, perm os.FileMode) (File, error)
 	Remove(name string) error
+	// DropCache asks the kernel to forget the file's clean cached pages, so the next read of
+	// them comes from the media. See Store.List for why the store asks.
+	DropCache(name string) error
 }
+
+// posixFadvDontNeed is POSIX_FADV_DONTNEED on the Linux architectures that ask for it.
+const posixFadvDontNeed = 4
 
 // File is the little of an open file this adapter uses. *os.File satisfies it as it stands.
 type File interface {
@@ -47,6 +53,18 @@ func (OS) Mkdir(name string, perm os.FileMode) error { return os.Mkdir(name, per
 func (OS) MkdirAll(name string, perm os.FileMode) error { return os.MkdirAll(name, perm) }
 
 func (OS) Remove(name string) error { return os.Remove(name) }
+
+// DropCache is posix_fadvise(DONTNEED) where the build has it, and nothing elsewhere. It is
+// advice: a page that is dirty, or mapped, or under writeback stays, and a dirty page is one
+// the kernel will still write, so dropping what it can is all that is needed.
+func (OS) DropCache(name string) error {
+	file, err := os.Open(name)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	return fadviseDontNeed(file.Fd())
+}
 
 func (OS) OpenFile(name string, flag int, perm os.FileMode) (File, error) {
 	file, err := os.OpenFile(name, flag, perm)
@@ -111,3 +129,8 @@ func (ReadOnly) Mkdir(string, os.FileMode) error { return ErrReadOnly }
 func (ReadOnly) MkdirAll(string, os.FileMode) error { return ErrReadOnly }
 
 func (ReadOnly) Remove(string) error { return ErrReadOnly }
+
+// DropCache does nothing for a read-only filesystem. A reader recovers nothing, so it has no
+// use for the media's view over the cache's, and throwing away the cache on every open would
+// make every read of a log a cold one.
+func (ReadOnly) DropCache(string) error { return nil }

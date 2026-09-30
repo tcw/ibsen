@@ -127,6 +127,13 @@ func (c *CrashFiles) Remove(name string) error {
 	return c.base.Remove(name)
 }
 
+func (c *CrashFiles) DropCache(name string) error {
+	if c.isCrashed() {
+		return ErrCrashed
+	}
+	return c.base.DropCache(name)
+}
+
 func (c *CrashFiles) OpenFile(name string, flag int, perm os.FileMode) (filestore.File, error) {
 	if c.isCrashed() {
 		return nil, ErrCrashed

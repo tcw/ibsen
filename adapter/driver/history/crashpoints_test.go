@@ -31,8 +31,10 @@ import (
 // The second is answered by brute force rather than by pruning, because the space is small
 // enough to afford it: one deterministic workload is traced once without faults, and then
 // run again once for every call in the trace with the power cut as that call begins, under
-// each loss the model knows. Each run recovers, writes on in a new life, and hands the whole
-// history to the checker.
+// each loss the model knows, and once for every sync in it with that sync failing and the
+// power cut at the end. Each run recovers, writes on in a new life, and hands the whole
+// history to the checker. The workload restarts halfway, so a failed sync before the restart
+// is met by a process that did not see it fail.
 
 // crashLosses are the ways a crash can go: a power cut that keeps nothing unsynced, a process
 // crash that keeps everything the kernel was given, and in between.
@@ -360,7 +362,8 @@ func TestCrashAtEveryStorageCall(t *testing.T) {
 			"does not name one call:\n%v\n%v", trace, got)
 	}
 	t.Logf("%d storage calls, the restart after call %d", len(trace), baseline.restartedAt)
-	t.Logf("%d crash runs", len(trace)*len(crashLosses))
+	t.Logf("%d crash runs, %d failed-sync runs", len(trace)*len(crashLosses),
+		strings.Count(strings.Join(trace, "\n"), "sync "))
 
 	failures := 0
 	report := func(what string, problems []string) {
@@ -397,6 +400,25 @@ func TestCrashAtEveryStorageCall(t *testing.T) {
 		}
 	}
 
+	for point, call := range trace {
+		if !strings.HasPrefix(call, "sync ") {
+			continue
+		}
+		what := fmt.Sprintf("failed %s at call %d, then a power cut", call, point+1)
+		r := newCrashRun(t)
+		r.cache.FailAtCall(point + 1)
+		r.open()
+		r.play(before, false)
+		r.close()
+		r.cache.Crash()
+		if err := r.cache.Recover(faultfs.LoseEverything()); err != nil {
+			t.Fatal(err)
+		}
+		r.open()
+		r.play(after, false)
+		r.close()
+		report(what, r.check())
+	}
 	if failures > 20 {
 		t.Errorf("and %d more", failures-20)
 	}
