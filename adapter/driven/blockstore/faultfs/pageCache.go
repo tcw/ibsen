@@ -1,8 +1,10 @@
 package faultfs
 
 import (
+	"bytes"
 	"errors"
 	"io"
+	"io/fs"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -53,6 +55,19 @@ type PageCache struct {
 	// failSyncs is how many of the next file syncs matching failSuffix fail
 	failSyncs  int
 	failSuffix string
+	// calls is the trace of the calls that change the media, as far as counts lets them in;
+	// crashAt and failAt name one of them by its number, from 1
+	calls   []Call
+	counts  func(path string) bool
+	crashAt int
+	failAt  int
+}
+
+// Call is one call that changes the media: its kind — mkdir, create, write, truncate, sync
+// or remove — and the path it was made on. A trace of them is what a crash can be aimed at.
+type Call struct {
+	Kind string
+	Path string
 }
 
 // cachedFile is one file as the media holds it and as the cache has changed it since.
@@ -93,6 +108,92 @@ func (c *PageCache) FailSyncs(suffix string, count int) {
 	defer c.mu.Unlock()
 	c.failSuffix = suffix
 	c.failSyncs = count
+}
+
+// CountOnly limits the trace, and so what CrashAtCall and FailAtCall count, to calls on paths
+// count accepts. A call that is not counted still happens and is still modelled. It is for
+// keeping the trace of a workload the same from run to run when part of it is written by a
+// goroutine on its own schedule.
+func (c *PageCache) CountOnly(count func(path string) bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.counts = count
+}
+
+// CrashAtCall cuts the power as call n of the trace begins, so that call fails and nothing
+// after it happens; 0 never does.
+func (c *PageCache) CrashAtCall(n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.crashAt = n
+}
+
+// FailAtCall makes call n of the trace fail if it is a sync, as FailSyncs does for a file,
+// and for a directory by leaving the names in it as undurable as they were; 0 never does.
+func (c *PageCache) FailAtCall(n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failAt = n
+}
+
+// Trace returns the counted calls so far, in the order they were made.
+func (c *PageCache) Trace() []Call {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]Call(nil), c.calls...)
+}
+
+// step records a call that changes the media, and reports whether it is the one to fail or
+// the one the power goes out at. Called with c.mu held.
+func (c *PageCache) step(kind, path string) (fail bool, crash bool) {
+	if c.counts != nil && !c.counts(path) {
+		return false, false
+	}
+	c.calls = append(c.calls, Call{Kind: kind, Path: path})
+	n := len(c.calls)
+	if n == c.crashAt {
+		c.crashed = true
+		return false, true
+	}
+	return n == c.failAt, false
+}
+
+// DurableContains reports whether needle is in some file under root that the media holds
+// under a durable name, every directory on the way to root included. It is the question a
+// promise to a client rests on: an acknowledged write, or an entry a reader was given, has to
+// be there after any crash from that moment on, so it has to be durable at that moment.
+func (c *PageCache) DurableContains(root string, needle []byte) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	root = filepath.Clean(root)
+	durableName := func(path string) bool {
+		for p := path; p != root && p != filepath.Dir(p); p = filepath.Dir(p) {
+			if _, fresh := c.fresh[p]; fresh {
+				return false
+			}
+		}
+		return true
+	}
+	for path, content := range c.removed {
+		if durableName(filepath.Dir(path)) && bytes.Contains(content, needle) {
+			return true, nil
+		}
+	}
+	found := false
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || found || entry.IsDir() || !durableName(path) {
+			return err
+		}
+		var content []byte
+		if file, tracked := c.files[path]; tracked {
+			content = zeroRanges(append([]byte(nil), file.disk...), file.lost)
+		} else if content, err = os.ReadFile(path); err != nil {
+			return err
+		}
+		found = bytes.Contains(content, needle)
+		return nil
+	})
+	return found, err
 }
 
 // Crash stops the filesystem: every call from now on fails with ErrCrashed, as for a machine
@@ -216,6 +317,8 @@ func (c *PageCache) Recover(loss Loss) error {
 	c.fresh = map[string]bool{}
 	c.removed = map[string][]byte{}
 	c.failSyncs = 0
+	c.crashAt = 0
+	c.failAt = 0
 	c.crashed = false
 	return nil
 }
@@ -337,6 +440,9 @@ func (c *PageCache) Mkdir(name string, perm os.FileMode) error {
 	if c.crashed {
 		return ErrCrashed
 	}
+	if _, crash := c.step("mkdir", filepath.Clean(name)); crash {
+		return ErrCrashed
+	}
 	if err := c.base.Mkdir(name, perm); err != nil {
 		return err
 	}
@@ -360,6 +466,11 @@ func (c *PageCache) MkdirAll(name string, perm os.FileMode) error {
 			break
 		}
 	}
+	if len(missing) > 0 {
+		if _, crash := c.step("mkdir", filepath.Clean(name)); crash {
+			return ErrCrashed
+		}
+	}
 	if err := c.base.MkdirAll(name, perm); err != nil {
 		return err
 	}
@@ -376,6 +487,9 @@ func (c *PageCache) Remove(name string) error {
 		return ErrCrashed
 	}
 	path := filepath.Clean(name)
+	if _, crash := c.step("remove", path); crash {
+		return ErrCrashed
+	}
 	file := c.track(path)
 	if err := c.base.Remove(name); err != nil {
 		return err
@@ -403,6 +517,11 @@ func (c *PageCache) OpenFile(name string, flag int, perm os.FileMode) (filestore
 	if existed && !isDir {
 		// what is on disk before the open is what the media holds, if it is news to the model
 		c.track(path)
+	}
+	if !existed && flag&os.O_CREATE != 0 {
+		if _, crash := c.step("create", path); crash {
+			return nil, ErrCrashed
+		}
 	}
 	file, err := c.base.OpenFile(name, flag, perm)
 	if err != nil {
@@ -440,6 +559,9 @@ func (h *pageCacheHandle) Write(p []byte) (int, error) {
 	if c.crashed {
 		return 0, ErrCrashed
 	}
+	if _, crash := c.step("write", h.path); crash {
+		return 0, ErrCrashed
+	}
 	var offset int64
 	var err error
 	if h.appends {
@@ -469,6 +591,9 @@ func (h *pageCacheHandle) Truncate(size int64) error {
 	if c.crashed {
 		return ErrCrashed
 	}
+	if _, crash := c.step("truncate", h.path); crash {
+		return ErrCrashed
+	}
 	if err := h.File.Truncate(size); err != nil {
 		return err
 	}
@@ -486,7 +611,15 @@ func (h *pageCacheHandle) Sync() error {
 	if c.crashed {
 		return ErrCrashed
 	}
+	fail, crash := c.step("sync", h.path)
+	if crash {
+		return ErrCrashed
+	}
 	if h.isDir {
+		if fail {
+			// the names in it are exactly as undurable as they were
+			return ErrSyncFailed
+		}
 		for path := range c.fresh {
 			if filepath.Dir(path) == h.path {
 				delete(c.fresh, path)
@@ -500,8 +633,10 @@ func (h *pageCacheHandle) Sync() error {
 		return nil
 	}
 	file := c.track(h.path)
-	if c.failSyncs > 0 && strings.HasSuffix(h.path, c.failSuffix) {
-		c.failSyncs--
+	if fail || c.failSyncs > 0 && strings.HasSuffix(h.path, c.failSuffix) {
+		if !fail {
+			c.failSyncs--
+		}
 		// the pages this fsync was asked to write are marked clean without being written:
 		// they stay readable, and no later fsync will write them
 		var truncates []pendingOp
