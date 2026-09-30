@@ -195,3 +195,35 @@ func (f *failingDirFile) Sync() error {
 	}
 	return nil
 }
+
+// TestSync_SyncsTheRootOnlyForANewTopic is the same rule one level up: a topic this store
+// created has a name in the root that no fsync has made durable, so its first sync pays for
+// the root once. A topic that was already there when the store opened, and every later block
+// of a new one, pays nothing.
+func TestSync_SyncsTheRootOnlyForANewTopic(t *testing.T) {
+	fs := newCountingFS()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "existing"), 0744); err != nil {
+		t.Fatal(err)
+	}
+	store := filestore.New(fs, root)
+	if _, err := store.CreateTopic("created"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, ref := range []driven.BlockRef{
+		driven.LogRef("created", 0), driven.LogRef("created", 100), driven.LogRef("existing", 0),
+		driven.LogRef("appended", 0),
+	} {
+		if _, err := store.Append(ref, []byte("entries")); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Sync(ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// one for the topic CreateTopic made, one for the topic the first append made
+	if got := fs.count(root); got != 2 {
+		t.Fatalf("the root was synced %d times, want once for each new topic", got)
+	}
+}

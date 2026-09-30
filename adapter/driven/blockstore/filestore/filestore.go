@@ -31,10 +31,12 @@ type Store struct {
 	rootPath string
 
 	// mu guards newBlocks, which is the set of blocks whose file has been created but whose
-	// directory entry has not been synced yet. Appends and syncs of different topics run
-	// concurrently, so the set needs a lock of its own.
+	// directory entry has not been synced yet, and newTopics, the same for topic directories
+	// and the root. Appends and syncs of different topics run concurrently, so the sets need
+	// a lock of their own.
 	mu        sync.Mutex
 	newBlocks map[driven.BlockRef]struct{}
+	newTopics map[domain.TopicName]struct{}
 }
 
 var (
@@ -45,7 +47,11 @@ var (
 // New returns a store that keeps its topics under rootPath, which must exist, on the given
 // filesystem. Pass OS{} unless you are injecting faults.
 func New(fs FS, rootPath string) *Store {
-	return &Store{fs: fs, rootPath: rootPath, newBlocks: make(map[driven.BlockRef]struct{})}
+	return &Store{
+		fs: fs, rootPath: rootPath,
+		newBlocks: make(map[driven.BlockRef]struct{}),
+		newTopics: make(map[domain.TopicName]struct{}),
+	}
 }
 
 // NewOS returns a store on the real filesystem, which is what the server wires.
@@ -134,6 +140,7 @@ func (s *Store) CreateTopic(topic domain.TopicName) (bool, error) {
 		}
 		return false, errore.Wrap(err)
 	}
+	s.markNewTopic(topic)
 	return true, nil
 }
 
@@ -259,6 +266,28 @@ func (s *Store) blockIsNew(ref driven.BlockRef) bool {
 	return isNew
 }
 
+// markNewTopic records that a topic directory's name in the root is not on durable media yet.
+func (s *Store) markNewTopic(topic domain.TopicName) {
+	s.mu.Lock()
+	s.newTopics[topic] = struct{}{}
+	s.mu.Unlock()
+}
+
+// topicIsNew reports whether the root still has to be synced for the topic's name.
+func (s *Store) topicIsNew(topic domain.TopicName) bool {
+	s.mu.Lock()
+	_, isNew := s.newTopics[topic]
+	s.mu.Unlock()
+	return isNew
+}
+
+// topicNameIsDurable is called once the root has been synced after the topic was created.
+func (s *Store) topicNameIsDurable(topic domain.TopicName) {
+	s.mu.Lock()
+	delete(s.newTopics, topic)
+	s.mu.Unlock()
+}
+
 // dirEntryIsDurable is called once the topic directory has been synced, which is what makes
 // ref's name durable. Only ref is cleared: a block created while that sync was running may
 // not be covered by it, and is left for its own sync to deal with.
@@ -278,6 +307,7 @@ func (s *Store) openForAppend(ref driven.BlockRef) (File, error) {
 	if mkErr := s.fs.MkdirAll(s.topicPath(ref.Topic), topicPerm); mkErr != nil {
 		return nil, err
 	}
+	s.markNewTopic(ref.Topic)
 	return s.fs.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, blockPerm)
 }
 
@@ -349,12 +379,10 @@ func (s *Store) Remove(ref driven.BlockRef) error {
 	return nil
 }
 
-// Sync flushes a block to durable media, and then the topic directory so a block created by
-// this append is found again after a crash. The directory flush is best effort: not every
-// filesystem can do it, and a lost directory entry looks to recovery like a block that was
-// never written.
-// Sync makes the block durable: the file itself, and the directory holding it when the file
-// is new, since an fsync of a file says nothing about the name it was reached by.
+// Sync makes the block durable: the file itself, the directory holding it when the file is
+// new, and the root when the topic is, since an fsync of a file says nothing about the names
+// it was reached by. A synced block in a topic whose own name is not durable is a block a
+// power cut can take with the whole topic.
 //
 // The directory is synced only then. Appending to a block that is already named on durable
 // media adds no directory entry, so syncing the directory again would buy nothing and cost
@@ -379,15 +407,21 @@ func (s *Store) Sync(ref driven.BlockRef) error {
 		// a directory sync that failed leaves the block marked, so the next sync of it tries
 		// again. The bytes are on the media either way, which is why this is not the caller's
 		// error the way the block's own sync is.
-		if err = s.syncTopicDir(ref.Topic); err == nil {
+		if err = s.syncDir(s.topicPath(ref.Topic)); err == nil {
 			s.dirEntryIsDurable(ref)
+		}
+	}
+	if s.topicIsNew(ref.Topic) {
+		// the same rule one level up, and it is retried the same way
+		if err = s.syncDir(s.rootPath); err == nil {
+			s.topicNameIsDurable(ref.Topic)
 		}
 	}
 	return nil
 }
 
-func (s *Store) syncTopicDir(topic domain.TopicName) error {
-	dir, err := s.fs.OpenFile(s.topicPath(topic), os.O_RDONLY, topicPerm)
+func (s *Store) syncDir(path string) error {
+	dir, err := s.fs.OpenFile(path, os.O_RDONLY, topicPerm)
 	if err != nil {
 		return err
 	}
