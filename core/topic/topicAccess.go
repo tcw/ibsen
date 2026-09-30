@@ -407,8 +407,15 @@ func (t *Topic) read(params domain.ReadLogParams) error {
 	if !wasFound {
 		return nil
 	}
+	// every block is read up to the boundary the read began with. Asking again per block
+	// looks like it reads more, and skips instead: the block before was cut at the old
+	// boundary, so whatever became durable at its end in the meantime was never sent, and the
+	// read carried on from this block's first offset. A reader that wants more reads again.
 	for _, b := range t.LogBlockList[i+1:] {
-		endOffset, _ = t.endBoundaryForReadOffset()
+		if domain.Offset(b) >= endOffset {
+			// a block is named by its first offset, so nothing in it is durable yet
+			break
+		}
 		err = t.sendBlock(t.logRef(b), 0, domain.Offset(b), endOffset, params)
 		if errors.Is(err, driven.ErrBlockNotFound) {
 			break
