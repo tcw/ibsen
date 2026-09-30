@@ -30,13 +30,13 @@ type Store struct {
 	fs       FS
 	rootPath string
 
-	// mu guards newBlocks, which is the set of blocks whose file has been created but whose
-	// directory entry has not been synced yet, and newTopics, the same for topic directories
-	// and the root. Appends and syncs of different topics run concurrently, so the sets need
-	// a lock of their own.
-	mu        sync.Mutex
-	newBlocks map[driven.BlockRef]struct{}
-	newTopics map[domain.TopicName]struct{}
+	// mu guards namedBlocks, the blocks whose name this store has made durable by syncing
+	// their topic directory, and namedTopics, the topics whose name it has made durable by
+	// syncing the root. Appends and syncs of different topics run concurrently, so the sets
+	// need a lock of their own.
+	mu          sync.Mutex
+	namedBlocks map[driven.BlockRef]struct{}
+	namedTopics map[domain.TopicName]struct{}
 }
 
 var (
@@ -49,8 +49,8 @@ var (
 func New(fs FS, rootPath string) *Store {
 	return &Store{
 		fs: fs, rootPath: rootPath,
-		newBlocks: make(map[driven.BlockRef]struct{}),
-		newTopics: make(map[domain.TopicName]struct{}),
+		namedBlocks: make(map[driven.BlockRef]struct{}),
+		namedTopics: make(map[domain.TopicName]struct{}),
 	}
 }
 
@@ -140,7 +140,6 @@ func (s *Store) CreateTopic(topic domain.TopicName) (bool, error) {
 		}
 		return false, errore.Wrap(err)
 	}
-	s.markNewTopic(topic)
 	return true, nil
 }
 
@@ -241,59 +240,38 @@ func (s *Store) Append(ref driven.BlockRef, data []byte) (driven.Block, error) {
 	if err = file.Close(); err != nil {
 		return driven.Block{}, errore.Wrap(err)
 	}
-	if size == 0 {
-		// the block was empty, so this append either created the file or filled a file
-		// nothing had been made durable from: its directory entry still has to be synced.
-		// An existing empty block costs one directory sync it does not need, which is the
-		// price of not asking the filesystem whether the open created the file.
-		s.markNewBlock(ref)
-	}
 	return driven.Block{Block: ref.Block, Size: size + int64(n)}, nil
 }
 
-// markNewBlock records that ref's directory entry is not on durable media yet.
-func (s *Store) markNewBlock(ref driven.BlockRef) {
+// blockIsNamed reports whether this store has made ref's name durable.
+func (s *Store) blockIsNamed(ref driven.BlockRef) bool {
 	s.mu.Lock()
-	s.newBlocks[ref] = struct{}{}
+	_, named := s.namedBlocks[ref]
+	s.mu.Unlock()
+	return named
+}
+
+// blockNamed is called once the topic directory has been synced, which is what makes ref's
+// name durable. Only ref is marked: a block created while that sync was running may not be
+// covered by it, and is left for its own sync to deal with.
+func (s *Store) blockNamed(ref driven.BlockRef) {
+	s.mu.Lock()
+	s.namedBlocks[ref] = struct{}{}
 	s.mu.Unlock()
 }
 
-// blockIsNew reports whether ref's directory entry still has to be synced.
-func (s *Store) blockIsNew(ref driven.BlockRef) bool {
+// topicIsNamed reports whether this store has made the topic's name in the root durable.
+func (s *Store) topicIsNamed(topic domain.TopicName) bool {
 	s.mu.Lock()
-	_, isNew := s.newBlocks[ref]
+	_, named := s.namedTopics[topic]
 	s.mu.Unlock()
-	return isNew
+	return named
 }
 
-// markNewTopic records that a topic directory's name in the root is not on durable media yet.
-func (s *Store) markNewTopic(topic domain.TopicName) {
+// topicNamed is called once the root has been synced with the topic in it.
+func (s *Store) topicNamed(topic domain.TopicName) {
 	s.mu.Lock()
-	s.newTopics[topic] = struct{}{}
-	s.mu.Unlock()
-}
-
-// topicIsNew reports whether the root still has to be synced for the topic's name.
-func (s *Store) topicIsNew(topic domain.TopicName) bool {
-	s.mu.Lock()
-	_, isNew := s.newTopics[topic]
-	s.mu.Unlock()
-	return isNew
-}
-
-// topicNameIsDurable is called once the root has been synced after the topic was created.
-func (s *Store) topicNameIsDurable(topic domain.TopicName) {
-	s.mu.Lock()
-	delete(s.newTopics, topic)
-	s.mu.Unlock()
-}
-
-// dirEntryIsDurable is called once the topic directory has been synced, which is what makes
-// ref's name durable. Only ref is cleared: a block created while that sync was running may
-// not be covered by it, and is left for its own sync to deal with.
-func (s *Store) dirEntryIsDurable(ref driven.BlockRef) {
-	s.mu.Lock()
-	delete(s.newBlocks, ref)
+	s.namedTopics[topic] = struct{}{}
 	s.mu.Unlock()
 }
 
@@ -307,7 +285,6 @@ func (s *Store) openForAppend(ref driven.BlockRef) (File, error) {
 	if mkErr := s.fs.MkdirAll(s.topicPath(ref.Topic), topicPerm); mkErr != nil {
 		return nil, err
 	}
-	s.markNewTopic(ref.Topic)
 	return s.fs.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, blockPerm)
 }
 
@@ -379,15 +356,16 @@ func (s *Store) Remove(ref driven.BlockRef) error {
 	return nil
 }
 
-// Sync makes the block durable: the file itself, the directory holding it when the file is
-// new, and the root when the topic is, since an fsync of a file says nothing about the names
-// it was reached by. A synced block in a topic whose own name is not durable is a block a
-// power cut can take with the whole topic.
+// Sync makes the block durable: the file itself, and the names it is reached by, since an
+// fsync of a file says nothing about those. A synced block whose name is not durable, or in a
+// topic whose name is not, is a block a power cut can take.
 //
-// The directory is synced only then. Appending to a block that is already named on durable
-// media adds no directory entry, so syncing the directory again would buy nothing and cost
-// an fsync — the same fsync a log pays on every write it acknowledges, which is the one it
-// can least afford to pay twice.
+// The names are synced once per block and once per topic in the life of a store, on the first
+// sync of each, and never again: appending to a block already named on durable media adds no
+// directory entry, and the fsync a log pays on every write it acknowledges is the one it can
+// least afford to pay twice. Once per store rather than once per block created, because a
+// store cannot know that a name it found was ever made durable: the process before it may
+// have created it and failed to sync its directory, and the name is still in the cache.
 func (s *Store) Sync(ref driven.BlockRef) error {
 	file, err := s.fs.OpenFile(s.blockPath(ref), os.O_WRONLY, blockPerm)
 	if err != nil {
@@ -403,22 +381,22 @@ func (s *Store) Sync(ref driven.BlockRef) error {
 	if err = file.Close(); err != nil {
 		return errore.Wrap(err)
 	}
-	if s.blockIsNew(ref) {
+	if !s.blockIsNamed(ref) {
 		// a failed directory sync is the caller's error as much as the block's own: the bytes
 		// are on the media, but a block whose name is not is a block a power cut takes, and
-		// acknowledging a write into it would be acknowledging nothing. It leaves the block
-		// marked, so a later sync of it syncs the directory again.
+		// acknowledging a write into it would be acknowledging nothing. The block stays
+		// unnamed, so a later sync of it syncs the directory again.
 		if err = s.syncDir(s.topicPath(ref.Topic)); err != nil {
 			return errore.Wrap(err)
 		}
-		s.dirEntryIsDurable(ref)
+		s.blockNamed(ref)
 	}
-	if s.topicIsNew(ref.Topic) {
+	if !s.topicIsNamed(ref.Topic) {
 		// the same rule one level up, for the topic's name in the root
 		if err = s.syncDir(s.rootPath); err != nil {
 			return errore.Wrap(err)
 		}
-		s.topicNameIsDurable(ref.Topic)
+		s.topicNamed(ref.Topic)
 	}
 	return nil
 }
