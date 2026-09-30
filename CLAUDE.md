@@ -233,8 +233,12 @@ them has returned, so a reader never sees an entry a power cut could take back.
   is intact but not on the media, so those entries — never acknowledged — become readable
   and a later power cut can still take them.
 - **An acknowledged write costs one fsync, not two.** `filestore.Sync` syncs the block, and
-  the directory holding it only when the file is new: a directory sync is what makes a
-  block's *name* durable, and appending to a block already on the media adds no name. Halving
+  the directory holding it only on the block's first sync in the life of the store (and the
+  root on a topic's first): a directory sync is what makes a block's *name* durable, and
+  appending to a block already named on the media adds no name. It is once per store, not
+  once per block created, since step 37: a store cannot tell a name the process before it
+  failed to make durable from one it did, so a restart costs one directory fsync per block
+  and one root fsync per topic it writes to. Halving
   the count bought 70.6s -> 66.1s on ext4 over a virtio disk, where a directory with nothing
   dirty in it is a cheap fsync; on media where it is not, this is the whole of the second
   sync. Pinned by `adapter/driven/blockstore/filestore/dirsync_test.go`, which counts syncs
@@ -601,14 +605,14 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 34. ~~Sync the old head block before rolling over to a new one (§12).~~
 35. ~~Return a failed directory sync instead of swallowing it, and add the nemesis test (§12).~~
 36. ~~Crash at every storage call, and check every promise for durable support (§12).~~
-37. Sync a block's directory and its topic's root on the first sync of it in every process,
-    not only the process that created it (§12).
+37. ~~Sync a block's directory and its topic's root on the first sync of it in every process,
+    not only the process that created it (§12).~~
 38. Drop a head block's clean cached pages before recovering it, so a restart after a failed
     fsync reads what the media holds; enumerate a failed sync at every sync call (§2, §12).
 
-Every step ships green. Steps 0 to 36 are done, one commit each.
+Every step ships green. Steps 0 to 37 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: steps 37 and 38, then dictionaries (§6), which §5's measurements argue
+Next, in the same one-change-at-a-time way: step 38, then dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
 
@@ -766,10 +770,9 @@ unsynced data is modelled instead.
 - **What it found**, each pinned by a deterministic test of its own:
   1. **A new topic's name was never durable.** `filestore` created the topic directory and
      never synced the root, so a power cut after the first acknowledged write to a new topic
-     could take the whole topic. Fixed in step 31: a topic this store created gets the root
-     synced on its first `Sync`, retried like the block's directory
-     (`filestore/powerCut_test.go`, and `dirsync_test.go` for the one fsync it costs per new
-     topic).
+     could take the whole topic. Fixed in step 31: a topic gets the root synced on its first
+     `Sync`, retried like the block's directory (`filestore/powerCut_test.go`, and
+     `dirsync_test.go` for the one fsync it costs per topic).
   2. **A read spanning two blocks skipped the end of the first** when a flush landed during
      it, because each block after the first re-read the durable offset. No crash needed, and
      a tailing consumer loses those entries for good. Fixed in step 32: a read runs to the
@@ -853,7 +856,10 @@ unsynced data is modelled instead.
     restart broke something and every one after it was clean, so the fail-stop of step 33
     holds within a process and a new process forgets what is not durable. For names, a new
     `filestore` takes every existing block and topic name as durable and never retries the
-    directory sync that failed (step 37). For data, the page cache still serves what the
+    directory sync that failed. Fixed in step 37: the store keeps the names it has made
+    durable rather than the names it created, so every name starts unconfirmed in a new
+    process (`filestore/powerCut_test.go` fails the directory's and the root's sync, then
+    restarts). For data, the page cache still serves what the
     failed fsync dropped, so the reopened topic looks whole, appends behind the hole, and
     acknowledges writes a power cut then takes, or leaves a block nobody can read past; that
     is worse than §2 said (step 38).

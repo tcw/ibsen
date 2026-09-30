@@ -195,11 +195,12 @@ func (f *failingDirFile) Sync() error {
 	return nil
 }
 
-// TestSync_SyncsTheRootOnlyForANewTopic is the same rule one level up: a topic this store
-// created has a name in the root that no fsync has made durable, so its first sync pays for
-// the root once. A topic that was already there when the store opened, and every later block
-// of a new one, pays nothing.
-func TestSync_SyncsTheRootOnlyForANewTopic(t *testing.T) {
+// TestSync_SyncsTheRootOncePerTopic is the same rule one level up: a topic's name is in the
+// root, and the first sync of a block in it syncs the root once, whether this store created
+// the topic or found it. A topic it found may have been created by a process that failed to
+// sync the root and restarted, with the name still in the cache; nothing a store can read
+// tells it apart from a durable one. Every later block of the topic pays nothing.
+func TestSync_SyncsTheRootOncePerTopic(t *testing.T) {
 	fs := newCountingFS()
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "existing"), 0744); err != nil {
@@ -221,8 +222,31 @@ func TestSync_SyncsTheRootOnlyForANewTopic(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// one for the topic CreateTopic made, one for the topic the first append made
-	if got := fs.count(root); got != 2 {
-		t.Fatalf("the root was synced %d times, want once for each new topic", got)
+	if got := fs.count(root); got != 3 {
+		t.Fatalf("the root was synced %d times, want once for each of the three topics", got)
+	}
+}
+
+// TestSync_SyncsTheDirectoryOnceForABlockItFound is the same for a block that was there when
+// the store opened: its first sync syncs the directory, since the store cannot know the name
+// was ever made durable, and later syncs do not.
+func TestSync_SyncsTheDirectoryOnceForABlockItFound(t *testing.T) {
+	root := t.TempDir()
+	ref := driven.LogRef("topic", 0)
+	if _, err := filestore.NewOS(root).Append(ref, []byte("before")); err != nil {
+		t.Fatal(err)
+	}
+	fs := newCountingFS()
+	store := filestore.New(fs, root)
+	for i := 0; i < 3; i++ {
+		if _, err := store.Append(ref, []byte("more")); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Sync(ref); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := fs.count(filepath.Join(root, "topic")); got != 1 {
+		t.Fatalf("a block the store found had its directory synced %d times, want once", got)
 	}
 }
