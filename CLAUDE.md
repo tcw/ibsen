@@ -85,7 +85,7 @@ errore/                     stdlib-only, shared by both sides
 
 ## Current baseline (verified 2026-09-18, go1.26.4)
 
-- `go test -race ./...` passes through migration step 17. Run it before and after every migration step.
+- `go test -race ./...` passes through migration step 30. Run it before and after every migration step.
 - Port conformance suite: `adapter/driven/blockstore/conformance`, run by every adapter (`filestore` on a real directory, `memstore`, `flashstore`).
 - `filestore` is the filesystem adapter, and the only one. Its seam is `filestore.FS`: six methods and a handle, which exists so a crash can be injected below the store and for nothing else, and which `*os.File` already satisfies. The other implementations are `faultfs.CrashFiles`, which tears writes, and `filestore.ReadOnly`, which refuses them. It keeps the layout the adapter it replaced used, so an existing data directory is read and written unchanged, and it passes all three suites: the conformance suite, the adapter's own crash and durability tests, and the core property tests, which run against it on a real directory. Each of those used to run twice for the filesystem adapter, the second time against an emulated filesystem; that second run is deliberately gone, since an emulation that disagrees with a real filesystem is worse than not running at all and this one disagreed twice. Its crash tests are an external test package, because `faultfs` is built on the seam and an internal test importing it back would be a cycle.
 - Core property tests: `core/topic/topicAccess_property_test.go` (read-from-every-offset across block sizes and reload modes; concurrent write/read/index), run against every adapter. Only `coreBackends()` at the top of that file knows which store is behind the port.
@@ -239,20 +239,17 @@ them has returned, so a reader never sees an entry a power cut could take back.
   recovery already drops torn pairs and re-indexes, so paying an fsync for it would buy
   nothing.
 
-- **Known gap, found 2026-09-20 by `BenchmarkGrpcWriteFlushPolicy`: nothing reaching the log
-  through the manager can coalesce a flush.** `LogTopicsManager.Write` takes a per-topic
-  mutex and holds it across the whole of `Topic.Write`, which includes waiting for the flush.
-  Two clients writing to one topic are therefore never inside the policy at the same time,
-  so a batch never has anybody to wait for: eight concurrent gRPC writers measure 1.00
-  fsyncs per write at every policy, and an interval only adds itself to each write's latency
-  (2.03 ms at the default against 7.65 ms at `--flushIntervalMs 5`). The core is not at
-  fault — `core/topic/flush_test.go` drives concurrent writers straight at a `Topic` and they
-  do share one sync — but that path has no user. Removing the mutex locally turns the 5 ms
-  case into 0.132 fsyncs/op at 1.07 ms/op, seven times fewer syncs and seven times the
-  throughput, which is the size of what is being left on the table. `Topic.Write` is already
-  guarded by `Topic.mu` and assigns offsets under it, so what the manager's mutex adds beyond
-  that is the open question; answering it is a change to the core's concurrency and wants its
-  own step rather than a quiet removal.
+- **Writers through the manager share a flush.** `LogTopicsManager.Write` used to take a
+  per-topic mutex and hold it across the whole of `Topic.Write`, flush included — a leftover
+  from before `Topic.mu` existed — so two clients writing to one topic were never inside the
+  policy together and every write through a server cost a sync of its own (found 2026-09-20
+  by `BenchmarkGrpcWriteFlushPolicy`). It guarded nothing the topic does not: `append`
+  assigns offsets and writes the head block under `Topic.mu`, the durable offset only
+  advances on a sync that succeeded, and a failed batch is requeued with its target, so it
+  can never be skipped past. Removed in step 30; `core/manager/concurrentWrite_test.go`
+  holds a sync still, has eight writers append behind it through the manager, and pins that
+  they share one. Even the default policy now coalesces, since writers arriving during a sync
+  join the next batch (§9).
 
 ## 3. Index
 
@@ -290,8 +287,8 @@ the core is pure.
 
 ## 5. Compression
 
-Framing is done (step 17); the codec adapter behind it is not (step 18). Today every frame is
-written with `driven.NoCodec`, so the format is in place and carries no compression yet.
+Done. Framing is step 17, the zstd adapter behind it step 18, and zstd is the default
+(`wiring.DefaultCompression`); `--compression none` writes every frame with `driven.NoCodec`.
 
 - ~~Per-block compressed **frames**, self-describing: header carries codec, offsets, two
   CRCs.~~ The layout is under "What it is". Self-describing is the point: a frame says which
@@ -528,18 +525,24 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
     middle it would measure hanging up on a server that is still sending.
   - **`BenchmarkGrpcWriteFlushPolicy`** measures the §2 pair — `--flushEntries` and
     `--flushIntervalMs` — with eight clients writing ten entries each at once, and counts the
-    fsyncs through the store's own seam, since the port cannot see one. ext4, 2s per case:
+    fsyncs through the store's own seam, since the port cannot see one. ext4, 2s per case,
+    before and after step 30 took the manager's per-topic mutex out:
 
-    | policy | ns/op | fsyncs/op | entries/fsync |
-    |---|---|---|---|
-    | default | 2.03 ms | 1.001 | 10.0 |
-    | `entries=1000` | 2.13 ms | 1.001 | 10.0 |
-    | `entries=1000,interval=1ms` | 3.52 ms | 1.001 | 10.0 |
-    | `entries=1000,interval=5ms` | 7.65 ms | 1.003 | 10.0 |
-    | `entries=40,interval=5ms` | 7.47 ms | 1.003 | 10.0 |
+    | policy | before: ns/op | fsyncs/op | after: ns/op | fsyncs/op |
+    |---|---|---|---|---|
+    | default | 2.03 ms | 1.001 | 0.78 ms | 0.333 |
+    | `entries=1000` | 2.13 ms | 1.001 | 0.69 ms | 0.306 |
+    | `entries=1000,interval=1ms` | 3.52 ms | 1.001 | 0.70 ms | 0.311 |
+    | `entries=1000,interval=5ms` | 7.65 ms | 1.003 | 1.10 ms | 0.141 |
+    | `entries=40,interval=5ms` | 7.47 ms | 1.003 | 1.18 ms | 0.345 |
 
-    The count alone changes nothing, which is §2 stating its own semantics. The interval
-    changing nothing either is **not** §2, and is the finding: see the gap below.
+    Before, nobody could meet inside the policy, so every write was a sync and an interval
+    was pure added latency. After, the default already gives about three writes per sync,
+    at 2.6 times the throughput, because writers arriving while a sync runs share the next
+    one. An interval of 5 ms halves the syncs again but is slower than the default here:
+    eight clients that each wait for their own acknowledgement have nothing to send while
+    they are held back. It is the dial for media where a sync costs more than this disk's,
+    or for more writers than eight.
 
 ## 10. Migration order: strangler, never two changes at once
 
@@ -584,8 +587,10 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
     directories.~~
 29. ~~Add the stdio driving adapter, so the log is a Unix filter with no server between a
     program and the bytes (§11).~~
+30. ~~Take out the manager's per-topic write mutex, so writers through a server can share a
+    flush (§2, §9).~~
 
-Every step ships green. Steps 0 to 29 are done, one commit each.
+Every step ships green. Steps 0 to 30 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
