@@ -589,10 +589,16 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
     program and the bytes (§11).~~
 30. ~~Take out the manager's per-topic write mutex, so writers through a server can share a
     flush (§2, §9).~~
+31. ~~Add the history checker and the page-cache fault model, and make a new topic's name
+    durable (§12).~~
+32. Read up to one durable offset for the whole of a read (§12).
+33. Stop a topic whose fsync failed instead of retrying it (§12).
+34. Sync the old head block before rolling over to a new one, and add the nemesis test (§12).
 
-Every step ships green. Steps 0 to 30 are done, one commit each.
+Every step ships green. Steps 0 to 31 are done, one commit each.
 
-Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
+Next, in the same one-change-at-a-time way: steps 32 to 34, which fix what §12's harness found;
+then dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
 
@@ -718,3 +724,51 @@ log without gRPC. It needs a protocol in both directions, and multiplexing once 
 write overlap, and it earns that only if embedding Ibsen in a non-Go process is actually
 wanted. A Unix domain socket is not this either: it is one `net.Listen` in the gRPC adapter,
 and what it gives you is still the server.
+
+## 12. Power cuts, and a checker that says what went wrong
+
+A Jepsen-shaped test on one machine: concurrent clients write and read through the driving
+port while a nemesis cuts the power under them, and a checker decides whether one log explains
+everything every client was told. What Go cannot fake — real power loss, a disk that lies
+about flushing, clock skew, partitions between hosts — stays out; what a filesystem does with
+unsynced data is modelled instead.
+
+- **`adapter/driver/history`** is the checker, stdlib-only and driving the log only through
+  `driver.LogManager`. It records each write and read on a logical clock, then scans the log
+  read back after recovery: nothing invented or duplicated, offsets contiguous, an
+  acknowledged write whole and in order, real-time order, and every entry a reader was given
+  still there at the offset it was given at. A write that returned an error is
+  **indeterminate** and may leave a prefix of itself, never more: a write is appended as
+  frames and recovery truncates at the first damaged one, which is the rule stated in §1 now
+  made exact. Its own tests show it every anomaly it knows and the valid histories it must
+  accept.
+- **`faultfs.PageCache`** is the nemesis: LazyFS on the `filestore.FS` seam. Every call really
+  happens on a real directory, and beside that it models what the media holds. Data is
+  durable when its file is synced; a created or removed name when its directory is (strict
+  POSIX, harsher than ext4, which nothing promises); a failed fsync loses what it was asked to
+  write, as Linux has since 4.13 — readable from the cache, never written by a later fsync,
+  zeros after a crash. `Crash` stops it, `Recover(loss)` rewrites the directory to what
+  survived: `LoseEverything`, `LoseSome(seed)` (a prefix of each file's unsynced writes, the
+  next one torn, each unsynced name change with even odds), or `KeepBytes` for one particular
+  crash. The shared conformance suite runs through it, which is what says it changes nothing
+  until it crashes. It is an emulation of the kind §"Current baseline" warns about, and the
+  answer is the same as there: every call is real, and only durability is modelled.
+- **What it found**, each pinned by a deterministic test of its own:
+  1. **A new topic's name was never durable.** `filestore` created the topic directory and
+     never synced the root, so a power cut after the first acknowledged write to a new topic
+     could take the whole topic. Fixed in step 31: a topic this store created gets the root
+     synced on its first `Sync`, retried like the block's directory
+     (`filestore/powerCut_test.go`, and `dirsync_test.go` for the one fsync it costs per new
+     topic).
+  2. **A read spanning two blocks skipped the end of the first** when a flush landed during
+     it, because each block after the first re-read the durable offset. No crash needed, and
+     a tailing consumer loses those entries for good. Step 32.
+  3. **A failed fsync was retried.** Under Linux semantics the retry succeeds without writing
+     anything, so a later write is acknowledged behind a hole; after a power cut recovery
+     truncates at the hole and takes the acknowledged write with it. When the hole is at the
+     start of a block, the zeros read as a block written before framing and the topic does
+     not load at all. Step 33.
+  4. **Recovery looks only at the head block**, but a power cut during a rollover can leave
+     the block before it with its unsynced tail missing or torn while the new block survives.
+     Missing is a permanent hole in the offsets; torn is a topic that cannot be read past it.
+     Step 34.
