@@ -504,6 +504,10 @@ Measured by `scripts/embedded-size.sh` on go1.26.4:
 
 ## 9. Testing (the linchpin)
 
+The developer's guide to the suite — its levels, the fault models, the two system harnesses
+and how to read their failures, recipes, and which test holds which promise — is
+[TESTING.md](TESTING.md). This section keeps the history and the measurements.
+
 - Shared conformance property-test suite parameterized over any `BlockStore`, run against every adapter.
 - Properties: round-trip; read-from-every-offset.
 - Crash and torn-write fault injection at the storage adapter.
