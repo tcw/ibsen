@@ -332,6 +332,13 @@ against 55–86s at 1000, three runs each on an ordinary disk. Nothing about dur
 with the batch size: every `append` that exits zero has its entries on durable media, and a
 batch that fails takes with it only entries no one was told about.
 
+**A failed fsync stops the topic.** The writes waiting on it get the error, and every later
+write to that topic is refused until the process is restarted; other topics carry on. It is
+not retried, because on Linux a retry succeeds without writing what the failed one dropped,
+and the next write would be acknowledged behind a hole. On restart the head block is read from
+the disk rather than the page cache (on Linux), so recovery sees the hole and cuts there. A failing fsync
+usually means failing storage: look at the disk before you restart.
+
 The size is a ceiling and not a quota. A batch is written when it is full, when it holds 16 MiB
 of entries — the size counts entries, and entries have no size — **or when the stream has
 nothing more ready**. So `tail -F applog | ibsen append` makes each line durable as it arrives
@@ -463,7 +470,7 @@ protoc --proto_path=api/grpcApi ibsen.proto --go_out=plugins=grpc:./
 ## Development
 
 ```shell
-go test -race ./...           # the whole suite, including property and crash tests
+go test -race ./...               # the whole suite: about 105 s on two cores
 go vet ./...
 gofmt -l .
 ./scripts/check-architecture.sh   # the core is pure; dependencies point inward
@@ -474,19 +481,53 @@ CI runs all five on every push. The architecture check is the important one: it 
 package under `core/` reaches outside the standard library, if the core imports an adapter,
 or if a driving adapter reaches a driven one.
 
+### How it is tested
+
+A log is worth exactly the promises it keeps when things go wrong — an acknowledged write is
+there after a power cut, nothing is readable before it is durable, offsets never skip — so the
+suite is built in levels, each holding what the ones below it cannot see:
+
+| level | what it asks | how |
+|---|---|---|
+| **Static** | is the code shaped the way the architecture says | the dependency graph, the binary size, and an AST check that no log event is built and never sent |
+| **Formats** | is every damaged byte caught | every byte of a frame header and of an index pair flipped and caught by its checksum; recovery against torn, corrupt, zeroed and old-format blocks |
+| **Port conformance** | does every storage backend keep the contract | one suite run against the filesystem, memory and raw-flash stores |
+| **Core properties** | does the log read back what was written | every offset, every store, four block sizes, live and reloaded, with and without its index |
+| **Contracts** | do concurrent callers get what was promised | gated stores that hold a sync or a load still, so a test decides the interleaving instead of hoping for it |
+| **Faults** | what survives a crash | torn writes below the store, and a power-cut model of the page cache: unsynced data lost, names not durable until their directory is synced, Linux's fsync-failure semantics |
+| **Adapters and end to end** | does each piece do its job | the CLI, the Unix filter, the codec, the lease, the composition roots, and a real gRPC server on a free port |
+| **System** | does one log explain everything every client saw | a Jepsen-style history checker over concurrent clients, a randomised nemesis cutting the power under them, and a Molly-style crash at every storage call of a deterministic workload, with every acknowledgement checked for durable support at the moment it is made |
+
+Everything runs against real directories; nothing emulates a filesystem. The power-cut model
+performs every call on a real directory and models only what a power cut would keep.
+
+The system-level tests have found seven bugs in the log that the rest of the suite passed — a
+topic whose name was never durable, a read that skipped entries, a failed fsync that was
+retried, a rollover that could tear the block before it, a swallowed directory sync, and two
+that only a restart after a failed fsync exposed. Each is fixed and pinned by its own test.
+
+**[TESTING.md](TESTING.md)** is the developer's guide to all of it: the principles, every level,
+the fault models, how to read a failure from the harnesses, recipes for fixing a bug or adding a
+storage backend, and which test holds which promise.
+
+### Design
+
 The design, the file formats and the reasoning behind both are in
 **[ARCHITECTURE.md](ARCHITECTURE.md)**. Project context, known gaps and the migration history
 are in [CLAUDE.md](CLAUDE.md).
 
 ## Status
 
-Under development, and usable: the core is covered by property tests, crash and torn-write
-fault injection, and a conformance suite every storage adapter passes. There are no known
-correctness bugs. What is not done, and is known:
+Under development, and usable: the core is covered by property tests, a conformance suite
+every storage adapter passes, torn-write and power-cut fault injection, and history-checked
+system tests that crash it at every storage call (see [How it is tested](#how-it-is-tested)).
+There are no known correctness bugs. What is not done, and is known:
 
 - Dictionaries for compression are designed, not built.
 - Distribution beyond the file lease — the fencing token described above — is not built.
 - Clients exist for Go; other languages are generated from the proto and nothing more.
+- Nothing tests a client that retries a write, and writes carry no idempotency key, so a retry
+  after an indeterminate failure can duplicate entries.
 
 ---
 

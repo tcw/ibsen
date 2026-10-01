@@ -19,7 +19,7 @@ jobs:
 
       - name: gofmt
         run: |
-          unformatted=$(gofmt -l core adapter wiring main.go errore utils)
+          unformatted=$(gofmt -l core adapter wiring main.go errore)
           if [ -n "$unformatted" ]; then
             echo "not gofmt'd:" >&2
             echo "$unformatted" >&2

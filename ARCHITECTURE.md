@@ -86,7 +86,7 @@ graph can be read.
 ```
 
 Dependencies point inward only. An adapter may import `core/`; `core/` imports nothing but
-`core/`, plus `errore` and `utils`, which are stdlib-only.
+`core/`, plus `errore`, which is stdlib-only.
 
 ## 3. Package layout
 
@@ -106,8 +106,10 @@ adapter/
     grpcapi/                gRPC server and Go client
     stdio/                  the log over two byte streams, stdlib-only
     cli/                    cobra CLI
+    history/                test support: records histories through the port and checks them
   driven/
     blockstore/{filestore,memstore,flashstore,faultfs,conformance}
+                            faultfs: CrashFiles (torn writes), PageCache (power cuts)
     compression/zstd/       zstd behind driven.Codec
     locking/                file lease behind driven.SingleIbsenWriterLock
     logging/zerologger/     zerolog behind driven.Logger
@@ -118,12 +120,12 @@ wiring/                     composition root: builds adapters, owns lifecycle
   embedded/                 the second one: the log as a library, stdlib-only
     example/                the smallest embedded program, built to be weighed
 main.go                     entry point
-errore/ utils/              stdlib-only, shared by both sides
+errore/                     stdlib-only, shared by both sides
 ```
 
 Pure today: all of `core/`, all of `wiring/embedded/` including its example, the `stdio`
 driving adapter, the `filestore`, `memstore`, `flashstore` and `conformance` packages, plus
-`errore` and `utils`.
+`errore`.
 
 Not pure, by design: everything else under `adapter/`, and `wiring/` itself.
 
@@ -162,7 +164,9 @@ Three formats, all little endian, all checksummed with crc32c (Castagnoli).
 
 ### 5.1 Entry
 
-The innermost unit, written by `domain.CreateByteEntry` and read by `domain.ReadEntry`:
+The innermost unit, written by `domain.AppendEntry` straight into the frame payload it will be
+stored in, and parsed by `domain.ParseEntry` as a window onto the decoded frame, so neither
+direction allocates per entry:
 
 ```
 ┌────────────┬──────────────────┬───────────────┬───────────────────┐
@@ -172,9 +176,9 @@ The innermost unit, written by `domain.CreateByteEntry` and read by `domain.Read
       └── the check
 ```
 
-Overhead is 20 bytes per entry. `ReadEntry` is the *only* entry decoder in the codebase —
-index building, offset scans, reads and recovery all go through it — and it distinguishes
-three outcomes precisely, which is what makes recovery decidable:
+Overhead is 20 bytes per entry. `ParseEntry` is the *only* entry decoder in the codebase, and
+since framing only reads use it: recovery, indexing and offset scans work on frame headers and
+decode no entries at all. It distinguishes three outcomes precisely:
 
 | outcome | meaning |
 |---|---|
@@ -215,7 +219,8 @@ Three properties earn the header its bytes:
   changing the codec never rewrites anything.
 - **`magic` distinguishes "written before framing" from "corrupt".** A block that does not
   start with `IBSF` is reported as `domain.ErrUnsupportedLogFormat` and never truncated,
-  because nothing says those bytes are damaged.
+  because nothing says those bytes are damaged — with one exception: a block whose first
+  header is all zeros is a hole, not an old block, and is cut as torn (§11).
 
 The entry checksum still earns its place inside the frame: the frame checksum catches the
 media, the entry checksum catches everything after it, and a frame that verifies whole can
@@ -354,10 +359,10 @@ the no-op adapter for a single-process or embedded deployment.
 
 | adapter | kind | dependencies beyond stdlib | notes |
 |---|---|---|---|
-| `blockstore/filestore` | driven | none | the filesystem adapter, and the only one. Its `FS` seam exists so a crash can be injected below the store, and `*os.File` already satisfies it |
+| `blockstore/filestore` | driven | none | the filesystem adapter, and the only one. Its `FS` seam — seven methods and a handle — exists so a fault can be injected below the store, and `*os.File` already satisfies the handle. `DropCache`, the seventh, is `posix_fadvise(DONTNEED)` on Linux (§9.6) |
 | `blockstore/memstore` | driven | none | byte slices in RAM; in-memory server mode wires this |
 | `blockstore/flashstore` | driven | none | a fixed region of raw flash: fixed pages, write-once bytes, page table in RAM |
-| `blockstore/faultfs` | driven (tests) | none | tears a write at a chosen byte and fails everything after |
+| `blockstore/faultfs` | driven (tests) | none | `CrashFiles` tears a write at a chosen byte and fails everything after; `PageCache` models what a power cut keeps — unsynced data, undurable names, Linux fsync failures — on a real directory. See [TESTING.md §5](TESTING.md#5-the-fault-models) |
 | `blockstore/conformance` | test support | none | the suite every store passes |
 | `compression/zstd` | driven | `klauspost/compress` | `driven.Codec` |
 | `locking` | driven | `uuid`, `zerolog` | the file lease |
@@ -366,6 +371,7 @@ the no-op adapter for a single-process or embedded deployment.
 | `driver/grpcapi` | driving | gRPC | server and Go client |
 | `driver/stdio` | driving | none | the log over two byte streams: `Append`, `Cat`, `List`. Stdlib-only, so it is held to rule 1 with the core |
 | `driver/cli` | driving | cobra | flags and environment only; it names codecs and directories, it does not build them |
+| `driver/history` | driving (tests) | none | records what clients did through `driver.LogManager` and checks it against the log read back; the nemesis and crash-at-every-call harnesses. See [TESTING.md §6](TESTING.md#6-the-history-checker) |
 
 **afero is gone.** It was the storage port before `BlockStore` existed and became a second
 filesystem abstraction underneath our own. Removing it cost 1.63 MB of binary — the same
@@ -387,22 +393,28 @@ offset, head block size, index position — is guarded by `Topic.mu`.
 Write(entries)
   ├─ validate the topic name
   ├─ append()                                      ── under t.mu
-  │    ├─ refuse if closed, or if a previous write left the block dirty
-  │    ├─ encode entries: CreateByteEntry per entry, assigning offsets from NextOffset
-  │    ├─ cut frames: bounded by MaxFrameEntries (1000) and MaxFrameBytes (1 MiB)
+  │    ├─ refuse if closed, if a previous write left the block dirty,
+  │    │  or if a flush of this topic has ever failed (ErrFlushFailed, §9.3)
+  │    ├─ if the head block is past MaxBlockSize: sync it (flusher.barrier, §9.4),
+  │    │  then start a new block — the old one is whole before the new one exists
+  │    ├─ build frames: AppendEntry per entry straight into the payload, offsets from
+  │    │  NextOffset; frames bounded by MaxFrameEntries (1000) and MaxFrameBytes (1 MiB),
+  │    │  each built in the buffer the block is appended from (AppendFrame)
   │    ├─ Store.Append(logRef, allFramesAsOneBuffer)     ── one call, all or nothing
-  │    ├─ on failure: truncate back to HeadBlockSize; if that fails, refuse
-  │    │              writes until LoadOrCreate recovers the block
-  │    ├─ advance NextOffset and HeadBlockSize; roll over the block if it is full
+  │    ├─ on failure: the store has rolled back; if it could not, ErrDirtyBlock, and
+  │    │              writes are refused until LoadOrCreate recovers the block
+  │    ├─ advance NextOffset and HeadBlockSize
   │    └─ register the append with the flusher, returning a pending flush
   └─ flush.wait(pending)                           ── outside t.mu: a sync can be slow
        └─ returns once the entries are on durable media; only then are they readable
 ```
 
-Two details are load bearing. **One `Write` reaches the store as exactly one `Append`**,
+Three details are load bearing. **One `Write` reaches the store as exactly one `Append`**,
 however many frames it becomes, so the store never holds half a write and a flush never lands
-inside a frame. And **waiting happens outside the topic lock**, so a slow fsync does not block
-readers, which take that lock.
+inside a frame. **Waiting happens outside the topic lock**, so a slow fsync does not block
+readers, which take that lock — with one exception, the rollover barrier, which syncs under it
+once per block. And **the manager adds no lock of its own**: writers to one topic are inside
+the flush policy together, which is what lets them share a sync (§9.2).
 
 Indexing is started by the write that dirtied the index (§12) and never blocks it.
 
@@ -412,13 +424,15 @@ Indexing is started by the write that dirtied the index (§12) and never blocks 
 Read(params)
   └─ snapshot()                                    ── under t.mu.RLock, copies block lists
        └─ read()
-            ├─ end boundary = the durable offset, not NextOffset  (§9)
+            ├─ end boundary = the durable offset, not NextOffset, taken once (§9)
             ├─ find the block containing From
             ├─ index.FindNearestByteOffset(From)   ── sort.Search, the pair at or before From
             ├─ Store.Open(logRef, byteOffset)
             ├─ skip whole frames by their stored size until the frame holding From
             ├─ decode that frame; drop the entries in front of From
-            └─ send batches of BatchSize to LogChan, watching Cancel
+            ├─ send batches of BatchSize to LogChan, watching Cancel
+            └─ the blocks after it, up to the same boundary; stop at the first block
+               that starts at or past it
 ```
 
 A read works on a `snapshot()` — a copy of the topic's block lists and parameters, sharing the
@@ -426,11 +440,18 @@ store and the flusher — so **slow consumers never block writers**. Because an 
 points at a frame boundary and a frame is decoded whole, a read scans at most one frame plus
 the sparsity.
 
+**A read runs to the boundary it began with, for every block.** It used to ask the flusher
+again for each block after the first, so a flush landing mid-read moved the boundary: the
+first block had been cut at the old one, the entries that became durable at its end were
+never sent, and the read carried on from the next block's first offset. A tailing reader lost
+them for good. A reader that wants more reads again, from where it stopped.
+
 ### 8.3 Failure states
 
 | state | cause | escape |
 |---|---|---|
 | `writeFailure` set | an `Append` failed and the rollback truncate also failed | `LoadOrCreate`, which recovers the head block |
+| `ErrFlushFailed` | a sync of this topic failed, in a flush or a rollover barrier | none in this process: the topic is opened again by the next one (§9.3) |
 | `ErrTopicClosed` | `Close` was called | none; loaded topics stay readable |
 | `ErrDirtyBlock` from the store | an append could not be rolled back | recovery on next load |
 
@@ -459,6 +480,16 @@ topic.
 Once driving, a driver takes each batch **as it finds it** rather than re-applying the
 policy: the next batch formed while the previous one was syncing, so it has already waited.
 
+Writers arriving while a sync runs append behind it and join the next batch, so even the
+default policy coalesces under concurrent load: eight gRPC clients measured 0.33 fsyncs per
+write at 0.78 ms, against one fsync per write at 2.03 ms while the manager still held a
+per-topic lock across the whole of `Topic.Write`.
+
+Every sync the flusher makes holds `flusher.syncing` across the sync **and** the recording of
+its outcome, so syncs and failures have one order and a sync that returns after another has
+failed is never taken as proof of anything. A batch's blocks are synced oldest first, which
+also keeps the calls a write makes the same from run to run.
+
 ```
 writer A ──append──┐
 writer B ──append──┼──▶ batch 1 ──▶ A drives Sync ──▶ all three return
@@ -469,13 +500,60 @@ writer D ──append──────────────▶ batch 2 ┘ f
 
 ### 9.3 Failure
 
-A failed flush is returned to **every** writer waiting on it, leaves the durable offset where
-it was, and puts its blocks back into the next batch. The entries are on the media but their
-durability is unknown, so nothing may read them as committed; a later flush covers them and
-then they appear. A failure does not retry inside the same driver, which would spin.
-`Topic.Close` makes one last attempt at whatever a failed flush left behind.
+**A failed flush stops the topic.** It is returned to every writer waiting on it and to every
+batch that formed behind it, the durable offset stays where it was, and every later write is
+refused with `ErrFlushFailed` before it reaches the store, for the life of the `Topic`.
 
-### 9.4 Index blocks are deliberately not flushed
+A failed fsync is not retryable. Linux (since 4.13) marks the pages it could not write clean
+and drops them from writeback: they stay readable from the cache, a later fsync succeeds
+without writing them, and after a power cut the range reads as zeros. Retrying — which is what
+this code used to do — acknowledges the next write behind a hole that recovery then truncates
+at, taking the acknowledged write with it. PostgreSQL stops on a failed fsync for the same
+reason.
+
+A failed directory sync is a failed flush too (§9.5): the bytes are on the media, but a block
+whose name is not is a block a power cut takes.
+
+### 9.4 A rollover waits for the old block
+
+Before a write rolls over to a new block, `append` syncs the old head through
+`flusher.barrier`. Without it, the old block's tail could still be unsynced when the new block
+was created, and writeback may put the new block on the media first: after a power cut the
+block before the head was then short — a permanent hole in the offsets — or torn, and nobody
+could read past it, because recovery only examines the head. With it, **a block before the
+head is always whole**, and recovery is right to look only at the head.
+
+It costs one fsync per block, one per gigabyte at the default `--maxBlockSize`, taken under
+`Topic.mu`, so readers wait out that one fsync to take their snapshot. A failed barrier is a
+failed flush.
+
+### 9.5 Names are durable too
+
+An fsync of a file says nothing about the names it is reached by. `filestore.Sync` makes three
+things durable: the block, its name in the topic directory, and the topic's name in the root.
+The two directory syncs happen once per block and once per topic **in the life of a store**,
+on the first sync of each, and never again — appending to a block already named on the media
+adds no name, and the fsync an acknowledged write pays is the one a log can least afford to pay
+twice. Once per store rather than once per block created, because a store cannot know that a
+name it found was ever made durable: the process before it may have created it and failed to
+sync its directory, with the name still in the cache.
+
+### 9.6 A restart reads the media, not the cache
+
+The pages a failed fsync dropped are clean, so they outlive the process that saw the failure,
+intact and readable in the page cache. A process started after it could recover the head block
+from there, find it whole, append behind the hole and acknowledge writes the next power cut
+took. So the first time a store lists a topic, it drops the head block's clean pages
+(`filestore.FS.DropCache`: `posix_fadvise(DONTNEED)` via `syscall` on linux/amd64, arm64 and
+arm, a no-op elsewhere), and recovery reads what the media holds.
+
+Only the head, because a failed fsync stops the topic before it can roll over. Only for a
+writable store: `filestore.ReadOnly` keeps the cache, since a reader recovers nothing and every
+`ibsen cat` would otherwise read the log cold. It is advice, and the kernel keeps pages that are
+dirty, mapped or under writeback — a dirty page is one it will still write, so that is not a
+hole. Off Linux, or where the kernel declines, recovery sees what the cache holds.
+
+### 9.7 Index blocks are deliberately not flushed
 
 The index is derivable from the log, and recovery already drops torn pairs and re-indexes, so
 paying an fsync for it would buy nothing.
@@ -506,10 +584,12 @@ mapping an offset to a byte offset within the block.
 
 ## 11. Recovery
 
-`logfmt.RecoverBlock` runs when a topic loads, on its head block:
+`logfmt.RecoverBlock` runs when a topic loads, on its head block — after the store has dropped
+that block's clean pages from the cache (§9.6), so it reads what the media holds:
 
 ```
 RecoverBlock(store, ref, firstOffset, blockSize)
+  ├─ the first header is all zeros                       ─▶ torn at byte 0
   ├─ scan frames from the start of the block
   │    ├─ header does not verify, or payload CRC fails  ─▶ valid region ends here
   │    ├─ payload is shorter than storedSize            ─▶ valid region ends here
@@ -524,6 +604,13 @@ Rules worth stating explicitly:
   nothing is truncated. Written before framing, or by a newer Ibsen — either way nothing says
   the bytes are damaged. This is a deliberate clean break: the log is not derivable the way
   the index is, so the magic exists purely to tell the two cases apart.
+- **A block that starts with zeros is torn, not pre-framing.** Its first write was in the page
+  cache and never on the media, because its fsync failed, and the size reached the media
+  anyway. A block written before framing starts with the checksum of its first entry, which
+  is zero once in four billion.
+- **Only the head block is recovered**, and that is enough: a rollover syncs the old head
+  before the new block exists (§9.4), so every block before the head is whole. Blocks damaged
+  by builds older than that are not looked for.
 - **A frame whose codec this build does not carry is still recoverable**, because scanning
   needs only the checksums. The missing codec is reported when a read asks for the entries.
 - **Complete entries of a batch whose write returned an error can survive recovery**, as with
@@ -562,7 +649,7 @@ carries no timer it did not ask for.
   links, so turning compression off, or changing it, never strands a block written under the
   old setting.
 - **The level is not part of the format.** A frame says only that zstd wrote it.
-- **Compression that did not pay is discarded.** `EncodeFrame` falls back to `CodecNone` and
+- **Compression that did not pay is discarded.** `AppendFrame` falls back to `CodecNone` and
   the plain bytes when the encoded payload is not smaller, so turning compression on can never
   make a topic larger.
 - An unknown codec byte is `driven.ErrUnknownCodec`: the deployment is missing a codec, not
@@ -686,7 +773,9 @@ both and a topic written by one is read by the other.
 | guarantee | how |
 |---|---|
 | Readers never block writers | `Read` works on `snapshot()`, taken under `RLock` |
-| A slow fsync never blocks readers | the flush wait happens outside `Topic.mu` |
+| A slow fsync never blocks readers | the flush wait happens outside `Topic.mu`; the one exception is the rollover barrier, once per block |
+| Concurrent writers to a topic share a flush | the manager takes no lock of its own; `Topic.append` assigns offsets under `Topic.mu` and the flusher batches what arrives during a sync |
+| Syncs and sync failures have one order | `flusher.syncing` is held across each sync and the recording of its outcome |
 | At most one first load per topic | `getOrCreateTopic` runs one load; concurrent requests wait for it and share its result. A failed load is not cached, so the next request retries |
 | `Start` and `shutdown` may race | `IbsenServer.mu` guards `topicsManager`, `grpcServer` and the lifecycle channels; `lifecycle()` makes the channel pair once; `grpcapi` guards its `*grpc.Server` and records a `Stop` that arrives before the server exists |
 | `Close` never races an index `Add` | only the `Write` goroutine adds to `Topic.indexWg`, under `Topic.mu` before `closed` is set |
@@ -778,30 +867,27 @@ backstop rather than to build etcd integration.
 
 ## 17. Testing
 
-Testing is the linchpin: the architecture is only worth the claims it lets you check.
+Testing is the linchpin: the architecture is only worth the claims it lets you check. The
+strategy, the fault models, the two system-level harnesses and how to work with them are in
+**[TESTING.md](TESTING.md)**; this is the shape of it.
 
-| suite | what it covers |
-|---|---|
-| **Port conformance** — `blockstore/conformance` | every store adapter against the same properties: round trip, append semantics, truncate, errors |
-| **Core property tests** — `core/topic/topicAccess_property_test.go` | read-from-every-offset across block sizes and reload modes; concurrent write/read/index. Run against **every** adapter — only `coreBackends()` knows which store is behind the port |
-| **Crash / torn write** — `faultfs` + `filestore/crash_test.go`, `core/topic/topicAccess_crash_test.go` | a write torn at a chosen byte, everything after it failing |
-| **Durability** — `core/topic/flush_test.go` | a gated `Sync`: readers see nothing until the flush returns, a failed flush is reported and leaves nothing readable, those entries appear after a later flush, concurrent writers share one sync, a non-syncable store never waits |
-| **Format** — `core/domain/frame_test.go`, `core/logfmt/logUtils_test.go`, `core/index/checksum_test.go` | every header byte caught by its checksum, partial headers and payloads, garbage tails, pre-framing blocks, unwired codecs, torn index pairs |
-| **Unsent log events** — `logcalls_test.go` | parses the repo and fails on any zerolog event never sent. 27 of them logged nothing and never exited, including 25 `log.Fatal().Err(err)` |
-| **End to end** — `adapter/driver/grpcapi/test` | each test starts its own server on a free port and stops it on cleanup |
-| **Streams** — `adapter/driver/stdio/stdio_test.go` | a stream round-tripping through the log in both framings, a blank line as an empty entry, a cut stream keeping what was whole at either batch boundary, a failed write cancelling the read and draining it, a follow seeing what arrives during it |
-| **A directory without a server** — `wiring/local_test.go` | the lease taken, refused and released; a read-only open taking no lock and leaving the directory byte for byte as it found it; zstd frames read by an open that asked for nothing |
+| level | what it checks | where |
+|---|---|---|
+| static | the core is pure, dependencies point inward, an embedded build is small, no zerolog event goes unsent | `scripts/`, `logcalls_test.go` |
+| formats | every byte of every header is covered by its checksum; recovery against every kind of damage | `core/domain`, `core/index`, `core/logfmt` |
+| port conformance | one suite, every `BlockStore` — including `filestore` over the power-cut model | `blockstore/conformance` |
+| core properties | read from every offset, on every store, live and reloaded, with and without an index | `core/topic/topicAccess_property_test.go` |
+| contracts | durability, fail-stop, coalescing, one load per topic, shutdown — with gates deciding the interleaving | `core/topic`, `core/manager` |
+| faults | torn writes (`CrashFiles`); power cuts, undurable names and Linux fsync failures (`PageCache`) | `filestore/*_test.go`, `core/topic/*_test.go` |
+| adapters and roots | each adapter's own job; each composition root's wiring | `adapter/...`, `wiring/...` |
+| end to end | a real gRPC server on a free port | `adapter/driver/grpcapi/test` |
+| system | a history checker over concurrent clients; a randomised nemesis; a crash at every storage call, with every promise checked for durable support | `adapter/driver/history` |
 
-Two habits follow from **everything running against real directories**: a test that writes a
-file must create its parent directory, and a test that builds a manager or a topic on a
-`t.TempDir()` must close it — otherwise background indexing races Go's removal of that
-directory and surfaces as `TempDir RemoveAll cleanup: directory not empty` in whichever test
-was unlucky. `newTestManagerWithStore`, `newTestTopic` and `stoppedByTest` register that
-cleanup.
-
-Nothing emulates a filesystem any more. An emulation that disagrees with a real filesystem is
-worse than not running at all, and this one disagreed twice — both times about guarantees the
-lock depends on.
+**Everything runs against real directories.** Nothing emulates a filesystem: an emulation that
+disagrees with a real filesystem is worse than not running at all, and the one this project
+used disagreed twice, both times about guarantees the lease depends on. The power-cut model is
+not an emulation in that sense — every call happens on a real directory, and only what survives
+a power cut is modelled.
 
 ## 18. Extending Ibsen
 
@@ -809,7 +895,9 @@ lock depends on.
 
 Implement `driven.BlockStore`; add `Syncable` if your medium has a volatile buffer. Then run
 the conformance suite against it — that is the whole bar, and it is the only reason to trust
-`flashstore`. Keep it stdlib-only if you want embedded builds to stay small.
+`flashstore` — and add it to `coreBackends()` so the core's property tests run on it. Keep it
+stdlib-only if you want embedded builds to stay small. [TESTING.md §10](TESTING.md#10-recipes)
+has the full recipe.
 
 ### A new codec
 
@@ -844,3 +932,8 @@ The rules that must not be broken, collected:
 9. A block that is not damaged is never truncated.
 10. The index says nothing the log does not, and may always be rebuilt from it.
 11. The core starts no goroutine that outlives the call which made it, and no timer at all.
+12. A failed fsync stops the topic; it is never retried.
+13. A block before the head is whole: a rollover syncs the old head before the new block exists.
+14. A write is acknowledged only once its block's name, and its topic's, are durable too.
+15. A read runs to one durable boundary, taken when it begins.
+16. A writable store reads a head block from the media, not the cache, before recovering it.
