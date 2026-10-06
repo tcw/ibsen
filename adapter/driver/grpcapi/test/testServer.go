@@ -64,5 +64,8 @@ func startTestServer(t *testing.T) {
 	t.Cleanup(func() {
 		server.Shutdown()
 		<-stopped
+		// wait for the indexing the writes started, which would otherwise race the removal
+		// of the temporary directory
+		topicsManager.Close()
 	})
 }
