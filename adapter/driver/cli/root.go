@@ -1,0 +1,486 @@
+package cli
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strconv"
+	"time"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/spf13/cobra"
+	"github.com/tcw/ibsen/adapter/driver/stdio"
+	"github.com/tcw/ibsen/core/domain"
+	"github.com/tcw/ibsen/core/topic"
+	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/wiring"
+)
+
+var (
+	debug                       bool
+	trace                       bool
+	host                        string
+	port                        int
+	maxBlockSizeMB              int
+	indexSparsity               int
+	flushEntries                int
+	flushIntervalMs             int
+	compression                 string
+	compressionLevel            string
+	maxFrameEntries             int
+	maxFrameBytes               int
+	readOnly                    bool
+	rootDirectory               string
+	benchEntiesByteSize         int
+	benchEntiesInEachBatchWrite int
+	benchWriteBatches           int
+	benchReadBatches            int
+	OTELExporterAddr            string
+	certKey                     string
+	privateKey                  string
+	concurrent                  int
+	cpuProfile                  string
+	memProfile                  string
+
+	rootCmd = &cobra.Command{
+		Use:              "ibsen",
+		Short:            "Ibsen is a simple log streaming system",
+		Long:             `Ibsen is a simple log streaming system build on unix's philosophy of simplicity'`,
+		TraverseChildren: true,
+	}
+
+	cmdServer = &cobra.Command{
+		Use:              "server",
+		Short:            "start a ibsen server",
+		Long:             `server`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			setLogLevel(zerolog.InfoLevel)
+			inMemory := false
+			absolutePath := "/tmp/data"
+			if rootDirectory == "" {
+				// no data directory means no filesystem: the log goes in a memstore, and there
+				// is nothing for an emulated filesystem to do
+				inMemory = true
+			} else {
+				var err error
+				absolutePath, err = filepath.Abs(rootDirectory)
+				if err != nil {
+					log.Fatal().Err(err).Msgf("unable to resolve data directory %s", rootDirectory)
+				}
+				log.Info().Msgf("Data directory: %s", rootDirectory)
+
+				// read-only mode is refused in two places, and this is neither: the manager
+				// turns writes away, and the store the composition root builds cannot change
+				// a file even while recovering or indexing
+				info, err := os.Stat(rootDirectory)
+				if err != nil || !info.IsDir() {
+					log.Fatal().Msgf("data root path [%s] does not exist", rootDirectory)
+				}
+			}
+			if indexSparsity < 1 {
+				log.Fatal().Msgf("indexSparsity must be at least 1, got %d", indexSparsity)
+			}
+			if flushEntries < 1 {
+				log.Fatal().Msgf("flushEntries must be at least 1, got %d", flushEntries)
+			}
+			if flushIntervalMs < 0 {
+				log.Fatal().Msgf("flushIntervalMs cannot be negative, got %d", flushIntervalMs)
+			}
+			if err := validateFrameBounds(maxFrameEntries, maxFrameBytes); err != nil {
+				log.Fatal().Err(err).Msg("invalid frame bounds")
+			}
+			ibsenServer := wiring.IbsenServer{
+				Readonly:         readOnly,
+				InMemory:         inMemory,
+				RootPath:         absolutePath,
+				TTL:              30 * time.Second,
+				MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
+				IndexSparsity:    uint32(indexSparsity),
+				MaxFrameEntries:  uint32(maxFrameEntries),
+				MaxFrameBytes:    maxFrameBytes,
+				Compression:      compression,
+				CompressionLevel: compressionLevel,
+				FlushEntries:     uint32(flushEntries),
+				FlushInterval:    time.Duration(flushIntervalMs) * time.Millisecond,
+				OTELExporterAddr: OTELExporterAddr,
+				GRPCCertKey:      AbsOrEmpty(certKey),
+				GRPCPrivateKey:   AbsOrEmpty(privateKey),
+				CpuProfile:       cpuProfile,
+				MemProfile:       memProfile,
+			}
+			lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
+			if err != nil {
+				log.Fatal().Err(err).Msgf("unable to listen on %s:%d", host, port)
+			}
+			err = ibsenServer.Start(lis)
+			if err != nil {
+				log.Fatal().Err(err).Msg("ibsen server failed")
+			}
+		},
+	}
+
+	cmdClient = &cobra.Command{
+		Use:              "client",
+		Short:            "access files directly from file",
+		Long:             `file`,
+		TraverseChildren: true,
+	}
+
+	cmdTools = &cobra.Command{
+		Use:              "tools",
+		Short:            "access files directly from file",
+		Long:             `file`,
+		TraverseChildren: true,
+	}
+
+	cmdToolsReadLogFile = &cobra.Command{
+		Use:              "read-log [file] [optional batch size (default 1000)]",
+		Short:            "read ibsen log file from disk",
+		Long:             `file`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			batchSize := 1000
+			var err error
+			if len(args) < 1 {
+				fmt.Println("First parameter must be file name")
+				return
+			}
+			if len(args) == 2 {
+				batchSizeString := args[1]
+				batchSize, err = strconv.Atoi(batchSizeString)
+				if err != nil {
+					log.Fatal().Msg(fmt.Sprintf("%s is not a number", batchSizeString))
+				}
+			}
+			file, err := filepath.Abs(args[0])
+			if err != nil {
+				log.Fatal().Err(err).Msgf("unable to resolve log file %s", args[0])
+			}
+			codecs, closeCodecs, err := wiring.ReadCodecs()
+			if err != nil {
+				log.Fatal().Err(err).Msg("unable to build the codecs a log file is read with")
+			}
+			defer closeCodecs()
+			err = ReadLogFile(file, uint32(batchSize), codecs)
+			if err != nil {
+				log.Fatal().Err(err).Msgf("unable to read log file %s", file)
+			}
+		},
+	}
+
+	//Todo: fix
+	cmdToolsReadIndexLogFile = &cobra.Command{
+		Use:              "read-index [file]",
+		Short:            "read ibsen index file from disk",
+		Long:             `file`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) < 1 {
+				fmt.Println("First parameter must be file name")
+				return
+			}
+			absolutePath, err := filepath.Abs(args[0])
+			if err != nil {
+				log.Fatal().Err(err).Msgf("unable to resolve index file %s", args[0])
+			}
+			err = ReadLogIndexFile(absolutePath)
+			if err != nil {
+				log.Fatal().Err(err).Msgf("unable to read index file %s", absolutePath)
+			}
+		},
+	}
+
+	cmdClientBench = &cobra.Command{
+		Use:              "bench [options] [topic]",
+		Short:            "bench ibsen",
+		Long:             `file`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) < 1 {
+				fmt.Println("First parameter must be topic name")
+				return
+			}
+			topic := args[0]
+			client, err := newIbsenBench(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
+			}
+			defer client.Close()
+			benchmarkReport := ""
+			if concurrent > 1 {
+				benchmarkReport, err = client.BenchmarkConcurrent(topic, benchEntiesByteSize, benchEntiesInEachBatchWrite, benchWriteBatches, benchReadBatches, concurrent)
+				if err != nil {
+					log.Fatal().Err(err).Msg("concurrent benchmark failed")
+				}
+			} else {
+				benchmarkReport, err = client.Benchmark(topic, benchEntiesByteSize, benchEntiesInEachBatchWrite, benchWriteBatches, benchReadBatches)
+				if err != nil {
+					log.Fatal().Err(err).Msg("benchmark failed")
+				}
+			}
+			fmt.Println(benchmarkReport)
+		},
+	}
+
+	cmdClientWrite = &cobra.Command{
+		Use:              "write",
+		Short:            "write with grpc client",
+		Long:             `file`,
+		TraverseChildren: true,
+		Args:             cobra.MinimumNArgs(0),
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) < 1 {
+				fmt.Println("First parameter must be topic name")
+				return
+			}
+			topic := args[0]
+			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
+			}
+			defer client.Close()
+			result := ""
+
+			if len(args) > 1 {
+				result, err = client.Write(topic, args[1])
+				if err != nil {
+					log.Fatal().Err(err).Msgf("unable to write file %s to topic %s", args[1], topic)
+				}
+			} else {
+				result, err = client.Write(topic)
+				if err != nil {
+					log.Fatal().Err(err).Msgf("unable to write stdin to topic %s", topic)
+				}
+			}
+			fmt.Println(result)
+		},
+	}
+
+	cmdClientList = &cobra.Command{
+		Use:              "list",
+		Short:            "list topics with grpc client",
+		Long:             `list topic with grpc client`,
+		TraverseChildren: true,
+		Args:             cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
+			}
+			defer client.Close()
+			result, err := client.List()
+			if err != nil {
+				log.Fatal().Err(err).Msg("unable to list topics")
+			}
+			fmt.Println(result)
+		},
+	}
+
+	cmdClientRead = &cobra.Command{
+		Use:              "read [file] [offset (default=0)] [batch size (default=1000)]",
+		Short:            "read with grpc client",
+		Long:             `file`,
+		TraverseChildren: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			if len(args) < 1 {
+				fmt.Println("First parameter must be topic name")
+				return
+			}
+			topic := args[0]
+			offset, batchSize, err := parseReadArgs(args)
+			if err != nil {
+				log.Fatal().Err(err).Msgf("unable to read topic %s", topic)
+			}
+			client, err := newIbsenClient(host + ":" + strconv.Itoa(port))
+			if err != nil {
+				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
+			}
+			defer client.Close()
+			err = client.Read(topic, offset, batchSize)
+			if err != nil {
+				log.Fatal().Err(err).Msgf("unable to read topic %s", topic)
+			}
+		},
+	}
+)
+
+// defaultReadBatchSize is how many entries a read asks for at a time when the caller does
+// not say.
+const defaultReadBatchSize uint32 = 1000
+
+// parseReadArgs reads the optional offset and batch size of "client read <topic> [offset]
+// [batchSize]". args must hold the topic name; anything after it is optional.
+//
+// Every argument that is given is parsed, and one that is not a number is an error rather
+// than a default. strconv.ParseUint returns 0 on failure, so the old code's "print a line and
+// carry on" turned a mistyped offset into a read of the whole topic: a command that looks
+// like it worked and did something else.
+func parseReadArgs(args []string) (uint64, uint32, error) {
+	if len(args) > 3 {
+		return 0, 0, errore.NewF("read takes a topic, an offset and a batch size, got %d arguments", len(args))
+	}
+	var offset uint64
+	batchSize := defaultReadBatchSize
+	if len(args) >= 2 {
+		parsed, err := strconv.ParseUint(args[1], 10, 64)
+		if err != nil {
+			return 0, 0, errore.NewF("offset %q is not a number", args[1])
+		}
+		offset = parsed
+	}
+	if len(args) >= 3 {
+		parsed, err := strconv.ParseUint(args[2], 10, 32)
+		if err != nil {
+			return 0, 0, errore.NewF("batch size %q is not a number", args[2])
+		}
+		if parsed == 0 {
+			return 0, 0, errore.New("batch size must be greater than zero")
+		}
+		batchSize = uint32(parsed)
+	}
+	return offset, batchSize, nil
+}
+
+// validateFrameBounds refuses frame bounds the log could not honour. A frame is decoded whole
+// and an index pair points at its start, so these are the dial between how well a codec can
+// compress and how little a read has to decode; either way they have to describe a frame that
+// can exist.
+//
+// The upper bound is the one worth catching here: a frame larger than domain.MaxFrameSize
+// cannot be encoded, and without this the first write large enough to reach the bound would
+// fail instead of the server refusing to start.
+func validateFrameBounds(entries, bytes int) error {
+	if entries < 1 {
+		return userErrorf("maxFrameEntries must be at least 1, got %d", entries)
+	}
+	if bytes < 1 {
+		return userErrorf("maxFrameBytes must be at least 1, got %d", bytes)
+	}
+	if bytes > domain.MaxFrameSize {
+		return userErrorf("maxFrameBytes must be at most %d, got %d", domain.MaxFrameSize, bytes)
+	}
+	return nil
+}
+
+func AbsOrEmpty(path string) string {
+	if path == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		log.Warn().Msgf("unable to find absolut file path for %s", path)
+		return path
+	}
+	return abs
+}
+
+// setLogLevel puts the global logger at the level the flags ask for, falling back to the one
+// the command chooses. Logs go to stderr, so a command writing entries to stdout stays
+// pipeable whatever the level is.
+//
+// The server runs at info, because a running server with nothing to say has said something.
+// A filter runs at warn: it is one command in a pipeline, and a line of its own on stderr for
+// every successful run is noise the pipeline did not ask for.
+func setLogLevel(quiet zerolog.Level) {
+	if trace {
+		zerolog.SetGlobalLevel(zerolog.TraceLevel)
+		log.Info().Msg("logger lever at trace")
+	} else if debug {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+		log.Info().Msg("logger lever at debug")
+	} else {
+		zerolog.SetGlobalLevel(quiet)
+	}
+}
+
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+
+func init() {
+
+	port, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(54321)))
+	host = getenv("IBSEN_HOST", "0.0.0.0")
+	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "1000"))
+	flushEntries, _ = strconv.Atoi(getenv("IBSEN_FLUSH_ENTRIES", strconv.FormatUint(uint64(topic.DefaultFlushEntries), 10)))
+	flushIntervalMs, _ = strconv.Atoi(getenv("IBSEN_FLUSH_INTERVAL_MS", "0"))
+	indexSparsity, _ = strconv.Atoi(getenv("IBSEN_INDEX_SPARSITY", strconv.FormatUint(uint64(topic.DefaultIndexSparsity), 10)))
+	maxFrameEntries, _ = strconv.Atoi(getenv("IBSEN_MAX_FRAME_ENTRIES", strconv.FormatUint(uint64(topic.DefaultMaxFrameEntries), 10)))
+	maxFrameBytes, _ = strconv.Atoi(getenv("IBSEN_MAX_FRAME_BYTES", strconv.Itoa(topic.DefaultMaxFrameBytes)))
+	compression = getenv("IBSEN_COMPRESSION", wiring.DefaultCompression)
+	compressionLevel = getenv("IBSEN_COMPRESSION_LEVEL", "default")
+	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
+	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
+
+	rootCmd.PersistentFlags().IntVarP(&port, "port", "p", port, "config file (default is current directory)")
+	rootCmd.PersistentFlags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
+	rootCmd.PersistentFlags().StringVarP(&certKey, "certKey", "", "", "Certificate key file path for GRPC SLT")
+	rootCmd.PersistentFlags().StringVarP(&privateKey, "privateKey", "", "", "Private key file path for GRPC SLT")
+	rootCmd.PersistentFlags().StringVarP(&OTELExporterAddr, "OTELExporter", "e", "", "config file (0.0.0.0:4317)")
+	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "v", false, "set logging to debug level")
+	rootCmd.PersistentFlags().BoolVarP(&trace, "trace", "t", false, "set logging to trace level")
+
+	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
+	cmdServer.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush before --flushIntervalMs is up; it does nothing on its own, since an interval of 0 flushes every batch at once")
+	cmdServer.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits")
+	cmdServer.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
+	cmdServer.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
+	cmdServer.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
+	cmdServer.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
+	cmdServer.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
+	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
+	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
+	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
+	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")
+
+	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "byteSize", "", 100, "Entry byte size in bench")
+	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatchWrite, "batchSize", "", 1000, "Entries in each batch in bench")
+	cmdClientBench.Flags().IntVarP(&benchWriteBatches, "bwb", "", 1000, "Write in batches of")
+	cmdClientBench.Flags().IntVarP(&benchReadBatches, "brb", "", 1000, "Read in batches of")
+	cmdClientBench.Flags().IntVarP(&concurrent, "concurrent", "", 1, "Concurrency number")
+
+	//writeEntryByteSize int, writeEntriesInEachBatch int, writeBatches int, readBatchSize int
+
+	cmdAppend.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to append to")
+	cmdAppend.Flags().StringVarP(&framing, "framing", "", "lines", "How stdin delimits entries: lines or length (a little-endian uint64 byte count before each entry)")
+	cmdAppend.Flags().IntVarP(&appendBatchSize, "batchSize", "", stdio.DefaultAppendBatchSize, "Entries written in one call, which is one append and one flush: the throughput dial for a stream. A batch is also written whenever the stream has nothing more ready, so a slow feed never waits for one to fill")
+	cmdAppend.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
+	cmdAppend.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush; it groups concurrent writers, of which a stream has none, so use --batchSize instead")
+	cmdAppend.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits. A stream has nobody to wait for, so this only delays it")
+	cmdAppend.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
+	cmdAppend.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
+	cmdAppend.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
+	cmdAppend.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
+	cmdAppend.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
+
+	cmdCat.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to read")
+	cmdCat.Flags().StringVarP(&framing, "framing", "", "lines", "How stdout delimits entries: lines or length (a little-endian uint64 byte count before each entry)")
+	cmdCat.Flags().BoolVarP(&offsets, "offsets", "", false, "Prefix each entry with its offset and a tab; line framing only")
+	cmdCat.Flags().BoolVarP(&follow, "follow", "F", false, "Keep reading as entries are written instead of stopping at the end of the log")
+	cmdCat.Flags().IntVarP(&catBatchSize, "batchSize", "", stdio.DefaultCatBatchSize, "Entries asked for in one call")
+	cmdCat.Flags().IntVarP(&pollMs, "pollMs", "", 1000, "Milliseconds between passes while following; each pass reopens the log, so a large head block wants a larger value")
+
+	cmdTopics.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to list")
+
+	rootCmd.AddCommand(cmdServer, cmdClient, cmdTools, cmdAppend, cmdCat, cmdTopics)
+	cmdTools.AddCommand(cmdToolsReadIndexLogFile, cmdToolsReadLogFile)
+	cmdClient.AddCommand(cmdClientList, cmdClientWrite, cmdClientRead, cmdClientBench)
+}
+
+func getenv(key, fallback string) string {
+	value := os.Getenv(key)
+	if len(value) == 0 {
+		return fallback
+	}
+	return value
+}
