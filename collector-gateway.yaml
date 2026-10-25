@@ -12,21 +12,24 @@ processors:
         value: "test-value"
         action: insert
 exporters:
-  logging:
-    loglevel: info
-  jaeger:
-    endpoint: jaeger-all-in-one:14250
-    insecure: true
+  debug:
+    verbosity: basic
+  # Jaeger takes OTLP natively since v2, so there is no Jaeger exporter any more
+  otlp_grpc/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
 extensions:
   health_check:
+    endpoint: 0.0.0.0:13133
   pprof:
-    endpoint: :1888
+    endpoint: 0.0.0.0:1888
   zpages:
-    endpoint: :55679
+    endpoint: 0.0.0.0:55679
 service:
   extensions: [pprof, zpages, health_check]
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch, resource]
-      exporters: [logging, jaeger]
+      exporters: [debug, otlp_grpc/jaeger]

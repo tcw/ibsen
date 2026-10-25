@@ -393,8 +393,12 @@ a directory a server is writing without taking a lock or changing a byte.
 
 ```shell
 docker build -t ibsen .
-docker run --name ibsen -p 54321:54321 ibsen
+docker run --name ibsen -p 54321:54321 -v ibsen-data:/data ibsen
 ```
+
+The image holds the binary and nothing else, runs as an unprivileged user, and keeps the log
+in `/data`, so give it a volume or the log goes when the container does. Arguments after the
+image name replace `server -d /data`.
 
 ### TLS
 
@@ -408,7 +412,14 @@ Paths are taken as given, relative to the working directory.
 ### OpenTelemetry
 
 ```shell
-docker run -v ./collector-gateway.yaml:/etc/otelcol/config.yaml otel/opentelemetry-collector:0.54.0
+docker compose up
+```
+
+starts a server exporting to an OpenTelemetry collector, which passes traces on to Jaeger at
+<http://localhost:16686>. To export from a server outside it, leave the collector running and
+point the server at it:
+
+```shell
 ibsen server -d /tmp/ibsen/data -e 0.0.0.0:4317
 ```
 

@@ -83,9 +83,9 @@ errore/                     stdlib-only, shared by both sides
 - Not pure, by design: everything under `adapter/`, and `wiring/` itself. `adapter/driven/locking` imports `uuid` and `zerolog`; `adapter/driven/logging/zerologger` imports `zerolog`; `adapter/driven/compression/zstd` imports `klauspost/compress`; the driving adapters import gRPC and cobra.
 - **afero is gone.** It was the storage port before `BlockStore` existed, and became a second filesystem abstraction underneath our own. Removing it took five steps: in-memory mode to `memstore`, `filestore` on the standard library, the lock adapter onto `os`, the server switched over, and then the deletion. It cost 1.63 MB of binary — the same program was 3.40 MB on `aferostore` and is 1.68 MB on `filestore` — because `github.com/spf13/afero` imports `net/http` and `golang.org/x/text` to carry an HTTP filesystem and unicode normalisation that a log server reading a file has no use for. Its in-memory filesystem also cost correctness twice, both times by behaving unlike a real one: the `O_RDWR|O_EXCL` renewal bug in §1, and `MemMapFs.OpenFile` checking and creating under separate locks, so `O_CREATE|O_EXCL` is not atomic there. Every test that used it now runs against a real directory.
 
-## Current baseline (verified 2026-09-18, go1.26.4)
+## Current baseline (verified 2026-10-25, go1.27.3)
 
-- `go test -race ./...` passes through migration step 30. Run it before and after every migration step.
+- `go test -race ./...` passes through migration step 38. Run it before and after every migration step.
 - Port conformance suite: `adapter/driven/blockstore/conformance`, run by every adapter (`filestore` on a real directory, `memstore`, `flashstore`).
 - `filestore` is the filesystem adapter, and the only one. Its seam is `filestore.FS`: seven methods and a handle, which exists so a crash can be injected below the store, and which `*os.File` already satisfies. The seventh, `DropCache`, is the one call the store makes for itself rather than for a file: it drops a head block from the page cache before recovery (§2). The other implementations are `faultfs.CrashFiles`, which tears writes, and `filestore.ReadOnly`, which refuses them. It keeps the layout the adapter it replaced used, so an existing data directory is read and written unchanged, and it passes all three suites: the conformance suite, the adapter's own crash and durability tests, and the core property tests, which run against it on a real directory. Each of those used to run twice for the filesystem adapter, the second time against an emulated filesystem; that second run is deliberately gone, since an emulation that disagrees with a real filesystem is worse than not running at all and this one disagreed twice. Its crash tests are an external test package, because `faultfs` is built on the seam and an internal test importing it back would be a cycle.
 - Core property tests: `core/topic/topicAccess_property_test.go` (read-from-every-offset across block sizes and reload modes; concurrent write/read/index), run against every adapter. Only `coreBackends()` at the top of that file knows which store is behind the port.
@@ -93,7 +93,7 @@ errore/                     stdlib-only, shared by both sides
 - Crash and torn-write fault injection: `adapter/driven/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `adapter/driven/blockstore/filestore/crash_test.go` and `core/topic/topicAccess_crash_test.go`, on real directories. Nothing writes to the log while a crash is armed for the index: a write waits on a flush of its log block, and a crash tripped by the background indexer fails that flush too, so the write fails for a reason the test is not about. `TestTopic_CrashDuringIndexWriteDropsTheTornPair` lags the index by truncating it and reloading instead, which is the same state without the race.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
 - `go vet ./...` is clean; keep it that way. `staticcheck -checks U1000 ./...` prints nothing, so there is no unused code; CI does not run it.
-- CI (`.github/workflows/ci.yml`) runs gofmt, `go vet`, `scripts/check-architecture.sh`, `scripts/embedded-size.sh` and `go test -race ./...` on every push. It takes its Go version from the `go` directive in `go.mod`, which is `1.26.4`.
+- CI (`.github/workflows/ci.yml`) runs gofmt over the whole tree, `go vet`, `scripts/check-architecture.sh`, `scripts/embedded-size.sh`, `go test -race ./...` and `docker build` on every push. It takes its Go version from the `go` directive in `go.mod`, which is `1.27.3`, and passes the same version to the image as `GO_VERSION`; nothing built the image before, which is how its Dockerfile was still on Go 1.18 and could not build the module. `release.sh` runs the same checks, then builds the binary and the image.
 - Dependencies are current as of 2026-09-18 (OTEL 1.46, gRPC 1.84, zerolog 1.35, cobra 1.10, klauspost/compress 1.20). No deprecated gRPC dialling left: `grpcapi.DialContext` wraps `grpc.NewClient` and waits for the connection the way `grpc.WithBlock` used to, since `NewClient` connects lazily and would otherwise hand back a healthy-looking client for a server that is not there. Every client — CLI, bench and test helpers — goes through it, and `adapter/driver/grpcapi/client_test.go` pins that an unreachable address is an error rather than a client. CLI commands now bound that wait with `connectTimeout` (10s); `grpc.Dial` with `WithBlock` was given no context, so an unreachable server hung the command.
 - `Start` and `shutdown` can run on different goroutines, so what `Start` builds is guarded: `IbsenServer.mu` covers `topicsManager`, `grpcServer` and the lifecycle channels (`lifecycle()` makes the pair once), and `grpcapi.IbsenGrpcServer` guards its `*grpc.Server` behind `Stop`/`GracefulStop`, which are safe before `StartGRPC` has created it and record the request so it is honoured.
 - `Start` returns its failures instead of exiting: a refused single-writer lock is `wiring.ErrWriteLockUnavailable`, matchable with `errors.Is`, so a program embedding the log decides what to do. The CLI reports it and exits.
@@ -488,12 +488,12 @@ same port a gRPC server does.
   promised — and the script fails if an embedded build stops being smaller than the server.
   A byte ceiling would only drift with each Go release.
 
-Measured by `scripts/embedded-size.sh` on go1.26.4:
+Measured by `scripts/embedded-size.sh` on go1.27.3:
 
 | target | server | embedded | |
 |---|---|---|---|
-| linux/amd64 | 16.48 MB | 1.87 MB | 8.8× smaller |
-| linux/arm | 15.44 MB | 1.81 MB | 8.5× smaller |
+| linux/amd64 | 16.88 MB | 1.80 MB | 9.4× smaller |
+| linux/arm | 16.06 MB | 1.81 MB | 8.9× smaller |
 
 - Nothing is woken on a timer. `manager.NewLogTopicsManager` used to start a goroutine with a
   ten-second ticker sweeping every loaded topic, to catch indexing its own exclusion flag had

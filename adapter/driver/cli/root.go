@@ -142,14 +142,10 @@ var (
 		Short:            "read ibsen log file from disk",
 		Long:             `file`,
 		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(0),
+		Args:             cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			batchSize := 1000
 			var err error
-			if len(args) < 1 {
-				fmt.Println("First parameter must be file name")
-				return
-			}
 			if len(args) == 2 {
 				batchSizeString := args[1]
 				batchSize, err = strconv.Atoi(batchSizeString)
@@ -173,18 +169,13 @@ var (
 		},
 	}
 
-	//Todo: fix
 	cmdToolsReadIndexLogFile = &cobra.Command{
 		Use:              "read-index [file]",
 		Short:            "read ibsen index file from disk",
 		Long:             `file`,
 		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(0),
+		Args:             cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			if len(args) < 1 {
-				fmt.Println("First parameter must be file name")
-				return
-			}
 			absolutePath, err := filepath.Abs(args[0])
 			if err != nil {
 				log.Fatal().Err(err).Msgf("unable to resolve index file %s", args[0])

@@ -6,7 +6,6 @@ import (
 	"os"
 	"sync"
 
-	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/index"
 	"github.com/tcw/ibsen/core/logfmt"
@@ -44,17 +43,19 @@ func ReadLogFile(fileName string, batchSize uint32, codecs driven.Codecs) error 
 	return nil
 }
 
+// ReadLogIndexFile prints an index block file, pair by pair. Parsing stops at the first pair
+// that is torn or fails its checksum, as a load does, and whatever was not read is reported
+// rather than left out quietly: an index printed short looks like a block indexed short.
 func ReadLogIndexFile(fileName string) error {
 	file, err := os.ReadFile(fileName)
 	if err != nil {
-		log.Fatal().Err(err).Str("file", fileName).Msg("reading file failed")
+		return err
 	}
-	log.Info().Str("file", fileName).Msg("read index file")
 	idx := index.NewIndex(file)
-	if err != nil {
-		log.Fatal().Err(err).Str("file", fileName).Msg("marshalling file failed")
+	fmt.Print(idx.ToString())
+	if unread := len(file) - idx.Size()*index.PairSize; unread > 0 {
+		fmt.Printf("%d bytes after the last good pair are torn or corrupt; loading the topic rebuilds them from the log\n", unread)
 	}
-	fmt.Println(idx.ToString())
 	return nil
 }
 

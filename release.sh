@@ -1,11 +1,19 @@
-#!/bin/bash -e
+#!/usr/bin/env bash
+# Builds a release: the checks CI runs, then the binary and the image. The gRPC code is
+# generated and committed; regenerate it with clients/go/generate-client.sh.
+set -euo pipefail
 
-FILE=api/grpcApi/ibsen.pb.go
-if [ ! -f "$FILE" ]; then
-    echo "creating $FILE"
-    protoc --proto_path=api/grpcApi ibsen.proto --go_out=plugins=grpc:./
+cd "$(dirname "$0")"
+
+unformatted=$(gofmt -l .)
+if [ -n "$unformatted" ]; then
+	echo "not gofmt'd:" >&2
+	echo "$unformatted" >&2
+	exit 1
 fi
-go test ./...
-go fmt
-go build -o bin/ibsen
-docker build -t ibsen .
+go vet ./...
+./scripts/check-architecture.sh
+go test -race ./...
+
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/ibsen .
+docker build --build-arg GO_VERSION="$(awk '/^go /{print $2}' go.mod)" -t ibsen .

@@ -19,7 +19,7 @@ jobs:
 
       - name: gofmt
         run: |
-          unformatted=$(gofmt -l core adapter wiring main.go errore)
+          unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
             echo "not gofmt'd:" >&2
             echo "$unformatted" >&2
@@ -42,3 +42,8 @@ jobs:
 
       - name: go test -race
         run: go test -race ./...
+
+      # Nothing else builds the image, which is how it stayed on Go 1.18 long after go.mod had
+      # left it. The Go version comes from go.mod, as it does for setup-go above.
+      - name: docker build
+        run: docker build --build-arg GO_VERSION="$(awk '/^go /{print $2}' go.mod)" -t ibsen .

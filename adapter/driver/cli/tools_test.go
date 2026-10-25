@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,4 +79,63 @@ func capturingStdout(t *testing.T, body func()) string {
 		t.Fatal(err)
 	}
 	return <-done
+}
+
+// TestReadLogIndexFile_reportsWhatItCouldNotRead pins the one thing a diagnostic must not do,
+// which is print a short index as if it were the whole of it. Parsing stops at a torn pair,
+// as a load does, and the bytes behind it are named rather than dropped.
+func TestReadLogIndexFile_reportsWhatItCouldNotRead(t *testing.T) {
+	root := t.TempDir()
+	local, err := wiring.OpenLocal(wiring.LocalParams{RootPath: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 30; i++ {
+		entries := [][]byte{[]byte(fmt.Sprintf("entry-%d", i))}
+		if err := local.Write(domain.TopicName("topic"), &entries); err != nil {
+			t.Fatal(err)
+		}
+	}
+	local.Close()
+
+	indexFile := filepath.Join(root, "topic", "00000000000000000000.idx")
+	clean := capturingStdout(t, func() {
+		if err := ReadLogIndexFile(indexFile); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, want := range []string{"0 -> 0\n", "10 -> ", "20 -> "} {
+		if !strings.Contains(clean, want) {
+			t.Fatalf("read-index printed %q, want it to hold %q", clean, want)
+		}
+	}
+	if strings.Contains(clean, "torn or corrupt") {
+		t.Fatalf("read-index reported damage in a clean index: %q", clean)
+	}
+
+	file, err := os.OpenFile(indexFile, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte("half a pair")); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	torn := capturingStdout(t, func() {
+		if err := ReadLogIndexFile(indexFile); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.HasPrefix(torn, clean) {
+		t.Fatalf("a torn tail changed the pairs printed before it:\n%q\nwant prefix\n%q", torn, clean)
+	}
+	if !strings.Contains(torn, "11 bytes after the last good pair are torn or corrupt") {
+		t.Fatalf("read-index printed %q, want it to report the 11 bytes it could not read", torn)
+	}
+}
+
+func TestReadLogIndexFile_returnsAMissingFile(t *testing.T) {
+	if err := ReadLogIndexFile(filepath.Join(t.TempDir(), "missing.idx")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("got %v, want an error wrapping fs.ErrNotExist", err)
+	}
 }
