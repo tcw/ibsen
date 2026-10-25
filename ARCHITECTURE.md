@@ -737,12 +737,12 @@ pays for zstd. The logger and codec default to `NopLogger` and `NoCodec`.
 go is the one decision an embedded build has to make, and guessing would be the package
 choosing a dependency for the program that imports it.
 
-Measured by `scripts/embedded-size.sh` on go1.26.4, `CGO_ENABLED=0 -ldflags="-s -w"`:
+Measured by `scripts/embedded-size.sh` on go1.27.3, `CGO_ENABLED=0 -ldflags="-s -w"`:
 
 | target | server | embedded | |
 |---|---|---|---|
-| linux/amd64 | 16.48 MB | 1.87 MB | 8.8× smaller |
-| linux/arm | 15.44 MB | 1.81 MB | 8.5× smaller |
+| linux/amd64 | 16.89 MB | 1.80 MB | 9.4× smaller |
+| linux/arm | 16.06 MB | 1.81 MB | 8.9× smaller |
 
 The dependency graph is the gate, since it is exact; the size is the other side of the same
 claim — what the linker produced rather than what the imports promised. The script fails if an

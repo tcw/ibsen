@@ -174,8 +174,8 @@ compressor. That is not a promise in a README, it is checked on every push by
 
 | target | full server | embedded |
 |---|---|---|
-| linux/amd64 | 16.4 MB | 1.87 MB |
-| linux/arm | 15.4 MB | 1.81 MB |
+| linux/amd64 | 16.9 MB | 1.80 MB |
+| linux/arm | 16.1 MB | 1.81 MB |
 
 ---
 
@@ -393,8 +393,12 @@ a directory a server is writing without taking a lock or changing a byte.
 
 ```shell
 docker build -t ibsen .
-docker run --name ibsen -p 54321:54321 ibsen
+docker run --name ibsen -p 54321:54321 -v ibsen-data:/app/data ibsen
 ```
+
+The image holds nothing but the binary, and runs it as an unprivileged user (uid 65532) on
+`/app/data`. `docker compose up` starts it beside an OpenTelemetry collector and Jaeger, whose
+UI is on port 16686.
 
 ### TLS
 
@@ -408,7 +412,7 @@ Paths are taken as given, relative to the working directory.
 ### OpenTelemetry
 
 ```shell
-docker run -v ./collector-gateway.yaml:/etc/otelcol/config.yaml otel/opentelemetry-collector:0.54.0
+docker run -p 4317:4317 -v ./collector-gateway.yaml:/etc/otelcol/config.yaml otel/opentelemetry-collector:0.163.2
 ibsen server -d /tmp/ibsen/data -e 0.0.0.0:4317
 ```
 
@@ -456,14 +460,15 @@ Embedded programs get them as a Go interface, `driver.LogManager`; `ibsen append
 and `ibsen topics` are the same three over stdin and stdout. Nothing in the log knows which
 one is driving it.
 
-Generate clients:
+The Go code for it, the server's and the Go client's, is generated and checked in. After
+changing the proto, regenerate both copies — this needs nothing but Go, since buf compiles the
+proto itself and every tool is pinned:
 
 ```shell
-apt install -y protobuf-compiler
-go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-protoc --proto_path=api/grpcApi ibsen.proto --go_out=plugins=grpc:./
+./scripts/generate-proto.sh
 ```
+
+For other languages, generate from the same file, e.g. `clients/java/generate-client.sh`.
 
 ---
 
@@ -473,11 +478,14 @@ protoc --proto_path=api/grpcApi ibsen.proto --go_out=plugins=grpc:./
 go test -race ./...               # the whole suite: about 105 s on two cores
 go vet ./...
 gofmt -l .
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -checks U1000 ./...   # no unused code
+./scripts/generate-proto.sh       # the generated gRPC code matches the proto
 ./scripts/check-architecture.sh   # the core is pure; dependencies point inward
 ./scripts/embedded-size.sh        # an embedded build is still small
 ```
 
-CI runs all five on every push. The architecture check is the important one: it fails if any
+CI runs all seven on every push, and `./release.sh` runs them before it builds the binary and
+the image. The architecture check is the important one: it fails if any
 package under `core/` reaches outside the standard library, if the core imports an adapter,
 or if a driving adapter reaches a driven one.
 
