@@ -1,13 +1,17 @@
-FROM golang:1.18.3-buster AS builder
-COPY . /build
+# The Go version is the one go.mod names; keep the two in step.
+FROM golang:1.27.3 AS builder
 WORKDIR /build
-ENV CGO_ENABLED=0 GO_LDFLAGS="-extldflags='-static'"
-RUN go build -v -o app/ibsen . && mkdir -p app/data && chmod 600 app/data
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ibsen . \
+ && mkdir -p /out/data \
+ && chmod 700 /out/data
 
 FROM scratch
-COPY --from=builder /build/app/* /app/
-COPY --from=builder /build/app/data /app/data
-CMD ["app/ibsen","server","-d", "app/data", "-e", "collector-gateway:4317"]
-#CMD ["app/ibsen","server","-d", "build/app/data"]
-
-
+COPY --from=builder /out/ibsen /app/ibsen
+COPY --from=builder --chown=65532:65532 /out/data /app/data
+USER 65532:65532
+EXPOSE 54321
+ENTRYPOINT ["/app/ibsen"]
+CMD ["server", "-d", "/app/data"]

@@ -1,0 +1,29 @@
+# Generates the Go code for ibsen.proto, both copies of it, from one place.
+# Run through scripts/generate-proto.sh, which pins buf; the plugins are pinned here, and
+# protoc-gen-go is kept at the version of google.golang.org/protobuf in go.mod.
+version: v2
+inputs:
+  - directory: api/grpcApi
+plugins:
+  # the server's copy, package grpcapi
+  - local: ["go", "run", "google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12"]
+    out: adapter/driver/grpcapi
+    opt:
+      - paths=source_relative
+      - Mibsen.proto=github.com/tcw/ibsen/adapter/driver/grpcapi;grpcapi
+  - local: ["go", "run", "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2"]
+    out: adapter/driver/grpcapi
+    opt:
+      - paths=source_relative
+      - Mibsen.proto=github.com/tcw/ibsen/adapter/driver/grpcapi;grpcapi
+  # the client's copy, package grpcApi
+  - local: ["go", "run", "google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12"]
+    out: clients/go/api/grpcApi
+    opt:
+      - paths=source_relative
+      - Mibsen.proto=github.com/tcw/ibsen/clients/go/api/grpcApi;grpcApi
+  - local: ["go", "run", "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2"]
+    out: clients/go/api/grpcApi
+    opt:
+      - paths=source_relative
+      - Mibsen.proto=github.com/tcw/ibsen/clients/go/api/grpcApi;grpcApi

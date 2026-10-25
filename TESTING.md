@@ -214,8 +214,9 @@ CI runs these before a single test:
   built and never sent: `log.Fatal().Err(err)` without `.Msg` neither logs nor exits, and 27
   of them once did exactly that.
 
-`staticcheck -checks U1000 ./...` prints nothing — there is no unused code — but CI does not
-run it.
+`staticcheck -checks U1000 ./...` prints nothing — there is no unused code — and CI runs it.
+CI also regenerates the gRPC code (`scripts/generate-proto.sh`) and fails if that changes
+anything, so the two generated copies cannot drift from the proto.
 
 ### L1 — formats and units
 
@@ -601,7 +602,7 @@ first is not enumerated.
 
 | what | command |
 |---|---|
-| everything CI runs | `gofmt -l . && go vet ./... && ./scripts/check-architecture.sh && ./scripts/embedded-size.sh && go test -race ./...` |
+| everything CI runs | `./release.sh` runs them and then builds; by hand, `gofmt -l . && go vet ./... && go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -checks U1000 ./... && ./scripts/generate-proto.sh && ./scripts/check-architecture.sh && ./scripts/embedded-size.sh && go test -race ./...` |
 | the whole suite | `go test -race ./...` |
 | one package | `go test -race ./core/topic/` |
 | one test | `go test -race ./core/topic/ -run TestAFailedFlushStopsTheTopic -count=1 -v` |
