@@ -1,0 +1,70 @@
+# Release configuration. Pushing a tag v* runs .github/workflows/release.yml, which runs this.
+# CI runs it as a snapshot on every push to master, so the config cannot break unnoticed.
+# See RELEASING.md.
+version: 2
+
+project_name: ibsen
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: ibsen
+    main: .
+    binary: ibsen
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/tcw/ibsen/adapter/driver/cli.Version={{ .Version }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64, arm]
+    goarm: ["7"]
+    ignore:
+      - goos: darwin
+        goarch: arm
+      - goos: windows
+        goarch: arm
+
+archives:
+  - id: ibsen
+    ids: [ibsen]
+    name_template: "ibsen_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ with .Arm }}v{{ . }}{{ end }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - docs/*
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^Merge "
+
+dockers_v2:
+  - id: ibsen
+    ids: [ibsen]
+    dockerfile: Dockerfile.release
+    images:
+      - ghcr.io/tcw/ibsen
+    tags:
+      - "{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.source: https://github.com/tcw/ibsen
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.description: An append-only log that runs anywhere

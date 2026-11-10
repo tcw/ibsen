@@ -98,6 +98,13 @@ errore/                     stdlib-only, shared by both sides
   running it (every flag, durability, compression, locks, Docker, TLS, development).
   `ARCHITECTURE.md` and `TESTING.md` stay the level below. `scripts/check-links.py` fails CI on
   a relative link or `#anchor` that does not resolve, so a moved section cannot strand a link.
+- **Releases** are a tag: `.github/workflows/release.yml` runs GoReleaser
+  (`.goreleaser.yaml`), which builds `ibsen` for linux/darwin/windows on amd64 and arm64 (and
+  linux/arm), archives, `checksums.txt`, release notes and multi-arch images at
+  `ghcr.io/tcw/ibsen` from `Dockerfile.release`. `cli.Version` is stamped by `-ldflags -X`,
+  falling back to the module version and then `dev`. CI builds a snapshot on every push to
+  master and runs `scripts/smoke-test.sh` (the README quick start) on it. `release.sh` is
+  gone: the protobuf it generated is committed. See `RELEASING.md`.
 - `go vet ./...` is clean; keep it that way. `staticcheck -checks U1000 ./...` prints nothing, so there is no unused code; CI does not run it.
 - CI (`.github/workflows/ci.yml`) runs gofmt, `go vet`, `scripts/check-architecture.sh`, `scripts/embedded-size.sh` and `go test -race ./...` on every push. It takes its Go version from the `go` directive in `go.mod`, which is `1.26.4`.
 - Dependencies are current as of 2026-09-18 (OTEL 1.46, gRPC 1.84, zerolog 1.35, cobra 1.10, klauspost/compress 1.20). No deprecated gRPC dialling left: `grpcapi.DialContext` wraps `grpc.NewClient` and waits for the connection the way `grpc.WithBlock` used to, since `NewClient` connects lazily and would otherwise hand back a healthy-looking client for a server that is not there. Every client — CLI, bench and test helpers — goes through it, and `adapter/driver/grpcapi/client_test.go` pins that an unreachable address is an error rather than a client. CLI commands now bound that wait with `connectTimeout` (10s); `grpc.Dial` with `WithBlock` was given no context, so an unreachable server hung the command.
@@ -634,7 +641,10 @@ and how to read their failures, recipes, and which test holds which promise — 
 39. ~~Rewrite the README for newcomers and move the detail into `docs/USER_GUIDE.md` and
     `docs/OPERATIONS.md` (spec 1).~~
 
-Every step ships green. Steps 0 to 39 are done, one commit each.
+40. ~~Publish release binaries and images from a tag with GoReleaser, and stamp the version
+    (spec 9A).~~
+
+Every step ships green. Steps 0 to 40 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —

@@ -47,3 +47,30 @@ jobs:
 
       - name: go test -race
         run: go test -race ./...
+
+  # The release configuration, built as a snapshot so it cannot break unnoticed between
+  # releases, and one of the binaries it makes put through the README's quick start.
+  release-snapshot:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean
+
+      - name: smoke test
+        run: ./scripts/smoke-test.sh dist/ibsen_linux_amd64_v1/ibsen

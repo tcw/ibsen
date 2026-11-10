@@ -70,21 +70,22 @@ an entry that a power cut could take back.
 
 Pick whichever you have.
 
+- **A prebuilt binary** — needs nothing. Download the archive for your system from the
+  [Releases page](https://github.com/tcw/ibsen/releases), unpack it, and put `ibsen` on
+  your `PATH`.
 - **Go** — needs Go 1.26 or later:
 
   ```shell
   go install github.com/tcw/ibsen@latest
   ```
 
-- **Docker** — needs Docker. This builds the image straight from the repository and starts
-  a server on port 54321:
+- **Docker** — needs Docker. This starts a server on port 54321:
 
   ```shell
-  docker build -t ibsen https://github.com/tcw/ibsen.git
-  docker run --rm -p 54321:54321 ibsen
+  docker run --rm -p 54321:54321 ghcr.io/tcw/ibsen:latest
   ```
 
-Prebuilt binaries are not published yet; until they are, Go or Docker is the way in.
+Check it worked with `ibsen --version`.
 
 ### Your first log
 

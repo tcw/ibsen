@@ -408,6 +408,7 @@ func Execute() {
 }
 
 func init() {
+	rootCmd.Version = version()
 
 	port, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(54321)))
 	host = getenv("IBSEN_HOST", "0.0.0.0")

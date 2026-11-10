@@ -166,10 +166,21 @@ you. The full reasoning is in [ARCHITECTURE.md §16](../ARCHITECTURE.md#16-singl
 
 ## Docker
 
+Every release publishes an image for linux/amd64 and linux/arm64. It runs `ibsen server -d
+/app/data` unless told otherwise, so mount a volume there to keep the log:
+
 ```shell
-docker build -t ibsen .
-docker run --name ibsen -p 54321:54321 ibsen
+docker run --name ibsen -p 54321:54321 -v ibsen-data:/app/data ghcr.io/tcw/ibsen:latest
 ```
+
+Anything after the image name replaces the command, so the filter commands work too:
+
+```shell
+docker run --rm -v ibsen-data:/app/data ghcr.io/tcw/ibsen:latest topics -d /app/data
+```
+
+To build an image from source instead, `docker build -t ibsen .` in a checkout.
+[RELEASING.md](../RELEASING.md) says how releases and their images are made.
 
 ## TLS
 
@@ -217,9 +228,12 @@ go vet ./...
 gofmt -l .
 ./scripts/check-architecture.sh   # the core is pure; dependencies point inward
 ./scripts/embedded-size.sh        # an embedded build is still small
+python3 scripts/check-links.py    # every Markdown link resolves
+./scripts/smoke-test.sh BINARY    # the README's quick start against a built binary
 ```
 
-CI runs all five on every push. The architecture check is the important one: it fails if any
+CI runs the first six on every push, and the smoke test on a release snapshot of every push
+to master. The architecture check is the important one: it fails if any
 package under `core/` reaches outside the standard library, if the core imports an adapter,
 or if a driving adapter reaches a driven one.
 
