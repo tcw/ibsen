@@ -6,7 +6,8 @@ and do not model, how to read a failure from the two system-level harnesses, and
 to a given part of the log has to come with.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) describes what is being tested. [README.md](README.md) is
-the introduction.
+the introduction, and [docs/OPERATIONS.md](docs/OPERATIONS.md#development) lists the
+commands CI runs.
 
 - [1. What the tests are for](#1-what-the-tests-are-for)
 - [2. Principles](#2-principles)

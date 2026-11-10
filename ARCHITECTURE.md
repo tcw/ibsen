@@ -1,7 +1,8 @@
 # Architecture
 
 This document describes how Ibsen is built and why. [README.md](README.md) is the
-introduction; this is the level below it. It assumes you have read what a log is and want to
+introduction, and [the user guide](docs/USER_GUIDE.md) and [the operations guide](docs/OPERATIONS.md)
+say how to use and run it; this is the level below it. It assumes you have read what a log is and want to
 know what the bytes look like, what the interfaces promise, and which decisions are load
 bearing.
 

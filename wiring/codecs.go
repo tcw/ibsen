@@ -15,7 +15,7 @@ import (
 // written before or after this default reads the same either way.
 //
 // "none" is one word away for a deployment whose entries are already compressed, or whose
-// readers seek rather than stream. See the README.
+// readers seek rather than stream. See docs/OPERATIONS.md.
 const DefaultCompression = "zstd"
 
 // buildCodecs turns a compression name into the adapters behind it. Building them here rather

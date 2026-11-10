@@ -92,6 +92,12 @@ errore/                     stdlib-only, shared by both sides
 - **Tests run against real directories.** Nothing emulates a filesystem any more, and two habits follow from that. A test that writes a file must create its parent directory, which the emulated filesystem did implicitly. And a test that builds a manager or a topic on a `t.TempDir()` must close it, because the background indexing a write starts will otherwise race Go's removal of that directory; it surfaces as `TempDir RemoveAll cleanup: directory not empty`, attributed to whichever test was unlucky. `newTestManagerWithStore`, `newTestTopic` and `stoppedByTest` register that cleanup.
 - Crash and torn-write fault injection: `adapter/driven/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `adapter/driven/blockstore/filestore/crash_test.go` and `core/topic/topicAccess_crash_test.go`, on real directories. Nothing writes to the log while a crash is armed for the index: a write waits on a flush of its log block, and a crash tripped by the background indexer fails that flush too, so the write fails for a reason the test is not about. `TestTopic_CrashDuringIndexWriteDropsTheTornPair` lags the index by truncating it and reloading instead, which is the same state without the race.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
+- **Docs are three layers.** `README.md` is the newcomer's front door (what a log is, a
+  one-minute quick start, no flag tables or numbers); `docs/USER_GUIDE.md` is for people using
+  the log (layout, filter commands, embedding, the API) and `docs/OPERATIONS.md` for people
+  running it (every flag, durability, compression, locks, Docker, TLS, development).
+  `ARCHITECTURE.md` and `TESTING.md` stay the level below. `scripts/check-links.py` fails CI on
+  a relative link or `#anchor` that does not resolve, so a moved section cannot strand a link.
 - `go vet ./...` is clean; keep it that way. `staticcheck -checks U1000 ./...` prints nothing, so there is no unused code; CI does not run it.
 - CI (`.github/workflows/ci.yml`) runs gofmt, `go vet`, `scripts/check-architecture.sh`, `scripts/embedded-size.sh` and `go test -race ./...` on every push. It takes its Go version from the `go` directive in `go.mod`, which is `1.26.4`.
 - Dependencies are current as of 2026-09-18 (OTEL 1.46, gRPC 1.84, zerolog 1.35, cobra 1.10, klauspost/compress 1.20). No deprecated gRPC dialling left: `grpcapi.DialContext` wraps `grpc.NewClient` and waits for the connection the way `grpc.WithBlock` used to, since `NewClient` connects lazily and would otherwise hand back a healthy-looking client for a server that is not there. Every client — CLI, bench and test helpers — goes through it, and `adapter/driver/grpcapi/client_test.go` pins that an unreachable address is an error rather than a client. CLI commands now bound that wait with `connectTimeout` (10s); `grpc.Dial` with `WithBlock` was given no context, so an unreachable server hung the command.
@@ -625,7 +631,10 @@ and how to read their failures, recipes, and which test holds which promise — 
 38. ~~Drop a head block's clean cached pages before recovering it, so a restart after a failed
     fsync reads what the media holds; enumerate a failed sync at every sync call (§2, §12).~~
 
-Every step ships green. Steps 0 to 38 are done, one commit each.
+39. ~~Rewrite the README for newcomers and move the detail into `docs/USER_GUIDE.md` and
+    `docs/OPERATIONS.md` (spec 1).~~
+
+Every step ships green. Steps 0 to 39 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —

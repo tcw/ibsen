@@ -23,6 +23,7 @@ services:
 
   ibsen:
     build: .
+    command: ["server", "-d", "/app/data", "-e", "collector-gateway:4317"]
     ports:
       - "54321:54321"
 #    entrypoint: ["sh", "-c", "sleep 2073600"]
