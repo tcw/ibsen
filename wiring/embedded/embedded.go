@@ -171,6 +171,13 @@ func (l *Log) Read(params driver.ReadParams) error {
 	return l.manager.Read(params)
 }
 
+// Retain deletes the oldest whole blocks of every topic while policy says to, never a
+// topic's head block. now is the program's clock. Nothing calls it for an embedded log; a
+// program that wants retention calls it when it likes.
+func (l *Log) Retain(policy func(domain.TopicName) topic.RetentionPolicy, now time.Time) error {
+	return l.manager.Retain(policy, now)
+}
+
 // Flush makes everything written so far durable, and readable, and returns the first error.
 func (l *Log) Flush() error {
 	return l.manager.Flush()

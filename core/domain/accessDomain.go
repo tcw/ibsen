@@ -20,6 +20,24 @@ var ErrReadCancelled = errors.New("read cancelled")
 
 var ErrInvalidTopicName = errors.New("invalid topic name")
 
+// ErrOffsetTooOld is what a read gets when the offset it starts from, or the block it was
+// about to read next, has been deleted by retention. It is matched with errors.Is; the error
+// itself is an *OffsetTooOldError naming the earliest offset still there.
+var ErrOffsetTooOld = errors.New("offset is older than the earliest one retained")
+
+// OffsetTooOldError says which offset was asked for and which is the earliest still there,
+// so a reader can decide whether to start again from it.
+type OffsetTooOldError struct {
+	Requested Offset
+	Earliest  Offset
+}
+
+func (e *OffsetTooOldError) Error() string {
+	return fmt.Sprintf("offset %d is no longer retained; the earliest available is %d", e.Requested, e.Earliest)
+}
+
+func (e *OffsetTooOldError) Is(target error) bool { return target == ErrOffsetTooOld }
+
 // MaxTopicNameLength is the longest topic name in bytes. A topic is a directory, and most
 // filesystems limit a name to 255 bytes.
 const MaxTopicNameLength = 255
@@ -56,6 +74,9 @@ type ReadLogParams struct {
 	BatchSize uint32
 	// Cancel stops the read with ErrReadCancelled when closed; nil never cancels.
 	Cancel <-chan struct{}
+	// FromEarliest starts at the earliest offset still retained when From is older than it,
+	// instead of failing with ErrOffsetTooOld.
+	FromEarliest bool
 }
 
 type LogEntry struct {

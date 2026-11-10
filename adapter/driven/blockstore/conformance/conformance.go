@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/port/driven"
@@ -43,6 +44,7 @@ func Run(t *testing.T, newStore NewStore) {
 		{"ReaderKeepsReadingAcrossAppends", readerKeepsReadingAcrossAppends},
 		{"SyncIsOptional", syncIsOptional},
 		{"ConcurrentAppendsAndReads", concurrentAppendsAndReads},
+		{"ModifiedIsWhenTheBlockLastChangedOrZero", modifiedIsWhenTheBlockLastChangedOrZero},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -198,14 +200,14 @@ func listSeparatesKindsAndOrdersBlocks(t *testing.T, store driven.BlockStore) {
 		t.Fatal(err)
 	}
 	want := []driven.Block{{Block: 0, Size: 3}, {Block: 7, Size: 3}, {Block: 42, Size: 3}}
-	if fmt.Sprint(logs) != fmt.Sprint(want) {
+	if fmt.Sprint(sizesOnly(logs)) != fmt.Sprint(want) {
 		t.Fatalf("log blocks=%v, want %v", logs, want)
 	}
 	indexes, err := store.List("topic", driven.Index)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(indexes) != 1 || indexes[0] != (driven.Block{Block: 7, Size: 7}) {
+	if len(indexes) != 1 || sizesOnly(indexes)[0] != (driven.Block{Block: 7, Size: 7}) {
 		t.Fatalf("index blocks=%v, want block 7 of 7 bytes", indexes)
 	}
 }
@@ -386,5 +388,51 @@ func concurrentAppendsAndReads(t *testing.T, store driven.BlockStore) {
 		if size := sizeOf(t, store, ref); size != appends {
 			t.Errorf("%s holds %d bytes, want %d", ref, size, appends)
 		}
+	}
+}
+
+// sizesOnly drops what a comparison of block lists does not care about.
+func sizesOnly(blocks []driven.Block) []driven.Block {
+	out := make([]driven.Block, len(blocks))
+	for i, block := range blocks {
+		out[i] = driven.Block{Block: block.Block, Size: block.Size}
+	}
+	return out
+}
+
+// A store either cannot tell when a block changed, and says zero everywhere, or it can, and
+// the time it gives is the time of the last append or truncate. Retention deletes by it, so a
+// time from the wrong moment deletes the wrong block. Filesystems keep coarse times, hence
+// the slack.
+func modifiedIsWhenTheBlockLastChangedOrZero(t *testing.T, store driven.BlockStore) {
+	const slack = 2 * time.Second
+	ref := driven.LogRef("topic", 0)
+	before := time.Now()
+	appended := mustAppend(t, store, ref, []byte("entry"))
+	after := time.Now()
+
+	blocks, err := store.List("topic", driven.Log)
+	if err != nil || len(blocks) != 1 {
+		t.Fatalf("list: %v, %v", blocks, err)
+	}
+	listed := blocks[0].Modified
+	if listed.IsZero() != appended.Modified.IsZero() {
+		t.Fatalf("Append said modified %v and List %v: a store tells or it does not", appended.Modified, listed)
+	}
+	if listed.IsZero() {
+		return
+	}
+	if listed.Before(before.Add(-slack)) || listed.After(after.Add(slack)) {
+		t.Fatalf("modified %v, want between %v and %v", listed, before, after)
+	}
+	if err := store.Truncate(ref, 1); err != nil {
+		t.Fatal(err)
+	}
+	blocks, err = store.List("topic", driven.Log)
+	if err != nil || len(blocks) != 1 || blocks[0].Modified.IsZero() {
+		t.Fatalf("after a truncate: %v, %v", blocks, err)
+	}
+	if blocks[0].Modified.Before(listed) {
+		t.Errorf("a truncate moved the modification time back from %v to %v", listed, blocks[0].Modified)
 	}
 }

@@ -108,6 +108,19 @@ errore/                     stdlib-only, shared by both sides
   `flock/flock_test.go` (a second process via the test binary, killed to show release on
   death) and `wiring/writelock_test.go`. CI cross-compiles windows, darwin, freebsd, openbsd and
   linux/arm, since the choice is made by build constraints.
+- **Retention** (spec 4, ARCHITECTURE §12a): `Topic.Retain(policy, now)` removes a prefix of
+  whole log blocks, never the head, lists first, then each log block, then its index; loading
+  drops an orphan index. `driven.Block.Modified` (zero when a store cannot tell, as
+  `flashstore`) is what age is judged by. A read before the first block is
+  `domain.ErrOffsetTooOld` (an `*OffsetTooOldError` naming the earliest), or starts there with
+  `ReadParams.FromEarliest`; a reader whose snapshot outlived a block gets the same error, not a
+  skip. Policy lives in `wiring/config.go`: `--retainAge`, `--retainBytes`, and `ibsen.json`
+  (or `--config`) with per-topic overrides that replace the global limits, stdlib JSON,
+  unknown keys refused. The server runs it every minute; `OpenLocal` once on a writable close.
+  Found on the way: a lenient flush batch naming a block retention removed failed with
+  `ErrBlockNotFound` and stopped the topic; `syncBlocks` now skips it, pinned by
+  `TestRetain_aLenientFlushAfterRetentionDoesNotFail`. `scripts/gen-proto.sh` regenerates the
+  Go gRPC code (protoc 3.21, protoc-gen-go 1.36.12, protoc-gen-go-grpc 1.6.2).
 - **Releases** are a tag: `.github/workflows/release.yml` runs GoReleaser
   (`.goreleaser.yaml`), which builds `ibsen` for linux/darwin/windows on amd64 and arm64 (and
   linux/arm), archives, `checksums.txt`, release notes and multi-arch images at
@@ -670,7 +683,10 @@ and how to read their failures, recipes, and which test holds which promise — 
 42. ~~Lenient flushing by default, strict as an option: an explicit `Flush` behind
     `driver.Flusher`, a ticker in the composition roots, close flushing (spec 3).~~
 
-Every step ships green. Steps 0 to 42 are done, one commit each.
+43. ~~Retention: delete whole old blocks by age, size or both, never the head, with per-topic
+    overrides in `<root>/ibsen.json`, and tell a reader of a deleted offset so (spec 4).~~
+
+Every step ships green. Steps 0 to 43 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —

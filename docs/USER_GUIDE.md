@@ -92,13 +92,14 @@ server, and there is no in-memory fallback for them: a log that lives in one pro
 shared with nobody has nothing to append to. `append` also takes every write-side server flag
 listed in [OPERATIONS.md](OPERATIONS.md#configuration) — `--maxBlockSize`, the flush flags,
 `--indexSparsity`, `--maxFrameEntries`, `--maxFrameBytes`, `--compression`,
-`--compressionLevel` — because those describe what is written, and a filter writes the same
+`--compressionLevel`, the retention flags and `--config` — because those describe what is written, and a filter writes the same
 log a server does. For an `append`, `--batchSize` is what moves the throughput; see
 [Durability](OPERATIONS.md#durability).
 
 | flag | commands | default | what it does |
 |---|---|---|---|
 | `--framing` | `append`, `cat` | `lines` | how the stream delimits entries: `lines`, or `length` for a little-endian uint64 byte count before each entry |
+| `--fromEarliest` | `cat` | `false` | with an offset, start at the earliest retained entry if that offset was deleted; with none, `cat` always does |
 | `--batchSize` | `append`, `cat` | `10000` / `1000` | entries per write, or per read; for `append` this is one flush, so it is the throughput dial |
 | `--offsets` | `cat` | `false` | prefix each entry with its offset and a tab; line framing only |
 | `-F, --follow` | `cat` | `false` | keep printing as entries are written, until Ctrl-C |
@@ -111,6 +112,24 @@ read-only.
 
 `--offsets` with `--framing length` is refused rather than ignored: length framing carries
 entries and nothing else, so a reader of it needs to be told nothing.
+
+### Starting from the earliest offset
+
+A data directory may have retention set (see [Retention](OPERATIONS.md#retention)), which
+deletes a topic's oldest entries. Offsets never shift when that happens: the entry at offset
+290000 is still at 290000, and the ones before it are simply gone.
+
+- `ibsen cat topic` with no offset starts at the earliest entry still there.
+- `ibsen cat topic 0` asks for offset 0 exactly, and fails with a message naming the earliest
+  offset if it has been deleted. Add `--fromEarliest` to start there instead.
+- Over gRPC, a read of a deleted offset fails with `OUT_OF_RANGE`; set `fromEarliest` in
+  `ReadParams` to start at the earliest. `ibsen client read --fromEarliest` does.
+- Embedded, `driver.ReadParams{FromEarliest: true}`; without it the read returns an error
+  matching `domain.ErrOffsetTooOld`, whose `*domain.OffsetTooOldError` names the earliest
+  offset.
+
+A reader that is following the log and falls behind until the next block it needs is deleted
+gets the same error, not a silent jump forward.
 
 ## Embed it
 

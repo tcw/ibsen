@@ -825,6 +825,9 @@ What the suite does not test, so nobody assumes it does:
 | `adapter/driver/history/nemesis_test.go` | L8 | randomised power cuts and failed fsyncs, checked, in both flush modes |
 | `adapter/driver/history/lenient_test.go` | L8 | the checker's lenient rules, both sides |
 | `core/topic/lenient_test.go` | L4 | lenient flush mode |
+| `core/topic/retention_test.go` | L4 | retention: age, size, both, the head kept, a prefix only, reads of deleted offsets and from the earliest, a reader whose next block goes, an orphan index after a crash, a lenient flush naming a removed block |
+| `wiring/config_test.go` | L6 | sizes and ages, overrides replacing the global limits, bad settings files refused, read-only opens deleting nothing, append and the server applying retention |
+| `adapter/driver/grpcapi/retention_test.go` | L6 | a deleted offset is `OUT_OF_RANGE`; `fromEarliest` |
 | `wiring/flushmode_test.go` | L6 | `--flushMode`: names, the ticker in lenient mode only, a clean shutdown and close flushing |
 | `wiring/embedded/flush_test.go` | L6 | the embedded root starts no goroutine by default; its opt-in ticker; `StartFlushTicker` |
 | `adapter/driver/history/crashpoints_test.go` | L8 | a crash at every storage call, and every promise's support |

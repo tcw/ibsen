@@ -303,6 +303,16 @@ func (t *Topic) LoadOrCreate() error {
 	if len(logBlocks) == 0 {
 		return nil
 	}
+	// a crash between retention removing a log block and its index leaves the index
+	var orphans []driven.Block
+	indexBlocks, orphans = orphanIndexes(logBlocks, indexBlocks)
+	for _, orphan := range orphans {
+		ref := driven.IndexRef(t.topic(), domain.IndexBlock(orphan.Block))
+		err := t.Store.Remove(ref)
+		t.Log.Log(driven.LevelWarn, "ignoring an index block whose log block is gone",
+			driven.Str("topic", t.TopicName), driven.Uint64("indexBlock", orphan.Block),
+			driven.Bool("removed", err == nil))
+	}
 	t.LogBlockList = toLogBlocks(logBlocks)
 	t.IndexBlockList = toIndexBlocks(indexBlocks)
 
@@ -356,7 +366,17 @@ func (t *Topic) Read(params domain.ReadLogParams) error {
 	if err := domain.ValidateTopicName(t.topic()); err != nil {
 		return err
 	}
-	return t.snapshot().read(params)
+	for attempt := 0; ; attempt++ {
+		err := t.snapshot().read(params)
+		var tooOld *domain.OffsetTooOldError
+		// a FromEarliest read whose first block went between the snapshot and the open has
+		// sent nothing yet, so it starts again from what is there now
+		if params.FromEarliest && attempt < 3 && errors.As(err, &tooOld) && tooOld.Requested == params.From {
+			params.From = tooOld.Earliest
+			continue
+		}
+		return err
+	}
 }
 
 // snapshot copies the topic state so a read does not hold the lock while
@@ -384,6 +404,12 @@ func (t *Topic) snapshot() *Topic {
 }
 
 func (t *Topic) read(params domain.ReadLogParams) error {
+	if earliest := t.earliestLocked(); len(t.LogBlockList) > 0 && params.From < earliest {
+		if !params.FromEarliest {
+			return &domain.OffsetTooOldError{Requested: params.From, Earliest: earliest}
+		}
+		params.From = earliest
+	}
 	// ensures reader will not read partially written log entries
 	endOffset, exists := t.findLastConfirmedWrittenEntryOffset(params.From)
 	if !exists {
@@ -405,6 +431,10 @@ func (t *Topic) read(params domain.ReadLogParams) error {
 	t.debugLogIndexLookup(params.From, byteOffset, scanCount)
 
 	if err = t.sendBlock(t.logRef(block), byteOffset, params.From, endOffset, params); err != nil {
+		if errors.Is(err, driven.ErrBlockNotFound) {
+			// retention removed it since this read's snapshot was taken
+			return &domain.OffsetTooOldError{Requested: params.From, Earliest: t.earliestInStore()}
+		}
 		return errore.Wrap(err)
 	}
 
@@ -424,6 +454,11 @@ func (t *Topic) read(params domain.ReadLogParams) error {
 		}
 		err = t.sendBlock(t.logRef(b), 0, domain.Offset(b), endOffset, params)
 		if errors.Is(err, driven.ErrBlockNotFound) {
+			// gone because retention removed it: say so rather than skip to the next block.
+			// A block not yet created is past the boundary and never reached here.
+			if earliest := t.earliestInStore(); earliest > domain.Offset(b) {
+				return &domain.OffsetTooOldError{Requested: domain.Offset(b), Earliest: earliest}
+			}
 			break
 		}
 		if err != nil {

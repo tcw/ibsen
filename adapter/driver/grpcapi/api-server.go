@@ -186,8 +186,12 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	topicName := domain.TopicName(params.Topic)
 	nextOffset := domain.Offset(params.Offset)
 	readTTL := time.Now().Add(s.TTL)
+	// only the first pass may start from the earliest offset: one already following the log
+	// whose next block was deleted is told so, rather than skipped ahead
+	fromEarliest := params.FromEarliest
 	for time.Until(readTTL) > 0 {
-		sentUntil, readErr, sendErr := s.streamFrom(ctx, topicName, nextOffset, params.BatchSize, readServer)
+		sentUntil, readErr, sendErr := s.streamFrom(ctx, topicName, nextOffset, params.BatchSize, fromEarliest, readServer)
+		fromEarliest = false
 		if sendErr != nil {
 			return sendErr
 		}
@@ -196,6 +200,10 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 		}
 		if errors.Is(readErr, manager.ErrClosed) {
 			return status.Error(codes.Unavailable, "ibsen is shutting down")
+		}
+		var tooOld *domain.OffsetTooOldError
+		if errors.As(readErr, &tooOld) {
+			return status.Error(codes.OutOfRange, tooOld.Error())
 		}
 		if readErr == manager.TopicNotFound {
 			return status.Errorf(codes.NotFound, "Topic %s not found", topicName)
@@ -226,7 +234,7 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 // offset after the last entry sent, the read error and the send error. A failed send or a
 // departed client cancels the read, and any batch already on its way is drained, so the
 // read never blocks on a batch nobody will receive.
-func (s server) streamFrom(ctx context.Context, topic domain.TopicName, from domain.Offset, batchSize uint32, out Ibsen_ReadServer) (domain.Offset, error, error) {
+func (s server) streamFrom(ctx context.Context, topic domain.TopicName, from domain.Offset, batchSize uint32, fromEarliest bool, out Ibsen_ReadServer) (domain.Offset, error, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	logChan := make(chan *[]domain.LogEntry)
@@ -234,12 +242,13 @@ func (s server) streamFrom(ctx context.Context, topic domain.TopicName, from dom
 	readDone := make(chan error, 1)
 	go func() {
 		readDone <- s.manager.Read(driver.ReadParams{
-			TopicName: topic,
-			From:      from,
-			BatchSize: batchSize,
-			LogChan:   logChan,
-			Wg:        &wg,
-			Cancel:    ctx.Done(),
+			TopicName:    topic,
+			From:         from,
+			BatchSize:    batchSize,
+			LogChan:      logChan,
+			Wg:           &wg,
+			Cancel:       ctx.Done(),
+			FromEarliest: fromEarliest,
 		})
 		close(logChan)
 	}()

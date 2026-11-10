@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/port/driven"
@@ -168,7 +169,7 @@ func (s *Store) List(topic domain.TopicName, kind driven.BlockKind) ([]driven.Bl
 		if ext != want {
 			continue
 		}
-		blocks = append(blocks, driven.Block{Block: block, Size: info.Size()})
+		blocks = append(blocks, driven.Block{Block: block, Size: info.Size(), Modified: info.ModTime()})
 	}
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i].Block < blocks[j].Block })
 	if kind == driven.Log && len(blocks) > 0 {
@@ -277,7 +278,7 @@ func (s *Store) Append(ref driven.BlockRef, data []byte) (driven.Block, error) {
 	if err = file.Close(); err != nil {
 		return driven.Block{}, errore.Wrap(err)
 	}
-	return driven.Block{Block: ref.Block, Size: size + int64(n)}, nil
+	return driven.Block{Block: ref.Block, Size: size + int64(n), Modified: time.Now()}, nil
 }
 
 // blockIsNamed reports whether this store has made ref's name durable.

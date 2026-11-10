@@ -62,12 +62,13 @@ func (ic *IbsenClient) List() (string, error) {
 	return strings.Join(list.Topics, "\n"), nil
 }
 
-func (ic *IbsenClient) Read(topic string, offset uint64, batchSize uint32) error {
+func (ic *IbsenClient) Read(topic string, offset uint64, batchSize uint32, fromEarliest bool) error {
 	entryStream, err := ic.Client.Read(ic.Ctx, &grpcapi.ReadParams{
 		StopOnCompletion: false,
 		Topic:            topic,
 		Offset:           offset,
 		BatchSize:        batchSize,
+		FromEarliest:     fromEarliest,
 	})
 	if err != nil {
 		return err

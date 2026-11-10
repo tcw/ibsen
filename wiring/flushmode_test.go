@@ -43,7 +43,9 @@ func startOnDisk(t *testing.T, ibs *IbsenServer) (grpcapi.IbsenClient, func()) {
 	t.Helper()
 	ibs.Lock = &slowReleaseLock{released: make(chan struct{}), onRelease: func() {}}
 	ibs.TTL = time.Minute
-	ibs.MaxBlockSize = 1 << 20
+	if ibs.MaxBlockSize == 0 {
+		ibs.MaxBlockSize = 1 << 20
+	}
 	ibs.Compression = "none"
 	return startInMemory(t, ibs)
 }

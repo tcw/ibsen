@@ -8,6 +8,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/adapter/driver/stdio"
+	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/wiring"
 )
 
@@ -44,6 +45,10 @@ func userMessage(err error) (string, bool) {
 	if errors.As(err, &user) {
 		return user.msg, true
 	}
+	var tooOld *domain.OffsetTooOldError
+	if errors.As(err, &tooOld) {
+		return tooOld.Error() + ", which --fromEarliest starts from", true
+	}
 	if errors.Is(err, stdio.ErrOffsetsNeedLines) {
 		return "--offsets needs line framing, since length framing carries entries and nothing else", true
 	}
@@ -59,6 +64,8 @@ func localOpenError(root string, err error) error {
 		return userErrorf("%s is not there, give a data directory that exists", root)
 	case errors.Is(err, wiring.ErrWriteLockUnavailable):
 		return userErrorf("%s is being written by another process, and a log takes one writer at a time", root)
+	case errors.Is(err, wiring.ErrInvalidConfig):
+		return userErrorf("%s", configReason(err))
 	case errors.Is(err, wiring.ErrUnknownFlushMode):
 		return userErrorf("--flushMode %q is not one of %s", flushMode, strings.Join(wiring.FlushModes, ", "))
 	case errors.Is(err, wiring.ErrUnknownLock):
@@ -88,6 +95,16 @@ func lockReason(err error) string {
 	if i := strings.Index(msg, "a kernel file lock is not guaranteed here: "); i >= 0 {
 		msg = msg[i+len("a kernel file lock is not guaranteed here: "):]
 	}
+	if i := strings.Index(msg, "\n"); i >= 0 {
+		msg = msg[:i]
+	}
+	return msg
+}
+
+// configReason is what is wrong with a settings file or a retention flag, without errore's
+// trace.
+func configReason(err error) string {
+	msg := err.Error()
 	if i := strings.Index(msg, "\n"); i >= 0 {
 		msg = msg[:i]
 	}

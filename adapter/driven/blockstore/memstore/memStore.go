@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/port/driven"
@@ -18,6 +19,9 @@ import (
 type Store struct {
 	mu     sync.RWMutex
 	topics map[domain.TopicName]map[blockKey][]byte
+	// modified is when each block was last appended to or truncated
+	modified map[domain.TopicName]map[blockKey]time.Time
+	now      func() time.Time
 }
 
 var _ driven.BlockStore = &Store{}
@@ -29,7 +33,21 @@ type blockKey struct {
 }
 
 func New() *Store {
-	return &Store{topics: make(map[domain.TopicName]map[blockKey][]byte)}
+	return &Store{
+		topics:   make(map[domain.TopicName]map[blockKey][]byte),
+		modified: make(map[domain.TopicName]map[blockKey]time.Time),
+		now:      time.Now,
+	}
+}
+
+// touch records that a block changed now.
+func (s *Store) touch(ref driven.BlockRef) {
+	times, exists := s.modified[ref.Topic]
+	if !exists {
+		times = make(map[blockKey]time.Time)
+		s.modified[ref.Topic] = times
+	}
+	times[keyOf(ref)] = s.now()
 }
 
 func (s *Store) Topics() ([]domain.TopicName, error) {
@@ -61,7 +79,8 @@ func (s *Store) List(topic domain.TopicName, kind driven.BlockKind) ([]driven.Bl
 		if key.kind != kind {
 			continue
 		}
-		blocks = append(blocks, driven.Block{Block: key.block, Size: int64(len(data))})
+		blocks = append(blocks, driven.Block{Block: key.block, Size: int64(len(data)),
+			Modified: s.modified[topic][key]})
 	}
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i].Block < blocks[j].Block })
 	return blocks, nil
@@ -79,7 +98,8 @@ func (s *Store) Append(ref driven.BlockRef, data []byte) (driven.Block, error) {
 	// appending only ever writes past the end of the block, so a reader opened earlier
 	// keeps reading the bytes it was given
 	blocks[key] = append(blocks[key], data...)
-	return driven.Block{Block: ref.Block, Size: int64(len(blocks[key]))}, nil
+	s.touch(ref)
+	return driven.Block{Block: ref.Block, Size: int64(len(blocks[key])), Modified: s.modified[ref.Topic][key]}, nil
 }
 
 func (s *Store) Open(ref driven.BlockRef, byteOffset int64) (io.ReadCloser, error) {
@@ -110,6 +130,7 @@ func (s *Store) Truncate(ref driven.BlockRef, size int64) error {
 	}
 	// a copy, so later appends cannot overwrite bytes a reader already holds
 	s.topics[ref.Topic][keyOf(ref)] = append([]byte(nil), data[:size]...)
+	s.touch(ref)
 	return nil
 }
 
@@ -124,6 +145,7 @@ func (s *Store) Remove(ref driven.BlockRef) error {
 		return driven.ErrBlockNotFound
 	}
 	delete(blocks, keyOf(ref))
+	delete(s.modified[ref.Topic], keyOf(ref))
 	return nil
 }
 

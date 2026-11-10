@@ -18,6 +18,7 @@ bearing.
 - [10. The index](#10-the-index)
 - [11. Recovery](#11-recovery)
 - [12. Indexing without timers](#12-indexing-without-timers)
+- [12a. Retention](#12a-retention)
 - [13. Compression](#13-compression)
 - [14. Composition roots](#14-composition-roots)
 - [15. Concurrency and shutdown](#15-concurrency-and-shutdown)
@@ -309,6 +310,14 @@ The contract that matters most:
 
 Implementations must be safe for concurrent use.
 
+**`Block.Modified`** is when a block was last appended to or truncated — for a log block that
+is no longer the head, when its last entry was written. Retention (§12a) deletes by it. A
+store that cannot tell reports zero, and a block of unknown age is never deleted for its age:
+`filestore` takes it from the file, `memstore` records it on append and truncate, and
+`flashstore` reports zero, since tracking it would cost a write per append on a device where
+writes are what wears out. The conformance suite checks that a store either tells, and tells
+the time of the last change, or says zero everywhere.
+
 ### 6.3 `driven.Syncable` — optional durability
 
 ```go
@@ -438,6 +447,8 @@ Indexing is started by the write that dirtied the index (§12) and never blocks 
 Read(params)
   └─ snapshot()                                    ── under t.mu.RLock, copies block lists
        └─ read()
+            ├─ From before the first block: ErrOffsetTooOld, or the first block's offset
+            │  if FromEarliest (§12a)
             ├─ end boundary = the durable offset, not NextOffset, taken once (§9)
             ├─ find the block containing From
             ├─ index.FindNearestByteOffset(From)   ── sort.Search, the pair at or before From
@@ -689,6 +700,39 @@ This replaced a ten-second ticker in `manager.NewLogTopicsManager` that swept ev
 topic to catch work its exclusion flag had dropped. The topic now takes that work itself, so
 the core starts no goroutine that outlives the call which made it, and an embedded build
 carries no timer it did not ask for.
+
+## 12a. Retention
+
+A topic would grow forever, so `Topic.Retain(policy, now)` deletes **whole log blocks, oldest
+first, and never the head**. `RetentionPolicy` has two limits, either of which deletes: a block
+whose `Modified` is older than `MaxAge`, and the oldest blocks while the topic's log blocks
+hold more than `MaxBytes`. It takes `now` as an argument, so the core reads no clock.
+
+- **Only a prefix is ever removed**, so the offsets left are contiguous. A young block in
+  front of an old one stops the run; the old one waits.
+- **The order is: block lists, then log block, then its index.** The lists change first, under
+  `Topic.mu`, which indexing and writing take as well, so neither can be part way through a
+  block being removed. A crash between the log and its index leaves an index with no log;
+  `LoadOrCreate` ignores it, logs a warning and removes it (`orphanIndexes`), which keeps the
+  index list aligned with the log list the way §10 needs.
+- **Readers are never handed a partial block.** A read starting before the first block gets
+  `domain.ErrOffsetTooOld`, an `*OffsetTooOldError` naming the earliest offset still there;
+  `ReadParams.FromEarliest` starts there instead. A reader on an older snapshot that reaches a
+  removed block gets the same error, not a silent skip to the block after it. A block already
+  open stays readable.
+- **A pending lenient flush may name a removed block**, and skips it: retention never removes
+  the head, and a block stops being the head only once the rollover barrier (§9.4) has synced
+  it.
+- `LogTopicsManager.Retain(policy func(topic) RetentionPolicy, now)` applies it to every topic
+  in the store, and a read-only manager deletes nothing.
+
+Policy is the composition root's. `wiring` reads `--retainAge` and `--retainBytes` and a JSON
+settings file — `<root>/ibsen.json` by default, so settings travel with the data, or
+`--config` — with per-topic overrides that replace the global limits for that topic. The file
+is read with the standard library, refuses unknown keys and bad values at startup, and is never
+written. The server runs retention on a ticker (`DefaultRetentionInterval`, a minute), stopped
+on shutdown; `OpenLocal` applies it once when a writable open closes, so `ibsen append` keeps a
+directory within its limits; the embedded root starts nothing and offers `Log.Retain`.
 
 ## 13. Compression
 
@@ -1043,3 +1087,5 @@ The rules that must not be broken, collected:
 14. A write is acknowledged only once its block's name, and its topic's, are durable too.
 15. A read runs to one durable boundary, taken when it begins.
 16. A writable store reads a head block from the media, not the cache, before recovering it.
+17. Retention removes only a prefix of whole log blocks, never the head; the log block before
+    its index; and a reader of a removed offset is told so, never skipped ahead.

@@ -19,6 +19,9 @@ type ReadParams struct {
 	BatchSize uint32
 	// Cancel stops the read when closed; nil never cancels.
 	Cancel <-chan struct{}
+	// FromEarliest starts at the earliest offset still retained when From is older than it.
+	// Without it such a read fails with domain.ErrOffsetTooOld, which names that offset.
+	FromEarliest bool
 }
 
 // LogManager is the driving port: the whole of what a log server offers.

@@ -279,6 +279,10 @@ type CatParams struct {
 	PollInterval time.Duration
 	// Cancel stops the read when closed; nil never cancels.
 	Cancel <-chan struct{}
+	// FromEarliest starts at the earliest offset still retained when From is older than it,
+	// instead of failing with domain.ErrOffsetTooOld. It applies to where the read starts
+	// only: a follow whose next block is deleted under it is told so.
+	FromEarliest bool
 }
 
 // Cat writes the topic's entries to out and returns the offset after the last one written,
@@ -308,6 +312,7 @@ func Cat(log driver.LogManager, topic domain.TopicName, out io.Writer, params Ca
 	from := params.From
 	for {
 		sentUntil, readErr, writeErr := catOnce(log, topic, writer, from, params)
+		params.FromEarliest = false
 		from = sentUntil
 		if writeErr != nil {
 			return from, writeErr
@@ -360,12 +365,13 @@ func catOnce(log driver.LogManager, topic domain.TopicName, out *bufio.Writer, f
 	readDone := make(chan error, 1)
 	go func() {
 		readDone <- log.Read(driver.ReadParams{
-			TopicName: topic,
-			From:      from,
-			BatchSize: params.BatchSize,
-			LogChan:   logChan,
-			Wg:        &wg,
-			Cancel:    cancel,
+			TopicName:    topic,
+			From:         from,
+			BatchSize:    params.BatchSize,
+			LogChan:      logChan,
+			Wg:           &wg,
+			Cancel:       cancel,
+			FromEarliest: params.FromEarliest,
 		})
 		close(logChan)
 	}()

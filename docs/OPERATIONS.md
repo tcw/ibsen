@@ -7,6 +7,7 @@ every promise here is in [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 - [Configuration](#configuration)
 - [Durability](#durability)
+- [Retention](#retention)
 - [Compression](#compression)
 - [Read-only mode](#read-only-mode)
 - [One writer per directory](#one-writer-per-directory)
@@ -39,6 +40,9 @@ Every server flag has an environment variable, so containers need no command lin
 | `--compression` | `IBSEN_COMPRESSION` | `zstd` | codec for new frames: `zstd` or `none` |
 | `--compressionLevel` | `IBSEN_COMPRESSION_LEVEL` | `default` | `fastest`, `default`, `better`, `best` |
 | `-o, --readOnly` | `IBSEN_READ_ONLY` | `false` | serve a directory without changing a byte of it |
+| `--retainAge` | `IBSEN_RETAIN_AGE` | *(unset)* | delete whole blocks older than this, such as `168h` or `7d`; see [Retention](#retention) |
+| `--retainBytes` | `IBSEN_RETAIN_BYTES` | *(unset)* | keep each topic to about this size, such as `10GB` or `512MiB` |
+| `--config` | `IBSEN_CONFIG` | `<rootDirectory>/ibsen.json` | settings file with per-topic overrides |
 | `--lock` | `IBSEN_LOCK` | `auto` | single-writer lock: `auto`, `flock`, `file` or `none`; see [Choosing a lock](#choosing-a-lock) |
 | `-e, --OTELExporter` | | | OpenTelemetry collector address, e.g. `0.0.0.0:4317` |
 | `--certKey` / `--privateKey` | | | TLS for gRPC |
@@ -144,6 +148,64 @@ succeeds without writing what the failed one dropped, and the next write would b
 behind a hole. On restart the head block is read from the disk rather than the page cache (on
 Linux), so recovery sees the hole and cuts there. A failing fsync usually means failing
 storage: look at the disk before you restart.
+
+## Retention
+
+Without retention a log keeps everything, forever. Retention deletes a topic's oldest data in
+whole blocks — the files a topic is stored in, each up to `--maxBlockSize` — once it passes an
+age, a size, or both:
+
+```shell
+ibsen server -d /srv/ibsen --retainAge 7d          # keep a week
+ibsen server -d /srv/ibsen --retainBytes 10GB      # keep about 10 GB per topic
+ibsen server -d /srv/ibsen --retainAge 30d --retainBytes 50GB   # whichever comes first
+```
+
+- **Whole blocks, oldest first.** A block goes once its newest entry is older than
+  `--retainAge`, or while the topic holds more than `--retainBytes`. So a topic holds a little
+  more than the limit says — up to one block more — and never less than its newest block,
+  which is **never deleted**, even when it alone is over the limit.
+- **When.** A server checks every minute. `ibsen append` applies it once, when it finishes.
+  `ibsen cat` and a `--readOnly` server never delete anything.
+- **Sizes** are `10GB`, `500MB` (powers of 1000) or `512MiB`, `2GiB` (powers of 1024), or a
+  plain number of bytes. **Ages** are `168h`, `90m` or `7d`. Unset, or `0`, is no limit.
+
+### Per-topic settings
+
+Put an `ibsen.json` in the data directory, so the settings travel with the data and the
+server and `ibsen append` read the same file. `--config` (or `IBSEN_CONFIG`) points
+elsewhere, for example at a mounted Kubernetes ConfigMap:
+
+```json
+{
+  "topics": {
+    "audit":   { "retainAge": "720h" },
+    "metrics": { "retainBytes": "50GB" }
+  }
+}
+```
+
+A topic listed here gets exactly what its entry says, **instead of** the global flags: above,
+`audit` keeps thirty days however large it grows, and `metrics` keeps 50 GB however old.
+Topics not listed get the flags. Unknown keys and values that do not parse stop Ibsen at
+startup with a message saying which, rather than being ignored. Ibsen only ever reads the
+file.
+
+### What a reader sees
+
+A reader asking for an offset that has been deleted gets an error naming the earliest offset
+still there — `OUT_OF_RANGE` over gRPC, and from `ibsen cat`:
+
+```
+ibsen: offset 0 is no longer retained; the earliest available is 290000, which --fromEarliest starts from
+```
+
+`ibsen cat topic` with no offset starts at the earliest retained entry by itself. With an
+offset, `--fromEarliest` (or `fromEarliest` in the gRPC read) starts at the earliest when the
+one asked for is gone. A reader that is following the log and falls so far behind that the
+block it needs next is deleted is told the same thing, rather than skipped ahead, so it knows
+it missed something. [The user guide](USER_GUIDE.md#starting-from-the-earliest-offset) has the
+reader's side.
 
 ## Compression
 

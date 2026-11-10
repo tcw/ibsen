@@ -402,7 +402,14 @@ func (f *flusher) syncBlocks(batch *pendingFlush) error {
 	})
 	var firstErr error
 	for _, ref := range refs {
-		if _, err := driven.Sync(f.store, ref); err != nil && firstErr == nil {
+		_, err := driven.Sync(f.store, ref)
+		if errors.Is(err, driven.ErrBlockNotFound) {
+			// retention removed it since it joined the batch. Retention never removes the
+			// head, and a block stops being the head only once the rollover barrier has
+			// synced it, so there was nothing left of it to sync
+			continue
+		}
+		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

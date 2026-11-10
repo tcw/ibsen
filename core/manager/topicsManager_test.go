@@ -276,3 +276,59 @@ func TestManager_indexIsCompleteOnceWritesStop(t *testing.T) {
 		t.Errorf("the index holds %d pairs with no sweep to finish it, want 3", pairs)
 	}
 }
+
+func TestManager_readOnlyRetainsEverything(t *testing.T) {
+	root := newTestRoot(t)
+	writer, err := NewLogTopicsManager(LogTopicManagerParams{Store: filestore.NewOS(root.path), MaxBlockSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		writeTopic(t, &writer, "topic", i, 1)
+	}
+	writer.Close()
+
+	reader, err := NewLogTopicsManager(LogTopicManagerParams{
+		Store: filestore.New(filestore.ReadOnly{FS: filestore.OS{}}, root.path), MaxBlockSize: 1, ReadOnly: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { reader.Close() })
+	everything := func(domain.TopicName) topic.RetentionPolicy { return topic.RetentionPolicy{MaxBytes: 1} }
+	if err := reader.Retain(everything, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	blocks, err := filestore.NewOS(root.path).List("topic", driven.Log)
+	if err != nil || len(blocks) != 4 {
+		t.Fatalf("a read-only manager left %d blocks, %v; want all 4", len(blocks), err)
+	}
+}
+
+func TestManager_retainAppliesEachTopicsPolicy(t *testing.T) {
+	root := newTestRoot(t)
+	m, err := NewLogTopicsManager(LogTopicManagerParams{Store: filestore.NewOS(root.path), MaxBlockSize: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { m.Close() })
+	for i := 0; i < 4; i++ {
+		writeTopic(t, &m, "kept", i, 1)
+		writeTopic(t, &m, "trimmed", i, 1)
+	}
+	policy := func(name domain.TopicName) topic.RetentionPolicy {
+		if name == "trimmed" {
+			return topic.RetentionPolicy{MaxBytes: 1}
+		}
+		return topic.RetentionPolicy{}
+	}
+	if err := m.Retain(policy, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[domain.TopicName]int{"kept": 4, "trimmed": 1} {
+		blocks, _ := filestore.NewOS(root.path).List(name, driven.Log)
+		if len(blocks) != want {
+			t.Errorf("%s has %d blocks, want %d", name, len(blocks), want)
+		}
+	}
+}

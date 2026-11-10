@@ -85,13 +85,21 @@ type IbsenServer struct {
 	// is appended and flushes every FlushInterval, from a ticker this server owns; strict
 	// acknowledges a write once its flush has returned, and FlushEntries and FlushInterval
 	// keep their meaning above. Readers only ever see what is durable, either way.
-	FlushMode        string
-	OTELExporterAddr string
-	GRPCPrivateKey   string
-	GRPCCertKey      string
-	CpuProfile       string
-	MemProfile       string
-	cpuProfileFile   *os.File
+	FlushMode string
+	// RetainAge and RetainBytes are the global retention limits, as the flags give them
+	// ("168h", "7d"; "10GB", "512MiB"); empty keeps everything. ConfigPath names the settings
+	// file with per-topic overrides; empty means <root>/ibsen.json, if it is there.
+	RetainAge   string
+	RetainBytes string
+	ConfigPath  string
+	// RetentionInterval is how often retention runs; zero means DefaultRetentionInterval.
+	RetentionInterval time.Duration
+	OTELExporterAddr  string
+	GRPCPrivateKey    string
+	GRPCCertKey       string
+	CpuProfile        string
+	MemProfile        string
+	cpuProfileFile    *os.File
 	// mu guards topicsManager, grpcServer and the lifecycle channels, which Start sets while
 	// a shutdown on another goroutine may read them
 	mu            sync.Mutex
@@ -99,10 +107,12 @@ type IbsenServer struct {
 	topicsManager *manager.LogTopicsManager
 	// stopFlushing stops the lenient flush ticker; nil when none runs
 	stopFlushing func()
-	grpcServer   *grpcapi.IbsenGrpcServer
-	shutdownOnce sync.Once
-	stopping     chan struct{} // closed when a shutdown begins
-	stopped      chan struct{} // closed when the shutdown has finished
+	// stopRetaining stops the retention ticker; nil when none runs
+	stopRetaining func()
+	grpcServer    *grpcapi.IbsenGrpcServer
+	shutdownOnce  sync.Once
+	stopping      chan struct{} // closed when a shutdown begins
+	stopped       chan struct{} // closed when the shutdown has finished
 }
 
 // ErrUnknownCompression is returned by Start for a codec name it does not have an adapter
@@ -175,6 +185,15 @@ func (ibs *IbsenServer) resolveCodecs() error {
 	return nil
 }
 
+// retention is what this server keeps. In-memory mode has no data directory to hold a
+// settings file, so only the flags apply there.
+func (ibs *IbsenServer) retention() (Retention, error) {
+	if ibs.InMemory && ibs.ConfigPath == "" {
+		return GlobalRetention(ibs.RetainAge, ibs.RetainBytes)
+	}
+	return LoadRetention(ibs.RootPath, ibs.ConfigPath, ibs.RetainAge, ibs.RetainBytes)
+}
+
 // writeLockLost is what this server does when it can no longer prove it holds the single
 // writer lock: it stops, now. Another instance may already have claimed the lease and be
 // writing, and two writers would corrupt the log.
@@ -228,6 +247,10 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	}
 	// refused before the lock is taken: a mode nobody asked for is not worth fencing for
 	flushMode, flushInterval, err := resolveFlushMode(ibs.FlushMode, ibs.FlushInterval)
+	if err != nil {
+		return err
+	}
+	retention, err := ibs.retention()
 	if err != nil {
 		return err
 	}
@@ -296,6 +319,14 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		log.Info().Msgf("flush mode lenient: acknowledging writes once appended, fsyncing every %s", flushInterval)
 	} else {
 		log.Info().Msgf("flush mode %s", flushMode)
+	}
+	if !retention.Keeps() && !ibs.Readonly {
+		interval := ibs.RetentionInterval
+		if interval <= 0 {
+			interval = DefaultRetentionInterval
+		}
+		ibs.stopRetaining = startRetention(&topicsManager, retention, interval)
+		log.Info().Msgf("retention: checking every %s", interval)
 	}
 	ibs.mu.Unlock()
 	err = ibs.startGRPCServer(listener, &topicsManager)
@@ -408,7 +439,11 @@ func (ibs *IbsenServer) shutdown() {
 	ibs.mu.Lock()
 	topicsManager := ibs.topicsManager
 	stopFlushing := ibs.stopFlushing
+	stopRetaining := ibs.stopRetaining
 	ibs.mu.Unlock()
+	if stopRetaining != nil {
+		stopRetaining()
+	}
 	if stopFlushing != nil {
 		stopFlushing()
 	}

@@ -109,6 +109,35 @@ func (l *LogTopicsManager) Close() error {
 	return first
 }
 
+// Retain applies retention to every topic in the store, loading those not loaded yet, and
+// returns the first error; a topic that fails does not stop the others. policy says what to
+// keep of each topic. now is the caller's clock, since the core reads none. A read-only manager
+// deletes nothing.
+func (l *LogTopicsManager) Retain(policy func(domain.TopicName) topic.RetentionPolicy, now time.Time) error {
+	if l.Params.ReadOnly {
+		return nil
+	}
+	if err := l.begin(); err != nil {
+		return err
+	}
+	defer l.state.requests.Done()
+	var first error
+	for _, name := range l.List() {
+		chosen := policy(name)
+		if chosen.Keeps() {
+			continue
+		}
+		loaded, err := l.getOrCreateTopic(name)
+		if err == nil {
+			_, err = loaded.Retain(chosen, now)
+		}
+		if err != nil && first == nil {
+			first = errore.WrapWithContextF(err, "unable to apply retention to topic %s", name)
+		}
+	}
+	return first
+}
+
 // Flush makes every entry appended to any loaded topic before the call durable, and so
 // readable, and returns the first error. Every topic is flushed even when one fails, since a
 // failure stops only its own topic.
@@ -163,11 +192,12 @@ func (l *LogTopicsManager) Read(params driver.ReadParams) error {
 	}
 	readFrom := params.From
 	return loaded.Read(domain.ReadLogParams{
-		LogChan:   params.LogChan,
-		Wg:        params.Wg,
-		From:      readFrom,
-		BatchSize: params.BatchSize,
-		Cancel:    params.Cancel,
+		LogChan:      params.LogChan,
+		Wg:           params.Wg,
+		From:         readFrom,
+		BatchSize:    params.BatchSize,
+		Cancel:       params.Cancel,
+		FromEarliest: params.FromEarliest,
 	})
 }
 

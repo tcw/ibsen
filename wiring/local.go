@@ -22,9 +22,11 @@ import (
 // tell it apart from the log a server holds.
 type LocalLog struct {
 	*embedded.Log
-	lock driven.SingleIbsenWriterLock
-	zstd *zstdcodec.Codec
-	root string
+	lock      driven.SingleIbsenWriterLock
+	zstd      *zstdcodec.Codec
+	root      string
+	retention Retention
+	readOnly  bool
 }
 
 // LocalParams is what opening a data directory takes. Everything but RootPath has a working
@@ -65,6 +67,11 @@ type LocalParams struct {
 	LockMode string
 	// Logger is optional; nil logs through zerolog, like the server.
 	Logger driven.Logger
+	// RetainAge, RetainBytes and ConfigPath are retention, as for the server. A writable open
+	// applies it once, when it is closed; a read-only one reads the file but deletes nothing.
+	RetainAge   string
+	RetainBytes string
+	ConfigPath  string
 }
 
 // ErrRootNotFound is returned by OpenLocal for a data directory that is not there. It is a
@@ -90,6 +97,10 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 	}
 
 	flushMode, flushInterval, err := resolveFlushMode(params.FlushMode, params.FlushInterval)
+	if err != nil {
+		return nil, err
+	}
+	retention, err := LoadRetention(params.RootPath, params.ConfigPath, params.RetainAge, params.RetainBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +159,8 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 		}
 		return nil, err
 	}
-	return &LocalLog{Log: opened, lock: lock, zstd: zstd, root: params.RootPath}, nil
+	return &LocalLog{Log: opened, lock: lock, zstd: zstd, root: params.RootPath,
+		retention: retention, readOnly: params.ReadOnly}, nil
 }
 
 // localStore is where the bytes go: the filesystem adapter, read-only or not.
@@ -165,6 +177,11 @@ func localStore(params LocalParams) driven.BlockStore {
 // a frame; then the lease, once nothing will write again. It returns the last flush's error,
 // which in lenient mode is the difference between a clean exit and lost writes.
 func (l *LocalLog) Close() error {
+	if !l.readOnly && !l.retention.Keeps() {
+		if err := l.Log.Retain(l.retention.For, time.Now()); err != nil {
+			logRetentionFailure(err)
+		}
+	}
 	err := l.Log.Close()
 	if l.zstd != nil {
 		l.zstd.Close()

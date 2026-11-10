@@ -27,6 +27,9 @@ message ReadParams {
   uint64 offset = 2;
   uint32 batchSize = 3;
   bool stopOnCompletion = 4;
+  // start at the earliest offset still retained when offset is older than it; without it
+  // such a read fails with OUT_OF_RANGE, naming the earliest offset
+  bool fromEarliest = 5;
 }
 
 message InputEntries {

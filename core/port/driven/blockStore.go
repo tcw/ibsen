@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/tcw/ibsen/core/domain"
 )
@@ -27,7 +28,8 @@ type BlockStore interface {
 	CreateTopic(topic domain.TopicName) (created bool, err error)
 
 	// List returns the blocks of one kind held by a topic, ordered by block, each with the
-	// number of bytes it currently holds. An unknown topic has no blocks and is not an error.
+	// number of bytes it currently holds and, where the store can tell, when it last changed.
+	// An unknown topic has no blocks and is not an error.
 	List(topic domain.TopicName, kind BlockKind) ([]Block, error)
 
 	// Append adds data to the end of a block, creating the block, and the topic, if needed.
@@ -109,10 +111,14 @@ func IndexRef(topic domain.TopicName, block domain.IndexBlock) BlockRef {
 	return BlockRef{Topic: topic, Kind: Index, Block: uint64(block)}
 }
 
-// Block is a block and the number of bytes it holds.
+// Block is a block, the number of bytes it holds, and when it last changed.
 type Block struct {
 	Block uint64
 	Size  int64
+	// Modified is when the block was last appended to or truncated: for a log block that is
+	// not the head, when its last entry was written. It is zero when the store cannot tell,
+	// and a block whose store cannot tell is never removed for its age.
+	Modified time.Time
 }
 
 var (

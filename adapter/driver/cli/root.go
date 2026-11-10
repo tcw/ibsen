@@ -36,6 +36,10 @@ var (
 	readOnly                    bool
 	rootDirectory               string
 	lockMode                    string
+	retainAge                   string
+	retainBytes                 string
+	configPath                  string
+	clientFromEarliest          bool
 	benchEntiesByteSize         int
 	benchEntiesInEachBatchWrite int
 	benchWriteBatches           int
@@ -111,6 +115,9 @@ var (
 				FlushInterval:    time.Duration(flushIntervalMs) * time.Millisecond,
 				FlushMode:        flushMode,
 				LockMode:         lockMode,
+				RetainAge:        retainAge,
+				RetainBytes:      retainBytes,
+				ConfigPath:       configPath,
 				OTELExporterAddr: OTELExporterAddr,
 				GRPCCertKey:      AbsOrEmpty(certKey),
 				GRPCPrivateKey:   AbsOrEmpty(privateKey),
@@ -312,7 +319,7 @@ var (
 				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
 			}
 			defer client.Close()
-			err = client.Read(topic, offset, batchSize)
+			err = client.Read(topic, offset, batchSize, clientFromEarliest)
 			if err != nil {
 				log.Fatal().Err(err).Msgf("unable to read topic %s", topic)
 			}
@@ -337,6 +344,12 @@ func validateFlush(mode string, intervalMs int) error {
 	}
 	return nil
 }
+
+const (
+	retainAgeHelp   = "Delete whole blocks whose last entry is older than this, such as 168h or 7d; never the newest block. Unset keeps everything"
+	retainBytesHelp = "Delete the oldest whole blocks of a topic until it holds at most this, such as 10GB or 512MiB; never the newest block. Unset keeps everything"
+	configHelp      = "Settings file with per-topic overrides; default <rootDirectory>/ibsen.json if it is there"
+)
 
 // lockFlagHelp is --lock's help, shared by every command that writes.
 const lockFlagHelp = "Single-writer lock on the data directory: auto (a kernel lock where it is guaranteed, the lease file elsewhere), flock (a kernel lock, or refuse to start), file (the renewed lease file) or none"
@@ -454,6 +467,9 @@ func init() {
 	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
 	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
 	lockMode = getenv("IBSEN_LOCK", wiring.DefaultLock)
+	retainAge = getenv("IBSEN_RETAIN_AGE", "")
+	retainBytes = getenv("IBSEN_RETAIN_BYTES", "")
+	configPath = getenv("IBSEN_CONFIG", "")
 
 	rootCmd.PersistentFlags().IntVarP(&port, "port", "p", port, "config file (default is current directory)")
 	rootCmd.PersistentFlags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
@@ -475,9 +491,13 @@ func init() {
 	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
 	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
 	cmdServer.Flags().StringVarP(&lockMode, "lock", "", lockMode, lockFlagHelp)
+	cmdServer.Flags().StringVarP(&retainAge, "retainAge", "", retainAge, retainAgeHelp)
+	cmdServer.Flags().StringVarP(&retainBytes, "retainBytes", "", retainBytes, retainBytesHelp)
+	cmdServer.Flags().StringVarP(&configPath, "config", "", configPath, configHelp)
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")
 
+	cmdClientRead.Flags().BoolVarP(&clientFromEarliest, "fromEarliest", "", false, "Start at the earliest retained offset if the one given has been deleted by retention, instead of failing")
 	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "byteSize", "", 100, "Entry byte size in bench")
 	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatchWrite, "batchSize", "", 1000, "Entries in each batch in bench")
 	cmdClientBench.Flags().IntVarP(&benchWriteBatches, "bwb", "", 1000, "Write in batches of")
@@ -498,6 +518,9 @@ func init() {
 	cmdAppend.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
 	cmdAppend.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
 	cmdAppend.Flags().StringVarP(&lockMode, "lock", "", lockMode, lockFlagHelp)
+	cmdAppend.Flags().StringVarP(&retainAge, "retainAge", "", retainAge, retainAgeHelp+"; append applies it once, when it finishes")
+	cmdAppend.Flags().StringVarP(&retainBytes, "retainBytes", "", retainBytes, retainBytesHelp+"; append applies it once, when it finishes")
+	cmdAppend.Flags().StringVarP(&configPath, "config", "", configPath, configHelp)
 	cmdAppend.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
 
 	cmdCat.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to read")
@@ -505,6 +528,7 @@ func init() {
 	cmdCat.Flags().BoolVarP(&offsets, "offsets", "", false, "Prefix each entry with its offset and a tab; line framing only")
 	cmdCat.Flags().BoolVarP(&follow, "follow", "F", false, "Keep reading as entries are written instead of stopping at the end of the log")
 	cmdCat.Flags().IntVarP(&catBatchSize, "batchSize", "", stdio.DefaultCatBatchSize, "Entries asked for in one call")
+	cmdCat.Flags().BoolVarP(&fromEarliest, "fromEarliest", "", false, "Start at the earliest retained offset if the one given has been deleted by retention, instead of failing")
 	cmdCat.Flags().IntVarP(&pollMs, "pollMs", "", 1000, "Milliseconds between passes while following; each pass reopens the log, so a large head block wants a larger value")
 
 	cmdTopics.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to list")
