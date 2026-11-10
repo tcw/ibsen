@@ -31,6 +31,19 @@ builds:
       - goos: windows
         goarch: arm
 
+  # the same server with --lock k8s; a separate binary so ibsen does not carry client-go
+  - id: ibsen-k8s
+    main: ./cmd/ibsen-k8s
+    binary: ibsen-k8s
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/tcw/ibsen/adapter/driver/cli.Version={{ .Version }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
 archives:
   - id: ibsen
     ids: [ibsen]
@@ -42,6 +55,18 @@ archives:
     files:
       - README.md
       - docs/*
+
+  - id: ibsen-k8s
+    ids: [ibsen-k8s]
+    name_template: "ibsen-k8s_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - docs/*
+      - deploy/k8s/*
 
 checksum:
   name_template: checksums.txt
@@ -71,3 +96,20 @@ dockers_v2:
       org.opencontainers.image.source: https://github.com/tcw/ibsen
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.description: An append-only log that runs anywhere
+  - id: ibsen-k8s
+    ids: [ibsen-k8s]
+    dockerfile: Dockerfile.release
+    images:
+      - ghcr.io/tcw/ibsen-k8s
+    tags:
+      - "{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    build_args:
+      BINARY: ibsen-k8s
+    labels:
+      org.opencontainers.image.source: https://github.com/tcw/ibsen
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.description: An append-only log that runs anywhere, with the Kubernetes Lease lock

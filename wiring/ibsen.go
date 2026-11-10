@@ -308,7 +308,7 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 
 	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
 		ReadOnly:             ibs.Readonly,
-		Store:                ibs.blockStore(),
+		Store:                fenceIfHeld(ibs.blockStore(), ibs.Lock),
 		TTL:                  ibs.TTL,
 		MaxBlockSize:         ibs.MaxBlockSize,
 		IndexSparsity:        ibs.IndexSparsity,

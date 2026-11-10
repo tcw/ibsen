@@ -1150,7 +1150,8 @@ same version.
 What remains: the lease file is still what runs where a kernel lock is not guaranteed — on a
 network filesystem, which is exactly where two machines can share a directory — and the
 stall window of §16.1 is still open there. Across machines, the volume's own single-node
-attachment (§16.2) is the fence.
+attachment (§16.2) is the fence, and the Kubernetes Lease (§16.4) the one that holds at its
+edges.
 
 ### 16.2 Why there is no Raft
 
@@ -1181,6 +1182,45 @@ backstop rather than to build etcd integration.
   write. Getting it means an object store with `If-Match`, and object stores do not append,
   while `BlockStore` is built around appending to a growing block. That is a storage redesign,
   not a feature.
+
+### 16.4 The Kubernetes Lease, in a binary of its own
+
+For a StatefulSet on block storage, `adapter/driven/locking/k8slease` keeps the single-writer
+lock in a `coordination.k8s.io/v1` Lease, through client-go's `leaderelection`: acquire, renew
+every `RetryPeriod`, give up after `RenewDeadline` without a renewal; another holder may take
+over `LeaseDuration` after the last one. Kubernetes keeps Leases in etcd, so Ibsen runs no
+consensus and no etcd of its own.
+
+- **Losing it** — renewals failing past the deadline, or another holder in the record — goes
+  through `locking.LeaseLost`, the path the file lease uses, so `IbsenServer.writeLockLost`
+  **exits** rather than shutting down cleanly (§16.1).
+- **Releasing** writes an empty holder over the record last seen, an update the API server
+  refuses if anyone changed the Lease since; a holder that has lost the lease does not even try.
+  A Lease another holder owns is never overwritten or deleted. The tests pin this against
+  client-go's fake clientset with a reactor that enforces `resourceVersion`, which the fake on
+  its own does not — and without which a stale leader's blind renewal silently steals the
+  lease back.
+- **A fencing decorator** in `wiring` (`fence.go`) wraps the store whenever the lock can say it
+  is held (`Held() bool`): every `CreateTopic`, `Append`, `Truncate` and `Remove` is refused with
+  `wiring.ErrNotHolding` once the last renewal is older than the lease minus
+  `--leaseFenceMargin`, before another pod could take over. An append that lands as the lease
+  goes is rolled back, or reported wrapped in `ErrDirtyBlock` if it cannot be. It forwards
+  `Syncable` exactly when the store has it (invariant 8), and `StrayFiles`.
+- **A separate entry point.** `cmd/ibsen-k8s` imports `wiring/k8s`, which registers `--lock
+  k8s` and its flags through `wiring.RegisterLock` and `cli.ExtendServer`; nothing reachable from
+  `main.go` imports either, and rule 4 of `scripts/check-architecture.sh` fails if the `ibsen`
+  binary reaches any `k8s.io` package. The adapter uses the coordination client alone rather
+  than the full clientset, which took the binary from 51 MB to 41 MB; `leaderelection` itself
+  still links client-go's scheme. `ibsen` is 17 MB either way. The core and every port are
+  unchanged: no token is threaded through `AcquireLock` or `Append`.
+
+**What remains.** The fence stops a stalled writer by its own clock — a process that has not
+renewed for `LeaseDuration - FenceMargin` writes nothing — not by the storage refusing a stale
+token, because a filesystem cannot check a token (§16.3). A writer frozen in the middle of a
+`write(2)` that has already passed the fence's check can still complete that one write after
+the lease has gone; the margin is what makes that window shorter than the time another pod
+needs to take over, recover and write. A storage-enforced token remains the only thing that
+closes it outright.
 
 ## 17. Testing
 

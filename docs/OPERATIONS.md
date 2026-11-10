@@ -12,6 +12,7 @@ every promise here is in [ARCHITECTURE.md](../ARCHITECTURE.md).
 - [Read-only mode](#read-only-mode)
 - [One writer per directory](#one-writer-per-directory)
 - [Choosing a lock](#choosing-a-lock)
+- [Running on Kubernetes](#running-on-kubernetes)
 - [Docker](#docker)
 - [TLS](#tls)
 - [OpenTelemetry](#opentelemetry)
@@ -352,6 +353,7 @@ says which lock:
 | `flock` | a kernel lock (`flock(2)`), or refuse to start, naming the reason | you want to be told rather than fall back: a data directory that must be on local disk |
 | `file` | the lease file: a file renewed every few seconds, taken over by another instance once it stops being renewed | a directory several machines can see, such as a network filesystem; or matching older Ibsen versions on the same directory |
 | `none` | nothing | one process will ever open the directory, and you would rather not pay for a lock |
+| `k8s` | a Kubernetes Lease object, renewed every few seconds; only in the `ibsen-k8s` binary | running on Kubernetes, where the data directory is a volume that can move between machines; see [Running on Kubernetes](#running-on-kubernetes) |
 
 **Why the kernel lock is safer.** The kernel holds it for exactly as long as the process lives.
 A process that freezes for a minute still holds it, so nobody takes over while it is stalled,
@@ -373,6 +375,130 @@ volume's own single-node attachment is for on Kubernetes.
 **Mixed versions.** The kernel lock and the lease file see each other, but an Ibsen from before
 the kernel lock knows only the lease file and would read a kernel-locked directory as free
 after ten seconds. Run the same version on every instance that can reach one directory.
+
+## Running on Kubernetes
+
+Ibsen runs on Kubernetes as a **StatefulSet with one replica**, on a block-storage volume
+(EBS, Persistent Disk, Azure Disk, Ceph RBD, …). The volume keeps the data; Kubernetes moves
+the pod and its volume to another machine when one fails. Use the **`ibsen-k8s`** binary and
+image: it is `ibsen` with one more lock, `--lock k8s`, which keeps the single-writer lock in a
+Kubernetes **Lease**. (It is a separate binary because the Kubernetes client is large: 41 MB
+against 17 MB.)
+
+### Why one writer matters, and what a lease is
+
+Two Ibsen processes writing the same log would corrupt it. On one machine the kernel prevents
+that ([Choosing a lock](#choosing-a-lock)). On Kubernetes the two processes may be on two
+machines — an old pod on a node that stopped answering, and its replacement on a healthy one —
+and nothing on one machine can see the other.
+
+A **Lease** is a small named object in the Kubernetes API (`kubectl get lease`) that records
+who holds it and when they last renewed it. The Ibsen pod that holds it renews it every couple
+of seconds. If it stops renewing — it crashed, it froze, its node lost the network — then once
+the lease duration has passed with no renewal, another pod may take it over. Kubernetes keeps
+Leases in etcd, so there is no extra system to run: no etcd of your own, no consensus inside
+Ibsen.
+
+**If Ibsen loses its lease, it exits on purpose**, at once, without the clean shutdown — a clean
+shutdown flushes and writes, and a process that may no longer be the only writer must not
+write. Kubernetes restarts it, and the new process waits for the lease like any other. Writes
+stop even sooner: a few seconds before the lease could expire (`--leaseFenceMargin`), Ibsen
+refuses every write, so a frozen process that wakes up late writes nothing.
+
+**And the volume?** A ReadWriteOnce volume is attached to one node at a time, which already
+keeps two pods on different machines from writing it — most of the time. The edges are a node
+that stops answering, where an operator or the cloud may force-detach the volume, and a pod
+whose container outlives its node's view of it. The lease is the guarantee that holds at those
+edges: whoever writes, holds it.
+
+```mermaid
+sequenceDiagram
+    participant A as ibsen-0 (old pod)
+    participant L as Lease "ibsen"
+    participant B as ibsen-0 (new pod)
+    A->>L: acquire (holder = A)
+    loop every 2s
+        A->>L: renew
+    end
+    Note over A: stalls: frozen, or its node is cut off
+    Note over A: 10s without a renewal: stops renewing,<br/>and refuses every write (15s lease - 5s margin)
+    B->>L: try to acquire: held by A, wait
+    Note over L: 15s since A's last renewal: expired
+    B->>L: acquire (holder = B)
+    B->>B: recover the head block, serve
+    Note over A: wakes up: lease lost, exits
+```
+
+### Deploy it
+
+The manifests are in [`deploy/k8s`](../deploy/k8s): a ServiceAccount; a Role and RoleBinding
+that allow `get`, `create` and `update` on Leases in its own namespace and nothing else; a
+headless Service; and the StatefulSet, with a 20 GiB volume claim and the lease settings as
+environment variables.
+
+1. **Get the image.** Use the published one, `ghcr.io/tcw/ibsen-k8s:<version>`, or build your
+   own: `docker build -t my-registry/ibsen-k8s --build-arg BINARY=ibsen-k8s .`, push it, and
+   change `image:` in `statefulset.yaml`.
+2. **Pick a namespace**, and a storage class if your cluster has no default
+   (`storageClassName:` under `volumeClaimTemplates` in `statefulset.yaml`).
+3. **Apply:**
+
+   ```shell
+   kubectl create namespace logs
+   kubectl apply -k deploy/k8s -n logs
+   ```
+
+4. **Check it is up and holds the lease:**
+
+   ```shell
+   kubectl -n logs rollout status statefulset/ibsen
+   kubectl -n logs get lease ibsen
+   ```
+
+   ```
+   NAME    HOLDER    AGE
+   ibsen   ibsen-0   40s
+   ```
+
+5. **Talk to it** from inside the cluster at `ibsen.logs.svc:54321`, or from your machine:
+
+   ```shell
+   kubectl -n logs port-forward ibsen-0 54321:54321
+   printf 'hello\n' | ibsen client write greetings
+   ```
+
+The environment variables, each also a flag: `IBSEN_LOCK=k8s`, `IBSEN_LEASE_NAME` (default
+`ibsen`), `IBSEN_LEASE_NAMESPACE` (default the pod's, from `POD_NAMESPACE`),
+`IBSEN_LEASE_HOLDER` (default the pod's name, from `POD_NAME`), `IBSEN_LEASE_DURATION` (15s),
+`IBSEN_LEASE_RENEW_DEADLINE` (10s), `IBSEN_LEASE_RETRY_PERIOD` (2s), `IBSEN_LEASE_FENCE_MARGIN`
+(5s) and `IBSEN_LEASE_WAIT_TIMEOUT` (0, wait for as long as it takes). The manifest also sets
+`IBSEN_FLUSH_MODE=strict`, since a volume that moves between machines is where a power cut
+meets the log; remove it for the faster default ([Durability](#durability)).
+
+### Troubleshooting
+
+- **RBAC: `leases.coordination.k8s.io "ibsen" is forbidden`.** The pod's service account may
+  not touch Leases. Check the Role and RoleBinding are in the same namespace as the pod and name
+  its service account: `kubectl -n logs auth can-i update leases --as
+  system:serviceaccount:logs:ibsen`.
+- **`not running in a Kubernetes pod, or no service account mounted`.** `--lock k8s` only works
+  inside a pod; check `automountServiceAccountToken` is not turned off.
+- **A pod stuck waiting for the lease.** Its log says `the Kubernetes lease logs/ibsen is held
+  by <holder>; waiting for it`. Look at the holder: `kubectl -n logs get lease ibsen -o yaml`
+  shows `holderIdentity` and `renewTime`. If the holder is a pod that is still running — a
+  second replica, or a pod left on an unreachable node — that is the lease doing its job; scale
+  to one replica, or deal with the old pod. If the holder is gone and `renewTime` is not moving,
+  the lease expires after `leaseDurationSeconds` and the waiting pod takes over by itself. A
+  clean shutdown gives the lease up at once, so a rollout does not wait for it.
+- **Clock skew.** A pod judges another's lease by how long *it* has watched the lease go
+  unrenewed, not by the timestamps in it, so clocks on different nodes need not agree. What
+  matters is that a node's clock runs at the right speed; NTP takes care of that.
+- **The process exits with `lost the single writer lock`.** It could not renew within
+  `--leaseRenewDeadline`: the API server was unreachable, or slow, or the pod was starved of
+  CPU. Kubernetes restarts it. If it happens often, give the pod more CPU, or raise the
+  renew deadline and the lease duration together (the duration must stay longer).
+- **Inspect the lease** at any time: `kubectl -n logs get lease ibsen -o yaml`, or watch it
+  renew with `kubectl -n logs get lease ibsen -w`.
 
 ## Docker
 

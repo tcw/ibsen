@@ -149,7 +149,7 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 		logger = zerologger.New(log.Logger)
 	}
 	opened, err := embedded.Open(embedded.Params{
-		Store:                localStore(params),
+		Store:                fenceIfHeld(localStore(params), lock),
 		ReadOnly:             params.ReadOnly,
 		MaxBlockSize:         params.MaxBlockSize,
 		IndexSparsity:        params.IndexSparsity,

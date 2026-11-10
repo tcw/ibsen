@@ -180,7 +180,9 @@ log runs in your process with nothing else. See the
 [user guide](docs/USER_GUIDE.md#embed-it).
 
 The same log core runs on a microcontroller with a chip of flash and in a container on
-Kubernetes.
+Kubernetes. A writer locks its data directory so a second one cannot write it; [choosing a
+lock](docs/OPERATIONS.md#choosing-a-lock) says which lock fits where, including a Kubernetes
+Lease for a StatefulSet.
 
 ## What Ibsen doesn't do
 

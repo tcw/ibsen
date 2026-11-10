@@ -516,6 +516,13 @@ Done (step 45, spec 6; ARCHITECTURE §13.3).
 
 ## 7. Distribution
 
+Since step 48 (spec 2, ARCHITECTURE §16.4): `--lock k8s` in a separate binary, `cmd/ibsen-k8s`,
+holds the lock in a Kubernetes Lease through client-go `leaderelection`
+(`adapter/driven/locking/k8slease`, coordination client only), exits on loss through
+`LeaseLost`, and the store is fenced (`wiring/fence.go`) once a renewal is older than the lease
+minus `--leaseFenceMargin`. Manifests in `deploy/k8s`; `ibsen` links no `k8s.io` (architecture
+rule 4). What follows is the reasoning that still holds.
+
 - Don't build Raft. Run on replicated storage as a Kubernetes StatefulSet.
 - Keep single-writer safety with a fencing lease and monotonic token (likely etcd lease + mod-revision); storage rejects stale-token writes.
 - Coordination is an optional adapter, no-op locally, so embedded doesn't carry it. `adapter/driven/locking` is the seed; there is no `consensus/` package, the step-6 restructure removed it.
@@ -742,9 +749,13 @@ and how to read their failures, recipes, and which test holds which promise — 
 47. ~~`ibsen generate client go|java|python|typescript` and `ibsen generate proto`, from
     clients generated at build time and embedded (spec 8).~~
 
-Every step ships green. Steps 0 to 47 are done, one commit each.
+48. ~~The Kubernetes Lease lock, in the separate `ibsen-k8s` binary, with a fencing store
+    decorator in `wiring` (spec 2).~~
 
-Next, in the same one-change-at-a-time way: §7, which is untouched. The frame-bound default is settled —
+Every step ships green. Steps 0 to 48 are done, one commit each.
+
+Next, in the same one-change-at-a-time way: nothing planned. §7's storage-enforced token is
+the one open idea, and it needs a storage redesign. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
 
 ## 11. The log without a server

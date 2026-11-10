@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/tcw/ibsen/adapter/driver/stdio"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/topic"
@@ -390,7 +391,7 @@ const (
 )
 
 // lockFlagHelp is --lock's help, shared by every command that writes.
-const lockFlagHelp = "Single-writer lock on the data directory: auto (a kernel lock where it is guaranteed, the lease file elsewhere), flock (a kernel lock, or refuse to start), file (the renewed lease file) or none"
+const lockFlagHelp = "Single-writer lock on the data directory: auto (a kernel lock where it is guaranteed, the lease file elsewhere), flock (a kernel lock, or refuse to start), file (the renewed lease file) or none; ibsen-k8s adds k8s (a Kubernetes Lease)"
 
 // defaultReadBatchSize is how many entries a read asks for at a time when the caller does
 // not say.
@@ -479,6 +480,15 @@ func setLogLevel(quiet zerolog.Level) {
 	} else {
 		zerolog.SetGlobalLevel(quiet)
 	}
+}
+
+// ExtendServer lets a separate entry point add flags to the commands that take the write lock,
+// such as cmd/ibsen-k8s adding the Kubernetes lease's. Call it before Execute.
+func ExtendServer(add func(*pflag.FlagSet)) {
+	flags := pflag.NewFlagSet("extension", pflag.ContinueOnError)
+	add(flags)
+	cmdServer.Flags().AddFlagSet(flags)
+	cmdAppend.Flags().AddFlagSet(flags)
 }
 
 func Execute() {

@@ -27,8 +27,23 @@ const (
 // DefaultLock is what a deployment that says nothing gets.
 const DefaultLock = LockAuto
 
-// LockModes is every name --lock accepts, in the order the help lists them.
+// LockModes is every name --lock accepts, in the order the help lists them: the four every
+// build has, and any a separate entry point registered, such as k8s in ibsen-k8s.
 var LockModes = []string{LockAuto, LockFlock, LockFile, LockNone}
+
+// LockBuilder builds a lock a separate entry point brings, for the data directory root. onLost
+// is what to do when the lock is lost while held.
+type LockBuilder func(root string, onLost locking.LeaseLost) (driven.SingleIbsenWriterLock, error)
+
+var registered = map[string]LockBuilder{}
+
+// RegisterLock adds a --lock name. It is how cmd/ibsen-k8s adds the Kubernetes lease without
+// this package, and so the ibsen binary, importing client-go: the composition root that links
+// the adapter registers it. Call it before the command line is parsed.
+func RegisterLock(name string, build LockBuilder) {
+	registered[name] = build
+	LockModes = append(LockModes, name)
+}
 
 // ErrUnknownLock is returned for a --lock name with no adapter behind it. It is refused
 // rather than replaced, since a guess at how a log is guarded is the wrong kind of guess.
@@ -57,6 +72,9 @@ func buildWriteLock(mode, root string, onLost locking.LeaseLost) (driven.SingleI
 	case LockNone:
 		return driven.NoFileLock{}, nil
 	default:
+		if build, ok := registered[mode]; ok {
+			return build(root, onLost)
+		}
 		return nil, errore.WrapWithContextF(ErrUnknownLock, "%q is not one of %v", mode, LockModes)
 	}
 }
@@ -86,7 +104,7 @@ func acquireWriteLock(lock driven.SingleIbsenWriterLock, root string) error {
 		case errors.Is(err, flock.ErrNotGuaranteed):
 			return errore.WrapWithContextF(ErrLockNotGuaranteed, "%v", err)
 		default:
-			return errore.WrapWithContextF(err, "unable to acquire the single writer lock on path [%s]", root)
+			return errore.WrapWithContextF(ErrWriteLockUnavailable, "unable to acquire the single writer lock on path [%s]: %v", root, err)
 		}
 	}
 	if !lock.AcquireLock() {
@@ -160,3 +178,12 @@ func (a *autoLock) ReleaseLock() bool {
 
 // Chosen is the lock auto settled on, or nil before it is acquired.
 func (a *autoLock) Chosen() driven.SingleIbsenWriterLock { return a.chosen }
+
+// fenceIfHeld wraps store in a fence when lock can say whether it is still held: writes are
+// refused from the moment it cannot, before another instance could take over.
+func fenceIfHeld(store driven.BlockStore, lock driven.SingleIbsenWriterLock) driven.BlockStore {
+	if h, ok := lock.(holder); ok {
+		return fence(store, h.Held)
+	}
+	return store
+}

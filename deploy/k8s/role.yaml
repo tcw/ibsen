@@ -1,0 +1,10 @@
+# The only thing Ibsen asks of the API server: read, create and renew Lease objects in its own
+# namespace. Nothing cluster-wide.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ibsen-lease
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]

@@ -819,6 +819,9 @@ What the suite does not test, so nobody assumes it does:
 | `adapter/driven/compression/zstd/*_test.go` | L6 | the codec, and a topic through it |
 | `adapter/driven/locking/singleInstanceLock_test.go` | L6 | the file lease |
 | `adapter/driven/locking/flock/flock_test.go` | L6 | the kernel lock: a second process holding it (the test binary re-executed), release on death, a live lease file refused, the self-test, remote filesystems refused |
+| `adapter/driven/locking/k8slease/lease_test.go` | L6 | the Kubernetes lease against client-go's fake clientset, made to enforce `resourceVersion` as the API server does: acquire and renew, a live lease waited for and not taken, an expired one taken over, a loss reported and the lease not stolen back on release, release giving it up |
+| `wiring/fence_test.go` | L6 | the fencing decorator: writes refused once the lock is gone, `Syncable` forwarded exactly when the store has it, an append outliving the lock rolled back or marked dirty |
+| `wiring/k8s/k8s_test.go` | L6 | `--lock k8s` through `OpenLocal` against a fake cluster |
 | `wiring/writelock_test.go` | L6 | `--lock`: auto's choice and both fallbacks, explicit flock refusing with its reason, and the two adapters seeing each other |
 | `adapter/driven/logging/zerologger/zerologger_test.go` | L6 | the logging adapter |
 | `wiring/*_test.go`, `wiring/embedded/embedded_test.go` | L6 | the composition roots |

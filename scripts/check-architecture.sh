@@ -66,4 +66,12 @@ if [ -n "$crosswise" ]; then
 	fail "a driving adapter imports a driven adapter directly" "$crosswise"
 fi
 
+# 4. The ibsen binary links no Kubernetes client. The Kubernetes lease is a heavy dependency,
+#    linked only by cmd/ibsen-k8s through wiring/k8s; nothing reachable from main.go may import
+#    it, or every ibsen user pays for one deployment's lock.
+kube=$(go list -deps . | { grep '^k8s.io/' || true; })
+if [ -n "$kube" ]; then
+	fail "the ibsen binary reaches a k8s.io package; only cmd/ibsen-k8s may" $(echo "$kube" | head -5)
+fi
+
 exit $status

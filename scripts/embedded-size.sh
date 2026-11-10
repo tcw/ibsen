@@ -23,16 +23,19 @@ size() {
 }
 
 build server .
+build kube ./cmd/ibsen-k8s
 build embedded ./wiring/embedded/example
 
 server=$(size server)
+kube=$(size kube)
 embedded=$(size embedded)
 
 target="${GOOS:-$(go env GOOS)}/${GOARCH:-$(go env GOARCH)}"
 # awk rather than bc, which is not on every CI image
-awk -v target="$target" -v server="$server" -v embedded="$embedded" 'BEGIN {
+awk -v target="$target" -v server="$server" -v kube="$kube" -v embedded="$embedded" 'BEGIN {
 	printf "target        %s\n", target
-	printf "server        %8.2f MB  (gRPC, cobra, OTEL, zerolog, zstd)\n", server / 1048576
+	printf "server        %8.2f MB  ibsen: gRPC, cobra, OTEL, zerolog, zstd\n", server / 1048576
+	printf "ibsen-k8s     %8.2f MB  the same, and the Kubernetes client for --lock k8s\n", kube / 1048576
 	printf "embedded      %8.2f MB  (core + memstore, standard library only)\n", embedded / 1048576
 	printf "embedded is   %8.2fx smaller\n", server / embedded
 }'
