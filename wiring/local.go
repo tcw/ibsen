@@ -73,6 +73,9 @@ type LocalParams struct {
 	// CompressionDict and DictTrainBytes are as for the server.
 	CompressionDict string
 	DictTrainBytes  int64
+	// CompressMinBytes and AdaptiveCompression are as for the server.
+	CompressMinBytes    int
+	AdaptiveCompression bool
 	// RetainAge, RetainBytes and ConfigPath are retention, as for the server. A writable open
 	// applies it once, when it is closed; a read-only one reads the file but deletes nothing.
 	RetainAge   string
@@ -158,6 +161,8 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 		ProducerWindowBlocks: params.ProducerWindowBlocks,
 		Dictionaries:         dictionaries,
 		DictTrainBytes:       params.DictTrainBytes,
+		CompressMinBytes:     params.CompressMinBytes,
+		AdaptiveCompression:  params.AdaptiveCompression,
 		OnFlushError: func(err error) {
 			log.Error().Err(err).Msg("a periodic flush failed; the topic it failed on takes no more writes")
 		},

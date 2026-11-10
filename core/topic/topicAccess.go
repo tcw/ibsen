@@ -95,6 +95,8 @@ type Topic struct {
 	// read snapshots
 	dict  *dictState
 	dicts *dictionaries
+	// skip decides which frames are offered to the codec at all
+	skip compressSkip
 }
 
 // Params is what the core needs to open one topic: the driven store to keep its blocks in,
@@ -140,6 +142,14 @@ type Params struct {
 	// whatever this says.
 	Dictionaries   bool
 	DictTrainBytes int64
+	// CompressMinBytes is the smallest plain frame payload offered to the codec; a smaller
+	// one is stored plain without trying. Zero tries every frame. With a dictionary the
+	// threshold is three eighths of this, since a dictionary pays on smaller frames.
+	CompressMinBytes int
+	// AdaptiveCompression stops offering frames to the codec after AdaptiveMisses in a row
+	// were stored plain because compression did not pay, and tries again every
+	// AdaptiveProbeEvery frames.
+	AdaptiveCompression bool
 }
 
 func NewLogTopic(params Params) *Topic {
@@ -180,6 +190,7 @@ func NewLogTopic(params Params) *Topic {
 		dict = &dictState{codec: withDicts, trainBytes: trainBytes, rng: 0x9E3779B97F4A7C15}
 	}
 	return &Topic{
+		skip:                 compressSkip{minBytes: max(params.CompressMinBytes, 0), adaptive: params.AdaptiveCompression},
 		dict:                 dict,
 		dicts:                newDictionaries(params.Store, domain.TopicName(params.TopicName)),
 		ProducerWindowBlocks: window,
@@ -778,13 +789,22 @@ func (t *Topic) buildFrames(req WriteRequest) ([]byte, int, error) {
 			t.dict.frames++
 			t.dict.framedEntries += int64(inFrame)
 		}
-		if t.dict != nil && t.dict.current != nil {
+		withDictionary := t.dict != nil && t.dict.current != nil
+		tried := t.Codec.ID() != driven.CodecNone && t.skip.try(len(payload), withDictionary)
+		switch {
+		case !tried:
+			frames, err = logfmt.AppendFrameWith(frames, driven.NoCodec{}, header, payload)
+		case withDictionary:
 			frames, err = logfmt.AppendFrameDict(frames, t.dict.codec, *t.dict.current, header, payload)
 			if err == nil {
 				t.dict.noteFrameLocked(len(payload), len(frames)-before)
 			}
-		} else {
+		default:
 			frames, err = logfmt.AppendFrameWith(frames, t.Codec, header, payload)
+		}
+		if tried && err == nil {
+			// the codec byte, ninth of a header, says whether the attempt was kept
+			t.skip.tried(driven.CodecID(frames[before+8]) != driven.CodecNone)
 		}
 		if err != nil {
 			return err

@@ -39,6 +39,8 @@ Every server flag has an environment variable, so containers need no command lin
 | `--maxFrameBytes` | `IBSEN_MAX_FRAME_BYTES` | `1 MiB` | entry bytes that may share a frame, before compression |
 | `--compression` | `IBSEN_COMPRESSION` | `zstd` | codec for new frames: `zstd` or `none` |
 | `--compressionLevel` | `IBSEN_COMPRESSION_LEVEL` | `default` | `fastest`, `default`, `better`, `best` |
+| `--compressMinBytes` | `IBSEN_COMPRESS_MIN_BYTES` | `128` | frames smaller than this are stored without trying to compress them; `0` tries every frame |
+| `--adaptiveCompression` | `IBSEN_ADAPTIVE_COMPRESSION` | `true` | stop trying to compress a topic whose last 16 frames did not shrink, and try again every 64th |
 | `--compressionDict` | `IBSEN_COMPRESSION_DICT` | `auto` | train a zstd dictionary per topic (`auto`) or not (`off`); see [Dictionaries](#dictionaries) |
 | `--dictTrainBytes` | `IBSEN_DICT_TRAIN_BYTES` | `4MiB` | entry bytes a topic writes before its first dictionary is trained |
 | `-o, --readOnly` | `IBSEN_READ_ONLY` | `false` | serve a directory without changing a byte of it |
@@ -238,6 +240,24 @@ storage than this. Two cases want `--compression none`: entries that are already
 on incompressible payloads zstd measured 72 MB/s against 315 MB/s through the codec, for 10%
 — and readers that seek rather than stream, since a frame is decoded whole and a single-entry
 read at the default frame bound decodes 137 KB in 213 µs against 98 µs plain.
+
+### Not paying for compression that does not pay
+
+Ibsen keeps a frame's compressed form only when it is smaller, but the attempt costs CPU
+either way: five to fifteen times the cost of storing the bytes as they are. Two settings skip
+the attempt where it is unlikely to pay, and neither changes what is on disk or what a reader
+needs:
+
+- `--compressMinBytes` (128): a frame smaller than this is stored without trying. Below about
+  128 bytes zstd almost never shrinks anything. With a dictionary the topic uses three eighths
+  of it, since a dictionary pays on frames from about 48 bytes.
+- `--adaptiveCompression` (on): a topic whose last 16 frames did not shrink stops trying, and
+  tries every 64th frame in case its data changed. This is for entries that are already
+  compressed or encrypted.
+
+Measured on one-entry writes, this cut write time by a third to a half on both JSON and random
+entries, with the same bytes on disk; where compression pays, nothing changes. `--compressMinBytes 0
+--adaptiveCompression=false` tries every frame, as earlier versions did.
 
 ### Dictionaries
 

@@ -466,8 +466,11 @@ Done. Framing is step 17, the zstd adapter behind it step 18, and zstd is the de
   codec at all. Before the fallback it was 1.36, meaning compression actively cost bytes. The
   index also gets a pair only every sparsity frames, so a small frame costs header scanning
   too.
-- The CPU of a compression attempt that is then discarded is still paid; skipping it below a
-  size threshold would save that, and wants its own measurement.
+- The CPU of a compression attempt that is then discarded is no longer always paid (step 46,
+  spec 9B; ARCHITECTURE §13.4): measured at five to fifteen times storing the bytes,
+  `--compressMinBytes` (128; three eighths with a dictionary) and `--adaptiveCompression` (stop
+  after 16 misses, probe every 64th) skip it. One-entry writes cost a third to a half less,
+  ratios unchanged. Core zero values keep trying every frame.
 - **The default stays at 1000 entries per frame** (decided 2026-09-19). The table offered 100
   as the better all-round answer, and that was declined deliberately: reading forward through
   a large log is the workload this log is for, and sequential throughput is 403 MB/s at 1000
@@ -722,7 +725,10 @@ and how to read their failures, recipes, and which test holds which promise — 
 45. ~~Compression dictionaries, trained per topic off the write path and kept only where they
     pay (spec 6).~~
 
-Every step ships green. Steps 0 to 45 are done, one commit each.
+46. ~~Skip compression attempts below a size threshold and on topics where it keeps not
+    paying (spec 9B).~~
+
+Every step ships green. Steps 0 to 46 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: §7, which is untouched. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).

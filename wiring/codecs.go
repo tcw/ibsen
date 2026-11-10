@@ -75,6 +75,12 @@ func ReadCodecs() (driven.Codecs, func(), error) {
 	return codecs, zstd.Close, nil
 }
 
+// DefaultCompressMinBytes is the smallest frame the CLI offers to the codec, from
+// BenchmarkCompressionAttempt: on ~130-byte JSON events zstd keeps 2 frames in 200 at 128
+// bytes and 195 at 160, so below 128 an attempt is almost always thrown away. With a
+// dictionary the topic uses three eighths of it, 48 bytes, where a dictionary starts paying.
+const DefaultCompressMinBytes = 128
+
 // The values --compressionDict takes.
 const (
 	// DictAuto trains a dictionary per topic when the codec can use one.

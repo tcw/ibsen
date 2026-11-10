@@ -301,7 +301,13 @@ func TestDictionary_retentionKeepsWhatIsStillNamed(t *testing.T) {
 	if _, err := store.Append(driven.DictRef("t", 12345), []byte("not named by anything")); err != nil {
 		t.Fatal(err)
 	}
-	writeEvents(t, tp, "orders", written+2000, 2000, 10)
+	// retention looks for unused dictionaries when it removes blocks, so there must be some
+	for next := written + 2000; ; next += 500 {
+		writeEvents(t, tp, "orders", next, 500, 10)
+		if blocks, _ := store.List("t", driven.Log); len(blocks) >= 3 {
+			break
+		}
+	}
 	if _, err := tp.Retain(topic.RetentionPolicy{MaxBytes: 1}, time.Now()); err != nil {
 		t.Fatal(err)
 	}

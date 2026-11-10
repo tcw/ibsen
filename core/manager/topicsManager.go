@@ -45,6 +45,10 @@ type LogTopicManagerParams struct {
 	// DictTrainBytes of plain entries (zero means topic.DefaultDictTrainBytes).
 	Dictionaries   bool
 	DictTrainBytes int64
+	// CompressMinBytes and AdaptiveCompression decide which frames are offered to the codec
+	// at all; see topic.Params. The zero values try every frame.
+	CompressMinBytes    int
+	AdaptiveCompression bool
 	// FlushMode says when a write is acknowledged; the zero value is topic.FlushStrict. In
 	// topic.FlushLenient nothing is flushed until Flush is called, which is the composition
 	// root's job: the core starts no timer.
@@ -267,6 +271,8 @@ func (l *LogTopicsManager) loadOrCreateNewTopic(topicName domain.TopicName) (*to
 		ProducerWindowBlocks: l.Params.ProducerWindowBlocks,
 		Dictionaries:         l.Params.Dictionaries,
 		DictTrainBytes:       l.Params.DictTrainBytes,
+		CompressMinBytes:     l.Params.CompressMinBytes,
+		AdaptiveCompression:  l.Params.AdaptiveCompression,
 		Store:                l.Params.Store,
 		TopicName:            string(topicName),
 		MaxBlockSize:         l.Params.MaxBlockSize,

@@ -99,6 +99,11 @@ type IbsenServer struct {
 	// can use one, or "off"; DictTrainBytes is when, zero meaning the core default.
 	CompressionDict string
 	DictTrainBytes  int64
+	// CompressMinBytes and AdaptiveCompression decide which frames are offered to the codec
+	// at all. The zero values try every frame; the CLI's defaults are
+	// DefaultCompressMinBytes and true.
+	CompressMinBytes    int
+	AdaptiveCompression bool
 	// RetentionInterval is how often retention runs; zero means DefaultRetentionInterval.
 	RetentionInterval time.Duration
 	OTELExporterAddr  string
@@ -317,6 +322,8 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		ProducerWindowBlocks: ibs.ProducerWindowBlocks,
 		Dictionaries:         dictionaries,
 		DictTrainBytes:       ibs.DictTrainBytes,
+		CompressMinBytes:     ibs.CompressMinBytes,
+		AdaptiveCompression:  ibs.AdaptiveCompression,
 		Logger:               zerologger.New(log.Logger),
 	})
 	if err != nil {

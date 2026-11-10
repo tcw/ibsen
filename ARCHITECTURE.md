@@ -19,7 +19,7 @@ bearing.
 - [11. Recovery](#11-recovery)
 - [12. Indexing without timers](#12-indexing-without-timers)
 - [12a. Retention](#12a-retention)
-- [13. Compression](#13-compression) (and [13.3 Dictionaries](#133-dictionaries))
+- [13. Compression](#13-compression) (and [13.3 Dictionaries](#133-dictionaries), [13.4 Not paying for compression that does not pay](#134-not-paying-for-compression-that-does-not-pay))
 - [14. Composition roots](#14-composition-roots)
 - [15. Concurrency and shutdown](#15-concurrency-and-shutdown)
 - [16. Single writer, and distribution](#16-single-writer-and-distribution)
@@ -861,8 +861,7 @@ so every such frame falls back to plain bytes, and the 1.26× there is framing o
 The index also gets only one pair every *sparsity* frames, so small frames cost header
 scanning too.
 
-Not measured yet: the CPU of a compression attempt that is then discarded. Skipping it below
-a size threshold would save that, and wants its own benchmark.
+The CPU of an attempt that is then discarded is §13.4.
 
 ### 13.3 Dictionaries
 
@@ -918,6 +917,38 @@ real topic (`BenchmarkDictionary`, memstore, 2-core Ryzen 5 2600X):
 So a dictionary is for small frames: a client writing one event at a time stores 37% less, at
 six times the write CPU. On a log of real one-line JSON events appended one per write
 (`ibsen append --batchSize 1`), 30000 lines took 3.7 MB against 5.1 MB.
+
+### 13.4 Not paying for compression that does not pay
+
+A frame zstd cannot shrink is stored plain, but the attempt is paid for first.
+`BenchmarkCompressionAttempt` frames one payload through zstd and through no codec:
+
+| payload | 64 B | 256 B | 1 KiB | 4 KiB | 16 KiB |
+|---|---|---|---|---|---|
+| JSON events, zstd | 1.1 µs, **not kept** | 7.0 µs, kept 0.61 | 10.4 µs, kept 0.30 | 17.7 µs, kept 0.20 | 45 µs, kept 0.17 |
+| random, zstd | 0.7 µs, not kept | 1.1 µs, not kept | 3.7 µs, not kept | 4.7 µs, not kept | 6.3 µs, not kept |
+| gzipped, zstd | 1.1 µs, not kept | 2.4 µs, not kept | 1.9 µs, not kept | 4.7 µs, not kept | 6.3 µs, not kept |
+| any, stored plain | 0.06 µs | 0.09 µs | 0.12 µs | 0.3 µs | 0.9 µs |
+
+So an attempt that is thrown away costs five to fifteen times storing the bytes. On JSON events
+zstd keeps 2 frames in 200 at 128 bytes and 195 at 160; with a dictionary it pays from about
+48. Two things skip the attempt where it is unlikely to pay, in `core/topic/compressSkip.go`,
+under `Topic.mu`, with no timer:
+
+- **A size threshold**, `--compressMinBytes` (128): a smaller frame is stored plain without
+  trying. With a dictionary it is three eighths of that, 48.
+- **An adaptive skip**, `--adaptiveCompression` (on): once 16 frames in a row were stored plain
+  because compression did not pay, the topic stops trying, and tries again every 64th frame;
+  one that pays resumes trying every frame.
+
+Neither changes the format: a frame says which codec wrote it, so a reader cannot tell a frame
+that was not tried from one that did not pay, and blocks mix them freely. `0` and `false`
+restore trying every frame, and are the core's zero values; the CLI's defaults are the ones
+above. Through a real topic writing 10000-entry batches (`BenchmarkCompressionSkip`), one
+entry a frame: JSON 33–37 ms → 17–23 ms a batch, random entries 33–38 ms → 16–22 ms, the
+ratio unchanged; at 10 and 100 entries a frame compression pays, nothing is skipped, and
+nothing changes. The random entries compress about 3% at ten a frame — their checksum, size
+and offset fields do — so the skip correctly never engages there.
 
 ## 14. Composition roots
 

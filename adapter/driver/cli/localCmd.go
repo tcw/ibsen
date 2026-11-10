@@ -109,6 +109,9 @@ func runAppend(topic domain.TopicName) error {
 	if err != nil {
 		return err
 	}
+	if compressMinBytes < 0 {
+		return userErrorf("--compressMinBytes cannot be negative, got %d", compressMinBytes)
+	}
 	producer, err := domain.ParseProducerID(producerID)
 	if err != nil {
 		return userErrorf("--producerId %q is not a UUID, or 32 hex digits", producerID)
@@ -129,6 +132,8 @@ func runAppend(topic domain.TopicName) error {
 		ProducerWindowBlocks: producerWindowBlocks,
 		CompressionDict:      compressionDict,
 		DictTrainBytes:       trainBytes,
+		CompressMinBytes:     compressMinBytes,
+		AdaptiveCompression:  adaptiveCompression,
 		FlushEntries:         uint32(flushEntries),
 		FlushInterval:        time.Duration(flushIntervalMs) * time.Millisecond,
 		FlushMode:            flushMode,

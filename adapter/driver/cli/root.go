@@ -39,6 +39,8 @@ var (
 	retainAge                   string
 	producerWindowBlocks        int
 	compressionDict             string
+	compressMinBytes            int
+	adaptiveCompression         bool
 	dictTrainBytes              string
 	retainBytes                 string
 	configPath                  string
@@ -107,6 +109,9 @@ var (
 			if err != nil {
 				fail(err, "")
 			}
+			if compressMinBytes < 0 {
+				fail(userErrorf("--compressMinBytes cannot be negative, got %d", compressMinBytes), "")
+			}
 			if err := validateFrameBounds(maxFrameEntries, maxFrameBytes); err != nil {
 				log.Fatal().Err(err).Msg("invalid frame bounds")
 			}
@@ -131,6 +136,8 @@ var (
 				ProducerWindowBlocks: producerWindowBlocks,
 				CompressionDict:      compressionDict,
 				DictTrainBytes:       trainBytes,
+				CompressMinBytes:     compressMinBytes,
+				AdaptiveCompression:  adaptiveCompression,
 				OTELExporterAddr:     OTELExporterAddr,
 				GRPCCertKey:          AbsOrEmpty(certKey),
 				GRPCPrivateKey:       AbsOrEmpty(privateKey),
@@ -359,8 +366,10 @@ func validateFlush(mode string, intervalMs int) error {
 }
 
 const (
-	compressionDictHelp = "auto trains a zstd dictionary per topic from its own entries and writes new frames with it when it pays; off writes plain zstd frames. Frames written with a dictionary are read either way"
-	dictTrainBytesHelp  = "Plain entry bytes a topic writes before its first dictionary is trained, such as 4MiB"
+	compressMinBytesHelp    = "Frames smaller than this many plain bytes are stored without trying to compress them, since compression almost never pays there; 0 tries every frame"
+	adaptiveCompressionHelp = "Stop trying to compress a topic's frames after 16 in a row did not shrink, and try again every 64th; false tries every frame"
+	compressionDictHelp     = "auto trains a zstd dictionary per topic from its own entries and writes new frames with it when it pays; off writes plain zstd frames. Frames written with a dictionary are read either way"
+	dictTrainBytesHelp      = "Plain entry bytes a topic writes before its first dictionary is trained, such as 4MiB"
 )
 
 // dictTrainBytesValue parses --dictTrainBytes.
@@ -494,6 +503,8 @@ func init() {
 	compression = getenv("IBSEN_COMPRESSION", wiring.DefaultCompression)
 	compressionLevel = getenv("IBSEN_COMPRESSION_LEVEL", "default")
 	compressionDict = getenv("IBSEN_COMPRESSION_DICT", wiring.DictAuto)
+	compressMinBytes, _ = strconv.Atoi(getenv("IBSEN_COMPRESS_MIN_BYTES", strconv.Itoa(wiring.DefaultCompressMinBytes)))
+	adaptiveCompression, _ = strconv.ParseBool(getenv("IBSEN_ADAPTIVE_COMPRESSION", "true"))
 	dictTrainBytes = getenv("IBSEN_DICT_TRAIN_BYTES", "4MiB")
 	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
 	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
@@ -519,6 +530,8 @@ func init() {
 	cmdServer.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
 	cmdServer.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
 	cmdServer.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
+	cmdServer.Flags().IntVarP(&compressMinBytes, "compressMinBytes", "", compressMinBytes, compressMinBytesHelp)
+	cmdServer.Flags().BoolVarP(&adaptiveCompression, "adaptiveCompression", "", adaptiveCompression, adaptiveCompressionHelp)
 	cmdServer.Flags().StringVarP(&compressionDict, "compressionDict", "", compressionDict, compressionDictHelp)
 	cmdServer.Flags().StringVarP(&dictTrainBytes, "dictTrainBytes", "", dictTrainBytes, dictTrainBytesHelp)
 	cmdServer.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
@@ -558,6 +571,8 @@ func init() {
 	cmdAppend.Flags().StringVarP(&retainAge, "retainAge", "", retainAge, retainAgeHelp+"; append applies it once, when it finishes")
 	cmdAppend.Flags().StringVarP(&retainBytes, "retainBytes", "", retainBytes, retainBytesHelp+"; append applies it once, when it finishes")
 	cmdAppend.Flags().StringVarP(&configPath, "config", "", configPath, configHelp)
+	cmdAppend.Flags().IntVarP(&compressMinBytes, "compressMinBytes", "", compressMinBytes, compressMinBytesHelp)
+	cmdAppend.Flags().BoolVarP(&adaptiveCompression, "adaptiveCompression", "", adaptiveCompression, adaptiveCompressionHelp)
 	cmdAppend.Flags().StringVarP(&compressionDict, "compressionDict", "", compressionDict, compressionDictHelp)
 	cmdAppend.Flags().StringVarP(&dictTrainBytes, "dictTrainBytes", "", dictTrainBytes, dictTrainBytesHelp)
 	cmdAppend.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")

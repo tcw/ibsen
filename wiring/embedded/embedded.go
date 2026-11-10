@@ -85,6 +85,10 @@ type Params struct {
 	// nothing for it. DictTrainBytes is when; zero means the core default.
 	Dictionaries   bool
 	DictTrainBytes int64
+	// CompressMinBytes and AdaptiveCompression decide which frames are offered to the codec
+	// at all; the zero values try every frame. See topic.Params.
+	CompressMinBytes    int
+	AdaptiveCompression bool
 }
 
 // Log is an embedded log. It is the same driving port a gRPC server speaks, so code written
@@ -121,6 +125,8 @@ func Open(params Params) (*Log, error) {
 		ProducerWindowBlocks: params.ProducerWindowBlocks,
 		Dictionaries:         params.Dictionaries,
 		DictTrainBytes:       params.DictTrainBytes,
+		CompressMinBytes:     params.CompressMinBytes,
+		AdaptiveCompression:  params.AdaptiveCompression,
 		Logger:               params.Logger,
 	})
 	if err != nil {
