@@ -1,5 +1,6 @@
 .idea
-ibsen
+/ibsen
+/ibsen-k8s
 bin/
 target/
 .cache/

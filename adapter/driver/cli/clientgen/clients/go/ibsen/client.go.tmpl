@@ -1,0 +1,224 @@
+// Package ibsen is a small Go client for an Ibsen server: write, read and list, over the
+// generated gRPC stubs in package ibsenpb.
+//
+// With WithProducer it makes retries safe. The client names itself with a producer ID and
+// numbers its writes to each topic 1, 2, 3; a write whose reply is lost — a timeout, a dropped
+// connection, a server restart — is sent again with the same number, and the server answers
+// "already written" with the original offsets instead of storing it twice. See
+// the README beside this folder.
+package ibsen
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"io"
+	"sync"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+
+	grpcApi "@@MODULE@@/ibsenpb"
+)
+
+// Client talks to one Ibsen server.
+type Client struct {
+	conn     *grpc.ClientConn
+	api      grpcApi.IbsenClient
+	producer []byte
+	retries  int
+	backoff  time.Duration
+
+	mu sync.Mutex
+	// next is each topic's next sequence number; a topic is in it once it has been written to
+	next map[string]uint64
+}
+
+// Option configures a Client.
+type Option func(*Client) error
+
+// WithProducer gives the client a fresh, random producer ID, which turns on safe retries.
+func WithProducer() Option {
+	return func(c *Client) error {
+		id := make([]byte, 16)
+		if _, err := rand.Read(id); err != nil {
+			return err
+		}
+		c.producer = id
+		return nil
+	}
+}
+
+// WithProducerID gives the client a producer ID of its own, which must be 16 bytes. Use it to
+// carry on numbering after a restart: with the same ID and NextSequence, a retry of a write
+// the previous process was not told the outcome of is still recognised.
+func WithProducerID(id [16]byte) Option {
+	return func(c *Client) error {
+		c.producer = id[:]
+		return nil
+	}
+}
+
+// WithRetries sets how many times a write is sent again after a failure that may have lost
+// its reply, and how long to wait before the first retry (doubling each time). The default is
+// 5 retries from 100ms. Retries need a producer; without one a write is sent once.
+func WithRetries(retries int, backoff time.Duration) Option {
+	return func(c *Client) error {
+		c.retries, c.backoff = retries, backoff
+		return nil
+	}
+}
+
+// Dial connects to an Ibsen server at addr, such as "localhost:54321". dialOptions default to
+// an insecure connection; pass grpc.WithTransportCredentials for TLS.
+func Dial(addr string, options []Option, dialOptions ...grpc.DialOption) (*Client, error) {
+	if len(dialOptions) == 0 {
+		dialOptions = []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	}
+	conn, err := grpc.NewClient(addr, dialOptions...)
+	if err != nil {
+		return nil, err
+	}
+	c := &Client{conn: conn, api: grpcApi.NewIbsenClient(conn), retries: 5, backoff: 100 * time.Millisecond,
+		next: map[string]uint64{}}
+	for _, option := range options {
+		if err := option(c); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+	}
+	return c, nil
+}
+
+// Close closes the connection.
+func (c *Client) Close() error { return c.conn.Close() }
+
+// ProducerID is the client's producer ID, or nil without one.
+func (c *Client) ProducerID() []byte { return c.producer }
+
+// NextSequence is the number the client will give its next write to topic.
+func (c *Client) NextSequence(topic string) uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if next, ok := c.next[topic]; ok {
+		return next
+	}
+	return 1
+}
+
+// SetNextSequence makes the client number its next write to topic n: how a restarted
+// process with the same producer ID carries on where the last one stopped.
+func (c *Client) SetNextSequence(topic string, n uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.next[topic] = n
+}
+
+// WriteResult is where a write's entries are.
+type WriteResult struct {
+	FirstOffset uint64
+	Count       int64
+	// Duplicate is true when the server already held this write, from an attempt whose reply
+	// was lost: nothing was stored twice.
+	Duplicate bool
+}
+
+// ErrSequence is a write the server refused for its number: a gap, an older number, or a
+// number reused for a different write. It means the client's numbering went wrong, and
+// retrying will not help.
+var ErrSequence = errors.New("ibsen: the server refused the write's sequence number")
+
+// Write appends entries to topic. With a producer, a failure that may have lost the reply is
+// retried with the same number until it succeeds, the retries run out, or ctx ends, and the
+// next write gets the next number only once this one is known to be stored.
+//
+// Writes from one client to one topic must not overlap: the numbers say what order they were
+// meant in, and two in flight at once can arrive out of it.
+func (c *Client) Write(ctx context.Context, topic string, entries [][]byte) (WriteResult, error) {
+	request := &grpcApi.InputEntries{Topic: topic, Entries: entries}
+	if c.producer == nil {
+		status, err := c.api.Write(ctx, request)
+		return result(status), err
+	}
+	request.ProducerId = c.producer
+	request.Sequence = c.NextSequence(topic)
+	wait := c.backoff
+	for attempt := 0; ; attempt++ {
+		reply, err := c.api.Write(ctx, request)
+		if err == nil {
+			c.SetNextSequence(topic, request.Sequence+1)
+			return result(reply), nil
+		}
+		if status.Code(err) == codes.FailedPrecondition {
+			return WriteResult{}, errors.Join(ErrSequence, err)
+		}
+		if !retryable(err) || attempt >= c.retries || ctx.Err() != nil {
+			return WriteResult{}, err
+		}
+		select {
+		case <-ctx.Done():
+			return WriteResult{}, ctx.Err()
+		case <-time.After(wait):
+		}
+		wait *= 2
+	}
+}
+
+func result(reply *grpcApi.WriteStatus) WriteResult {
+	if reply == nil {
+		return WriteResult{}
+	}
+	return WriteResult{FirstOffset: reply.FirstOffset, Count: reply.Wrote, Duplicate: reply.Duplicate}
+}
+
+// retryable is a failure after which the write may or may not have been stored.
+func retryable(err error) bool {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.Aborted, codes.Unknown, codes.Internal, codes.ResourceExhausted:
+		return true
+	}
+	return false
+}
+
+// Entry is one entry read back.
+type Entry struct {
+	Offset  uint64
+	Content []byte
+}
+
+// Read calls fn with every entry of topic from offset on. With follow it keeps waiting for new
+// entries until ctx ends; without it, it returns at the end of the log. fromEarliest starts at
+// the earliest entry still retained when offset has been deleted.
+func (c *Client) Read(ctx context.Context, topic string, offset uint64, follow, fromEarliest bool, fn func(Entry) error) error {
+	stream, err := c.api.Read(ctx, &grpcApi.ReadParams{Topic: topic, Offset: offset, BatchSize: 1000,
+		StopOnCompletion: !follow, FromEarliest: fromEarliest})
+	if err != nil {
+		return err
+	}
+	for {
+		batch, err := stream.Recv()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		for _, entry := range batch.Entries {
+			if err := fn(Entry{Offset: entry.Offset, Content: entry.Content}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+// List names the topics the server holds.
+func (c *Client) List(ctx context.Context) ([]string, error) {
+	list, err := c.api.List(ctx, &grpcApi.EmptyArgs{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Topics, nil
+}
