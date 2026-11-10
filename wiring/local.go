@@ -70,6 +70,9 @@ type LocalParams struct {
 	// ProducerWindowBlocks is how many of a topic's newest blocks a producer is remembered
 	// across for safe retries; zero means the core default.
 	ProducerWindowBlocks int
+	// CompressionDict and DictTrainBytes are as for the server.
+	CompressionDict string
+	DictTrainBytes  int64
 	// RetainAge, RetainBytes and ConfigPath are retention, as for the server. A writable open
 	// applies it once, when it is closed; a read-only one reads the file but deletes nothing.
 	RetainAge   string
@@ -100,6 +103,10 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 	}
 
 	flushMode, flushInterval, err := resolveFlushMode(params.FlushMode, params.FlushInterval)
+	if err != nil {
+		return nil, err
+	}
+	dictionaries, err := resolveDictMode(params.CompressionDict)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +156,8 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 		FlushInterval:        flushInterval,
 		FlushMode:            flushMode,
 		ProducerWindowBlocks: params.ProducerWindowBlocks,
+		Dictionaries:         dictionaries,
+		DictTrainBytes:       params.DictTrainBytes,
 		OnFlushError: func(err error) {
 			log.Error().Err(err).Msg("a periodic flush failed; the topic it failed on takes no more writes")
 		},

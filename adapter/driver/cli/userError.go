@@ -66,6 +66,8 @@ func localOpenError(root string, err error) error {
 		return userErrorf("%s is being written by another process, and a log takes one writer at a time", root)
 	case errors.Is(err, wiring.ErrInvalidConfig):
 		return userErrorf("%s", configReason(err))
+	case errors.Is(err, wiring.ErrUnknownDictMode):
+		return userErrorf("--compressionDict %q is not one of auto, off", compressionDict)
 	case errors.Is(err, wiring.ErrUnknownFlushMode):
 		return userErrorf("--flushMode %q is not one of %s", flushMode, strings.Join(wiring.FlushModes, ", "))
 	case errors.Is(err, wiring.ErrUnknownLock):

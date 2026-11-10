@@ -827,6 +827,8 @@ What the suite does not test, so nobody assumes it does:
 | `adapter/driver/history/nemesis_test.go` | L8 | randomised power cuts and failed fsyncs, checked, in both flush modes |
 | `adapter/driver/history/lenient_test.go` | L8 | the checker's lenient rules, both sides |
 | `core/topic/lenient_test.go` | L4 | lenient flush mode |
+| `adapter/driven/compression/zstd/dict_test.go` | L6 | dictionaries through a real topic: trained at the threshold, round trip and restart, off writes plain frames, one that does not pay discarded, retrained when the data changes shape with two dictionaries in one block, missing or corrupt reported by name with nothing truncated, a crash between the dictionary and its first frame, retention keeping what is named |
+| `adapter/driven/compression/zstd/dict_bench_test.go` | — | `BenchmarkDictionary`: ratio, write and read with and without a dictionary at 1, 10 and 100 entries a frame |
 | `core/topic/producer_test.go` | L4 | safe retries: duplicate, next, gap, stale, reused; a restart; the window, live and rebuilt; producers racing themselves; a torn producer write cut whole and one without a producer keeping its prefix; v1 and v2 frames in one block; a strict duplicate waiting for the original's flush |
 | `core/domain/frameV2_test.go` | L1 | frame header v2: round trip, every extension byte checked, a cut extension torn, an unknown extension unsupported, and a copy of the v1 reader refusing v2 rather than calling it corrupt |
 | `adapter/driver/stdio/producer_test.go` | L6 | `append --producerId`: a rerun after a failure at every batch stores the input once |

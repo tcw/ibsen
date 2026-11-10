@@ -19,7 +19,7 @@ bearing.
 - [11. Recovery](#11-recovery)
 - [12. Indexing without timers](#12-indexing-without-timers)
 - [12a. Retention](#12a-retention)
-- [13. Compression](#13-compression)
+- [13. Compression](#13-compression) (and [13.3 Dictionaries](#133-dictionaries))
 - [14. Composition roots](#14-composition-roots)
 - [15. Concurrency and shutdown](#15-concurrency-and-shutdown)
 - [16. Single writer, and distribution](#16-single-writer-and-distribution)
@@ -232,22 +232,28 @@ still hold an entry that does not.
 
 A frame that carries a producer (§8.4) or names a compression dictionary (§13.3) is version 2.
 Its first 36 bytes are laid out and checksummed exactly as version 1's, except that `version`
-is 2 and `reserved` holds the extension's length; 44 bytes of extension follow, with a
-checksum of their own:
+is 2 and `reserved` holds the extension's length. The extension holds only what the frame
+uses, and a checksum of its own:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ the 36-byte header above, version 2, reserved = 44            │
+│ the 36-byte header above, version 2, reserved = extension len │
 ├──────────────────────────────────────────────────────────────┤
-│ producer  [16]byte      zero for none                         │
-├───────────────────────────┬──────────────────────────────────┤
-│ sequence  uint64     8B   │ writeEntries uint32 4B │ zero 4B  │
-├───────────────────────────┼──────────────────────────────────┤
-│ dictID    uint64     8B   │ extCrc  uint32  4B (the 40 before)│
-├───────────────────────────┴──────────────────────────────────┤
+│ flags uint8   bit 0: a producer follows · bit 1: a dictionary │
+├──────────────────────────────────────────────────────────────┤
+│ producer [16]byte · sequence uint64 · writeEntries uint32     │  bit 0, 28 bytes
+├──────────────────────────────────────────────────────────────┤
+│ dictID uint64                                                 │  bit 1, 8 bytes
+├──────────────────────────────────────────────────────────────┤
+│ extCrc uint32 over the extension bytes before it              │
+├──────────────────────────────────────────────────────────────┤
 │ payload                                                       │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+So a dictionary alone costs 13 bytes more than version 1, a producer alone 33, both 41. The
+first layout put every field in every version 2 frame — 44 bytes — and on one-entry frames
+of ~130-byte events that overhead ate a third of what a dictionary saved.
 
 - **An older build refuses version 2 rather than truncating it.** It verifies the 28 bytes
   after the checksum, which version 2 keeps valid, and then refuses a version it does not
@@ -858,6 +864,61 @@ scanning too.
 Not measured yet: the CPU of a compression attempt that is then discarded. Skipping it below
 a size threshold would save that, and wants its own benchmark.
 
+### 13.3 Dictionaries
+
+A frame is compressed alone, so a small frame gives zstd almost nothing to find: a 130-byte
+event comes back *larger*, and the frame is stored plain. A **dictionary** trained on the
+topic's own entries — its field names, hosts, message shapes — gives every frame that shared
+history to refer to.
+
+- **Training is the adapter's, and off the write path.** The codec port grows an optional
+  capability, `driven.DictionaryCodec` (`Train`, `EncodeDict`, `DecodeDict`, `DictCodecID`),
+  probed by type assertion like `Syncable`; the zstd adapter implements it with
+  `zstd.BuildDict` and caches an encoder and decoder per dictionary. The core keeps a
+  reservoir of 1000 entries — sampled as frames hold them, checksum, size and offset
+  included, since that is what a dictionary is applied to — and once a topic has written
+  `--dictTrainBytes` (4 MiB) of plain entries, the write that crossed it starts one coalescing
+  training run in a goroutine and returns, the way indexing does (§12). No timer; `Close`
+  waits for it.
+- **Kept only if it pays.** A tenth of the samples is held out, compressed in groups the size
+  of the topic's average frame with and without the dictionary, and the dictionary is kept
+  only if it is at least 10% smaller. That is what stops a dictionary being used where frames
+  are large enough that zstd finds the same things on its own: at 100 entries a frame it
+  measured no better, and is not kept.
+- **Retrained when the data changes.** The compression of frames written with it is tracked;
+  once it is 25% worse than when the dictionary was trained, a new one is trained, at most
+  once per block.
+- **Immutable, named by a hash.** A dictionary's id is the FNV-1a hash of its bytes, so the id
+  is a promise about the bytes, like a codec id (invariant 7). It is a block of its own kind,
+  `driven.Dict` — `<root>/<topic>/<id>.dict` in `filestore` — holding a CRC and the bytes, and
+  it is **written, synced and its name made durable before any frame names it**. A crash in
+  between leaves a dictionary nothing names, which is harmless.
+- **A frame names it** in the version 2 extension (`dictID`, §5.2), with codec byte
+  `CodecZstdDict` (2). A frame the dictionary did not shrink is stored plain and names none.
+- **Reading** resolves the id through `driven.Dictionaries`, which a topic and its snapshots
+  share: read once from the store, verified (CRC, and that its bytes hash to its id), kept. A
+  missing or corrupt dictionary is an error naming it; nothing is truncated (invariant 9), and
+  the frames before the first that names it still read.
+- **Loading** takes up the dictionary the newest frames name and carries on with it.
+- **Retention** (§12a) removes a dictionary only once no remaining block names it and it is not
+  the one being written with.
+- `--compressionDict auto|off` (`auto` with zstd) and `--dictTrainBytes`. The embedded root
+  wires no dictionary-capable codec unless the program brings zstd, so it links nothing new
+  for this but bookkeeping.
+
+What it buys, on the ~130-byte JSON events of §13.2, writing 10000-entry batches through a
+real topic (`BenchmarkDictionary`, memstore, 2-core Ryzen 5 2600X):
+
+| entries per frame | ratio, zstd | ratio, zstd + dictionary | write, per entry | sequential read |
+|---|---|---|---|---|
+| 1 | 1.262 | **0.799** | 1.9 → 12.4 µs | 216 → 104 MB/s |
+| 10 | 0.295 | **0.255** | 1.9 → 3.5 µs | 91 → 90 MB/s |
+| 100 | 0.167 | 0.167 (none kept) | — | — |
+
+So a dictionary is for small frames: a client writing one event at a time stores 37% less, at
+six times the write CPU. On a log of real one-line JSON events appended one per write
+(`ibsen append --batchSize 1`), 30000 lines took 3.7 MB against 5.1 MB.
+
 ## 14. Composition roots
 
 Two packages, not two build tags. Nothing is excluded; a program imports the root it wants.
@@ -1168,3 +1229,5 @@ The rules that must not be broken, collected:
     its index; and a reader of a removed offset is told so, never skipped ahead.
 18. A producer's write is appended whole or recovered away whole, and a sequence number is
     checked and recorded in the same step as the append.
+19. A dictionary is durable before any frame names it, never changes its bytes, and is removed
+    only once no block names it.

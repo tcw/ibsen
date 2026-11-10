@@ -95,6 +95,10 @@ type IbsenServer struct {
 	// ProducerWindowBlocks is how many of a topic's newest blocks a producer is remembered
 	// across for safe retries; zero means the core default.
 	ProducerWindowBlocks int
+	// CompressionDict is "auto" (the default) to train a dictionary per topic when the codec
+	// can use one, or "off"; DictTrainBytes is when, zero meaning the core default.
+	CompressionDict string
+	DictTrainBytes  int64
 	// RetentionInterval is how often retention runs; zero means DefaultRetentionInterval.
 	RetentionInterval time.Duration
 	OTELExporterAddr  string
@@ -253,6 +257,10 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	if err != nil {
 		return err
 	}
+	dictionaries, err := resolveDictMode(ibs.CompressionDict)
+	if err != nil {
+		return err
+	}
 	retention, err := ibs.retention()
 	if err != nil {
 		return err
@@ -307,6 +315,8 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		FlushInterval:        flushInterval,
 		FlushMode:            flushMode,
 		ProducerWindowBlocks: ibs.ProducerWindowBlocks,
+		Dictionaries:         dictionaries,
+		DictTrainBytes:       ibs.DictTrainBytes,
 		Logger:               zerologger.New(log.Logger),
 	})
 	if err != nil {

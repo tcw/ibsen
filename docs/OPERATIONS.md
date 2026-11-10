@@ -39,6 +39,8 @@ Every server flag has an environment variable, so containers need no command lin
 | `--maxFrameBytes` | `IBSEN_MAX_FRAME_BYTES` | `1 MiB` | entry bytes that may share a frame, before compression |
 | `--compression` | `IBSEN_COMPRESSION` | `zstd` | codec for new frames: `zstd` or `none` |
 | `--compressionLevel` | `IBSEN_COMPRESSION_LEVEL` | `default` | `fastest`, `default`, `better`, `best` |
+| `--compressionDict` | `IBSEN_COMPRESSION_DICT` | `auto` | train a zstd dictionary per topic (`auto`) or not (`off`); see [Dictionaries](#dictionaries) |
+| `--dictTrainBytes` | `IBSEN_DICT_TRAIN_BYTES` | `4MiB` | entry bytes a topic writes before its first dictionary is trained |
 | `-o, --readOnly` | `IBSEN_READ_ONLY` | `false` | serve a directory without changing a byte of it |
 | `--producerWindowBlocks` | `IBSEN_PRODUCER_WINDOW_BLOCKS` | `4` | [safe retries](USER_GUIDE.md#safe-retries): how many of a topic's newest blocks a producer is remembered across |
 | `--retainAge` | `IBSEN_RETAIN_AGE` | *(unset)* | delete whole blocks older than this, such as `168h` or `7d`; see [Retention](#retention) |
@@ -236,6 +238,41 @@ storage than this. Two cases want `--compression none`: entries that are already
 on incompressible payloads zstd measured 72 MB/s against 315 MB/s through the codec, for 10%
 — and readers that seek rather than stream, since a frame is decoded whole and a single-entry
 read at the default frame bound decodes 137 KB in 213 µs against 98 µs plain.
+
+### Dictionaries
+
+zstd compresses each frame on its own, and a frame is one write — so a client that writes one
+small event at a time gives it almost nothing to work with. A 130-byte JSON event usually
+comes back *larger* from zstd, and is stored as it was.
+
+A **dictionary** fixes that. After a topic has written a few megabytes (`--dictTrainBytes`,
+4 MiB), Ibsen takes a sample of its entries and has zstd learn what they have in common: the
+field names, the hosts, the shapes of message. The result is a small dictionary, a few
+kilobytes, saved next to the topic as `<id>.dict`. New frames are compressed with it, and each
+frame records which dictionary it used. If the data changes and compression gets noticeably
+worse, Ibsen trains a new one; old dictionaries stay as long as any frame still needs them.
+Nothing waits for training: it runs beside the writes, which carry on without a dictionary
+until one is ready.
+
+It is on by default with zstd (`--compressionDict auto`), and costs nothing where it does not
+help: a dictionary is kept only if it makes held-out entries at least 10% smaller at the size
+the topic's frames actually are. Large frames — a client that batches hundreds of entries per
+write — compress well without one, and none is kept.
+
+On ~130-byte JSON events, through a real topic:
+
+| entries per write | zstd | zstd + dictionary | write CPU per entry |
+|---|---|---|---|
+| 1 | 1.26 of the input (stored plain) | **0.80** | 1.9 → 12.4 µs |
+| 10 | 0.30 | **0.26** | 1.9 → 3.5 µs |
+| 100 | 0.17 | 0.17 (no dictionary kept) | unchanged |
+
+Appending 30000 real one-line JSON events one per write took 3.7 MB with a dictionary and 5.1
+MB without. **When to turn it off** (`--compressionDict off`): when write CPU matters more than
+disk for a topic of small writes. Frames written with a dictionary stay readable either way,
+as long as the `.dict` files are kept with the data — they are part of the log, so back them
+up with it. A frame whose dictionary is missing is reported by name when it is read; nothing
+is deleted.
 
 ## Read-only mode
 

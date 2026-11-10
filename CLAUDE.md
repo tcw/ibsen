@@ -481,9 +481,24 @@ Done. Framing is step 17, the zstd adapter behind it step 18, and zstd is the de
 
 ## 6. Dictionaries
 
-- Per-topic trained zstd dictionaries, versioned by `dictID` in the frame header; immutable; retained while any frame references them.
-- Cold start writes plain frames while reservoir-sampling entries; a background trainer builds the dictionary and flips a current pointer.
-- Retention now couples dictionary lifetime to log lifetime.
+Done (step 45, spec 6; ARCHITECTURE §13.3).
+
+- Per-topic trained zstd dictionaries, named by an FNV-1a hash of their bytes in the frame's
+  version 2 extension (`dictID`, codec byte `CodecZstdDict`); immutable; a `driven.Dict` block
+  with a CRC, written and synced before any frame names it; removed by retention only once no
+  block names it and it is not current.
+- Cold start writes plain frames while reservoir-sampling entries **as frames encode them**;
+  the write that crosses `--dictTrainBytes` starts one coalescing training run, off the write
+  path, and the dictionary is kept only if it makes held-out entries 10% smaller in groups the
+  size of the topic's average frame. Retrained when recent frames compress 25% worse, at most
+  once per block.
+- Measured, and three things changed because of it: dictionaries are 4 KiB, not 64 (better
+  and ten times faster on small frames); samples are encoded entries (a dictionary of bare
+  entries matched frames worse); and the version 2 extension carries only the fields a frame
+  uses (a dictionary-only frame pays 13 bytes, not 44). On ~130-byte JSON events: one-entry
+  frames 1.26 → 0.80 of the input, ten-entry 0.30 → 0.26, a hundred no dictionary kept.
+- The codec port's optional `driven.DictionaryCodec` is probed like `Syncable`; the embedded
+  root links nothing new for it.
 
 ## 7. Distribution
 
@@ -573,7 +588,7 @@ and how to read their failures, recipes, and which test holds which promise — 
 - Properties: round-trip; read-from-every-offset.
 - Crash and torn-write fault injection at the storage adapter.
 - Race-detector concurrency tests.
-- Cross-dictionary-version read test.
+- Cross-dictionary-version read test: `TestDictionary_isRetrainedWhenTheDataChangesShape` reads one block holding frames of two dictionaries.
 - **End-to-end benchmarks over gRPC, at the defaults, on a real directory**:
   `adapter/driver/grpcapi/test/bench_test.go`, run with
   `go test ./adapter/driver/grpcapi/test/ -run XXX -bench . -benchtime 1s`. A client, the
@@ -704,10 +719,12 @@ and how to read their failures, recipes, and which test holds which promise — 
 44. ~~Safe retries: frame header version 2 with a producer ID and sequence, a producer table
     rebuilt from headers, and the driving port's `Write` taking `WriteParams` (spec 5).~~
 
-Every step ships green. Steps 0 to 44 are done, one commit each.
+45. ~~Compression dictionaries, trained per topic off the write path and kept only where they
+    pay (spec 6).~~
 
-Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
-are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
+Every step ships green. Steps 0 to 45 are done, one commit each.
+
+Next, in the same one-change-at-a-time way: §7, which is untouched. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
 
 ## 11. The log without a server

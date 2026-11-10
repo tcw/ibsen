@@ -77,6 +77,9 @@ const (
 	Log BlockKind = iota
 	// Index holds (offset, byteOffset) pairs into the log block with the same number.
 	Index
+	// Dict holds one compression dictionary, named by its id rather than by an offset:
+	// immutable, checksummed, and kept while any frame still names it.
+	Dict
 )
 
 func (k BlockKind) String() string {
@@ -85,6 +88,8 @@ func (k BlockKind) String() string {
 		return "log"
 	case Index:
 		return "index"
+	case Dict:
+		return "dict"
 	default:
 		return fmt.Sprintf("BlockKind(%d)", uint8(k))
 	}
@@ -109,6 +114,11 @@ func LogRef(topic domain.TopicName, block domain.LogBlock) BlockRef {
 // IndexRef refers to the index of the log block starting at offset.
 func IndexRef(topic domain.TopicName, block domain.IndexBlock) BlockRef {
 	return BlockRef{Topic: topic, Kind: Index, Block: uint64(block)}
+}
+
+// DictRef refers to the dictionary with the given id.
+func DictRef(topic domain.TopicName, id uint64) BlockRef {
+	return BlockRef{Topic: topic, Kind: Dict, Block: id}
 }
 
 // Block is a block, the number of bytes it holds, and when it last changed.

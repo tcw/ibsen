@@ -191,6 +191,35 @@ type ProducerWrite struct {
 	Entries  uint32
 }
 
+// ScanDictionaries lists the dictionary ids a log block's frames name, in the order frames
+// first name them, from the frame headers alone.
+func ScanDictionaries(store driven.BlockStore, ref driven.BlockRef) ([]uint64, error) {
+	block, err := store.Open(ref, 0)
+	if err != nil {
+		return nil, errore.Wrap(err)
+	}
+	defer block.Close()
+	reader := bufio.NewReader(block)
+	var ids []uint64
+	seen := map[uint64]bool{}
+	for {
+		header, err := domain.ReadFrameHeader(reader, domain.MaxFrameSize)
+		if err == io.EOF {
+			return ids, nil
+		}
+		if err != nil {
+			return nil, errore.WrapWithContextF(err, "reading the frame headers of %s", ref)
+		}
+		if err := domain.SkipFramePayload(reader, header); err != nil {
+			return nil, errore.WrapWithContextF(err, "reading the frame headers of %s", ref)
+		}
+		if header.DictID != 0 && !seen[header.DictID] {
+			seen[header.DictID] = true
+			ids = append(ids, header.DictID)
+		}
+	}
+}
+
 // ScanProducers lists the producer writes a log block holds, in order, from its frame headers
 // alone: nothing is decoded and no payload is read, which is what makes rebuilding the
 // producer table after a restart cheap. The block must already have been recovered.
@@ -240,10 +269,13 @@ type ReadFileParams struct {
 	Reader io.Reader
 	// Codecs resolves the codec byte a frame carries. A nil registry reads frames written
 	// without compression and reports the rest as unknown.
-	Codecs    driven.Codecs
-	LogChan   chan *[]domain.LogEntry
-	Wg        *sync.WaitGroup
-	BatchSize uint32
+	Codecs driven.Codecs
+	// Dictionaries finds a dictionary a frame names. Nil reads every frame that names none,
+	// and reports the rest as a missing dictionary.
+	Dictionaries driven.Dictionaries
+	LogChan      chan *[]domain.LogEntry
+	Wg           *sync.WaitGroup
+	BatchSize    uint32
 	// Cancel stops the read with domain.ErrReadCancelled when closed; nil never cancels.
 	Cancel <-chan struct{}
 	// FromOffset is the first offset to send. The frame holding it may start earlier, and
@@ -338,7 +370,7 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 		if err != nil {
 			return ReadResult{}, errore.Wrap(err)
 		}
-		entries, err := DecodeFrame(params.Codecs, header, payload)
+		entries, err := DecodeFrameWith(params.Codecs, params.Dictionaries, header, payload)
 		if err != nil {
 			return ReadResult{}, errore.Wrap(err)
 		}

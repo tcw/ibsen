@@ -84,8 +84,11 @@ func BlockFileName(ref driven.BlockRef) string {
 }
 
 func extension(kind driven.BlockKind) string {
-	if kind == driven.Index {
+	switch kind {
+	case driven.Index:
 		return ".idx"
+	case driven.Dict:
+		return ".dict"
 	}
 	return ".log"
 }
@@ -235,7 +238,7 @@ func (s *Store) StrayFiles(topic domain.TopicName) ([]string, error) {
 // 00000000000000000042.log. ok is false for any other name.
 func parseBlockFileName(name string) (block uint64, extension string, ok bool) {
 	extension = filepath.Ext(name)
-	if extension != ".log" && extension != ".idx" {
+	if extension != ".log" && extension != ".idx" && extension != ".dict" {
 		return 0, "", false
 	}
 	digits := strings.TrimSuffix(name, extension)

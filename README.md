@@ -193,7 +193,6 @@ fault injection and history-checked crash tests. There are no known correctness 
 On one machine, the single-writer lock is held by the kernel where the filesystem supports it,
 and a client can retry a write without storing it twice. Known gaps:
 
-- Dictionaries for compression are designed, not built.
 - Clients exist for Go; other languages are generated from the proto and nothing more.
 
 ## Learn more

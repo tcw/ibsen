@@ -38,6 +38,8 @@ var (
 	lockMode                    string
 	retainAge                   string
 	producerWindowBlocks        int
+	compressionDict             string
+	dictTrainBytes              string
 	retainBytes                 string
 	configPath                  string
 	clientFromEarliest          bool
@@ -101,6 +103,10 @@ var (
 			if producerWindowBlocks < 1 {
 				fail(userErrorf("--producerWindowBlocks must be at least 1, got %d", producerWindowBlocks), "")
 			}
+			trainBytes, err := dictTrainBytesValue()
+			if err != nil {
+				fail(err, "")
+			}
 			if err := validateFrameBounds(maxFrameEntries, maxFrameBytes); err != nil {
 				log.Fatal().Err(err).Msg("invalid frame bounds")
 			}
@@ -123,6 +129,8 @@ var (
 				RetainBytes:          retainBytes,
 				ConfigPath:           configPath,
 				ProducerWindowBlocks: producerWindowBlocks,
+				CompressionDict:      compressionDict,
+				DictTrainBytes:       trainBytes,
 				OTELExporterAddr:     OTELExporterAddr,
 				GRPCCertKey:          AbsOrEmpty(certKey),
 				GRPCPrivateKey:       AbsOrEmpty(privateKey),
@@ -350,6 +358,20 @@ func validateFlush(mode string, intervalMs int) error {
 	return nil
 }
 
+const (
+	compressionDictHelp = "auto trains a zstd dictionary per topic from its own entries and writes new frames with it when it pays; off writes plain zstd frames. Frames written with a dictionary are read either way"
+	dictTrainBytesHelp  = "Plain entry bytes a topic writes before its first dictionary is trained, such as 4MiB"
+)
+
+// dictTrainBytesValue parses --dictTrainBytes.
+func dictTrainBytesValue() (int64, error) {
+	n, err := wiring.ParseBytes(dictTrainBytes)
+	if err != nil || n <= 0 {
+		return 0, userErrorf("--dictTrainBytes %q is not a size such as 4MiB", dictTrainBytes)
+	}
+	return n, nil
+}
+
 const producerWindowHelp = "Safe retries: how many of a topic's newest blocks a producer is remembered across. A producer silent for longer is treated as new, and its retry stored again"
 
 const (
@@ -471,6 +493,8 @@ func init() {
 	maxFrameBytes, _ = strconv.Atoi(getenv("IBSEN_MAX_FRAME_BYTES", strconv.Itoa(topic.DefaultMaxFrameBytes)))
 	compression = getenv("IBSEN_COMPRESSION", wiring.DefaultCompression)
 	compressionLevel = getenv("IBSEN_COMPRESSION_LEVEL", "default")
+	compressionDict = getenv("IBSEN_COMPRESSION_DICT", wiring.DictAuto)
+	dictTrainBytes = getenv("IBSEN_DICT_TRAIN_BYTES", "4MiB")
 	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
 	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
 	lockMode = getenv("IBSEN_LOCK", wiring.DefaultLock)
@@ -495,6 +519,8 @@ func init() {
 	cmdServer.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
 	cmdServer.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
 	cmdServer.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
+	cmdServer.Flags().StringVarP(&compressionDict, "compressionDict", "", compressionDict, compressionDictHelp)
+	cmdServer.Flags().StringVarP(&dictTrainBytes, "dictTrainBytes", "", dictTrainBytes, dictTrainBytesHelp)
 	cmdServer.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
 	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
 	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
@@ -532,6 +558,8 @@ func init() {
 	cmdAppend.Flags().StringVarP(&retainAge, "retainAge", "", retainAge, retainAgeHelp+"; append applies it once, when it finishes")
 	cmdAppend.Flags().StringVarP(&retainBytes, "retainBytes", "", retainBytes, retainBytesHelp+"; append applies it once, when it finishes")
 	cmdAppend.Flags().StringVarP(&configPath, "config", "", configPath, configHelp)
+	cmdAppend.Flags().StringVarP(&compressionDict, "compressionDict", "", compressionDict, compressionDictHelp)
+	cmdAppend.Flags().StringVarP(&dictTrainBytes, "dictTrainBytes", "", dictTrainBytes, dictTrainBytesHelp)
 	cmdAppend.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
 
 	cmdCat.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to read")

@@ -94,6 +94,10 @@ func (t *Topic) Retain(policy RetentionPolicy, now time.Time) (Retained, error) 
 			return removed, errore.WrapWithContextF(err, "unable to remove index block %d", block)
 		}
 	}
+	// a dictionary goes only once no block left names it
+	if err := t.removeUnusedDictionariesLocked(); err != nil {
+		return removed, errore.WrapWithContextF(err, "unable to remove unused dictionaries")
+	}
 	t.Log.Log(driven.LevelInfo, "retention removed log blocks",
 		driven.Str("topic", t.TopicName), driven.Int("blocks", len(removed.Blocks)),
 		driven.Int64("bytes", removed.Bytes), driven.Uint64("earliestOffset", uint64(removed.Earliest)))

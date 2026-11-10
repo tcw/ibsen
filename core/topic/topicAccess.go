@@ -90,6 +90,11 @@ type Topic struct {
 	// ProducerWindowBlocks blocks, so a retry is recognised; guarded by mu
 	producers            map[domain.ProducerID]producerState
 	ProducerWindowBlocks int
+	// dict is the dictionary training state, nil when the codec cannot use one or
+	// dictionaries are off; dicts finds the dictionaries frames name, and is shared with
+	// read snapshots
+	dict  *dictState
+	dicts *dictionaries
 }
 
 // Params is what the core needs to open one topic: the driven store to keep its blocks in,
@@ -129,6 +134,12 @@ type Params struct {
 	// ProducerWindowBlocks is how many of the newest blocks a producer is remembered across;
 	// zero means DefaultProducerWindowBlocks.
 	ProducerWindowBlocks int
+	// Dictionaries trains a compression dictionary for the topic once it has written
+	// DictTrainBytes of plain entries (zero means DefaultDictTrainBytes), and writes new
+	// frames with it — when Codec can use one. Frames that name a dictionary are read
+	// whatever this says.
+	Dictionaries   bool
+	DictTrainBytes int64
 }
 
 func NewLogTopic(params Params) *Topic {
@@ -160,7 +171,17 @@ func NewLogTopic(params Params) *Topic {
 	if window <= 0 {
 		window = DefaultProducerWindowBlocks
 	}
+	var dict *dictState
+	if withDicts, ok := codec.(driven.DictionaryCodec); ok && params.Dictionaries {
+		trainBytes := params.DictTrainBytes
+		if trainBytes <= 0 {
+			trainBytes = DefaultDictTrainBytes
+		}
+		dict = &dictState{codec: withDicts, trainBytes: trainBytes, rng: 0x9E3779B97F4A7C15}
+	}
 	return &Topic{
+		dict:                 dict,
+		dicts:                newDictionaries(params.Store, domain.TopicName(params.TopicName)),
 		ProducerWindowBlocks: window,
 		Store:                params.Store,
 		Log:                  logger,
@@ -349,6 +370,9 @@ func (t *Topic) LoadOrCreate() error {
 	if err := t.rebuildProducersLocked(); err != nil {
 		return errore.Wrap(err)
 	}
+	if err := t.loadCurrentDictionaryLocked(); err != nil {
+		return errore.Wrap(err)
+	}
 
 	// Find position of last entry write to index
 	position, err := t.findCurrentIndexLogBlockPosition()
@@ -411,6 +435,7 @@ func (t *Topic) snapshot() *Topic {
 		Codec:           t.Codec,
 		Codecs:          t.Codecs,
 		flush:           t.flush,
+		dicts:           t.dicts,
 		NextOffset:      t.NextOffset,
 		HeadBlockSize:   t.HeadBlockSize,
 		LogBlockList:    append([]domain.LogBlock(nil), t.LogBlockList...),
@@ -491,14 +516,15 @@ func (t *Topic) sendBlock(ref driven.BlockRef, byteOffset int64, from domain.Off
 		return err
 	}
 	_, err = logfmt.ReadFile(logfmt.ReadFileParams{
-		Reader:     blockReader,
-		Codecs:     t.Codecs,
-		LogChan:    params.LogChan,
-		Wg:         params.Wg,
-		BatchSize:  params.BatchSize,
-		Cancel:     params.Cancel,
-		FromOffset: from,
-		EndOffset:  endOffset,
+		Reader:       blockReader,
+		Codecs:       t.Codecs,
+		Dictionaries: t.dicts,
+		LogChan:      params.LogChan,
+		Wg:           params.Wg,
+		BatchSize:    params.BatchSize,
+		Cancel:       params.Cancel,
+		FromOffset:   from,
+		EndOffset:    endOffset,
 	})
 	t.closeBlock(ref, blockReader)
 	return err
@@ -604,6 +630,14 @@ func (t *Topic) append(req WriteRequest) (*pendingFlush, domain.WriteResult, err
 		return nil, domain.WriteResult{}, errore.Wrap(err)
 	}
 
+	if t.dict != nil {
+		for _, entry := range *req.Entries {
+			t.dict.plainSince += int64(len(entry))
+		}
+		t.dict.sampleLocked(*req.Entries, t.NextOffset)
+		t.startTrainingLocked(head)
+	}
+
 	// update internal log state
 	first := t.NextOffset
 	t.recordProducerLocked(req, first, offsets, head)
@@ -639,6 +673,9 @@ func (t *Topic) Close() error {
 	t.mu.Unlock()
 	err := t.flush.flushAll()
 	t.indexWg.Wait()
+	if t.dict != nil {
+		t.dict.wg.Wait()
+	}
 	return err
 }
 
@@ -729,13 +766,26 @@ func (t *Topic) buildFrames(req WriteRequest) ([]byte, int, error) {
 			return nil
 		}
 		var err error
-		frames, err = logfmt.AppendFrameWith(frames, t.Codec, domain.FrameHeader{
+		header := domain.FrameHeader{
 			FirstOffset:  firstOffset,
 			EntryCount:   uint32(inFrame),
 			Producer:     req.Producer,
 			Sequence:     req.Sequence,
 			WriteEntries: uint32(len(*entries)),
-		}, payload)
+		}
+		before := len(frames)
+		if t.dict != nil {
+			t.dict.frames++
+			t.dict.framedEntries += int64(inFrame)
+		}
+		if t.dict != nil && t.dict.current != nil {
+			frames, err = logfmt.AppendFrameDict(frames, t.dict.codec, *t.dict.current, header, payload)
+			if err == nil {
+				t.dict.noteFrameLocked(len(payload), len(frames)-before)
+			}
+		} else {
+			frames, err = logfmt.AppendFrameWith(frames, t.Codec, header, payload)
+		}
 		if err != nil {
 			return err
 		}

@@ -78,6 +78,36 @@ func AppendFrameWith(dst []byte, codec driven.Codec, header domain.FrameHeader, 
 	return dst, nil
 }
 
+// AppendFrameDict is AppendFrameWith through a dictionary: the payload is encoded with dict,
+// and the header names it. A frame the dictionary did not shrink is stored plain and names no
+// dictionary, by the same rule as AppendFrame.
+func AppendFrameDict(dst []byte, codec driven.DictionaryCodec, dict driven.Dictionary, header domain.FrameHeader, entries []byte) ([]byte, error) {
+	start := len(dst)
+	if len(entries) > domain.MaxFrameSize {
+		return dst, errore.NewF("frame payload of %d bytes exceeds %d", len(entries), domain.MaxFrameSize)
+	}
+	header.DictID = dict.ID
+	header.Codec = uint8(codec.DictCodecID())
+	dst = append(dst, make([]byte, header.HeaderSize())...)
+	payloadStart := len(dst)
+	var err error
+	dst, err = codec.EncodeDict(dst, entries, dict)
+	if err != nil {
+		return dst[:start], errore.Wrap(err)
+	}
+	if len(dst)-payloadStart >= len(entries) {
+		// no gain: plain, and naming no dictionary, which may make the header shorter
+		header.DictID = 0
+		return AppendFrameWith(dst[:start], driven.NoCodec{}, header, entries)
+	}
+	stored := dst[payloadStart:]
+	header.StoredSize = uint32(len(stored))
+	header.PlainSize = uint32(len(entries))
+	header.PayloadCrc = crc32.Checksum(stored, crcTable)
+	domain.PutFrameHeader(dst[start:], header)
+	return dst, nil
+}
+
 // DecodeFrame returns the entry bytes a frame holds. The payload must already have been
 // checked against the header's checksum, so a failure here is the codec's, not the media's.
 //
@@ -87,6 +117,38 @@ func AppendFrameWith(dst []byte, codec driven.Codec, header domain.FrameHeader, 
 // a read hands on point into whichever buffer comes back here, and it must not be changed
 // while they are in use.
 func DecodeFrame(codecs driven.Codecs, h domain.FrameHeader, payload []byte) ([]byte, error) {
+	return DecodeFrameWith(codecs, nil, h, payload)
+}
+
+// DecodeFrameWith is DecodeFrame for a frame that may name a dictionary, which dicts finds. A
+// dictionary that cannot be found, or does not verify, is an error naming it; the frame itself
+// is intact, so nothing about it is damage.
+func DecodeFrameWith(codecs driven.Codecs, dicts driven.Dictionaries, h domain.FrameHeader, payload []byte) ([]byte, error) {
+	if h.DictID != 0 {
+		codec, err := codecs.Get(driven.CodecID(h.Codec))
+		if err != nil {
+			return nil, errore.Wrap(err)
+		}
+		withDicts, ok := codec.(driven.DictionaryCodec)
+		if !ok {
+			return nil, errore.NewF("codec %s cannot decode with a dictionary", driven.CodecID(h.Codec))
+		}
+		if dicts == nil {
+			return nil, errore.WrapWithContextF(driven.ErrDictionaryNotFound, "dictionary %016x: no dictionaries to look in", h.DictID)
+		}
+		dict, err := dicts.Dictionary(h.DictID)
+		if err != nil {
+			return nil, errore.Wrap(err)
+		}
+		entries, err := withDicts.DecodeDict(make([]byte, 0, h.PlainSize), payload, int(h.PlainSize), dict)
+		if err != nil {
+			return nil, errore.WrapWithContextF(err, "decoding with dictionary %016x", h.DictID)
+		}
+		if len(entries) != int(h.PlainSize) {
+			return nil, errore.NewF("dictionary %016x decoded %d bytes, frame says %d", h.DictID, len(entries), h.PlainSize)
+		}
+		return entries, nil
+	}
 	if driven.CodecID(h.Codec) == driven.CodecNone {
 		if len(payload) != int(h.PlainSize) {
 			return nil, errore.NewF("stored payload is %d bytes, frame says %d plain",

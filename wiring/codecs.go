@@ -1,9 +1,14 @@
 package wiring
 
 import (
-	"github.com/tcw/ibsen/core/port/driven"
+	"errors"
+	"path/filepath"
 
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	zstdcodec "github.com/tcw/ibsen/adapter/driven/compression/zstd"
+	"github.com/tcw/ibsen/core/domain"
+	"github.com/tcw/ibsen/core/port/driven"
+	"github.com/tcw/ibsen/core/topic"
 	"github.com/tcw/ibsen/errore"
 )
 
@@ -68,4 +73,35 @@ func ReadCodecs() (driven.Codecs, func(), error) {
 		return nil, nil, err
 	}
 	return codecs, zstd.Close, nil
+}
+
+// The values --compressionDict takes.
+const (
+	// DictAuto trains a dictionary per topic when the codec can use one.
+	DictAuto = "auto"
+	// DictOff writes plain codec frames, as before dictionaries.
+	DictOff = "off"
+)
+
+// ErrUnknownDictMode is a --compressionDict value that is neither auto nor off.
+var ErrUnknownDictMode = errors.New("unknown compression dictionary mode")
+
+// resolveDictMode turns --compressionDict into whether to train. Empty is auto.
+func resolveDictMode(mode string) (bool, error) {
+	switch mode {
+	case "", DictAuto:
+		return true, nil
+	case DictOff:
+		return false, nil
+	default:
+		return false, errore.WrapWithContextF(ErrUnknownDictMode, "%q, want auto or off", mode)
+	}
+}
+
+// DictionariesBeside finds the dictionaries kept beside a log block file, which is where a
+// data directory keeps them: <root>/<topic>/<id>.dict. It only reads.
+func DictionariesBeside(logFile string) driven.Dictionaries {
+	topicDir := filepath.Dir(logFile)
+	store := filestore.New(filestore.ReadOnly{FS: filestore.OS{}}, filepath.Dir(topicDir))
+	return topic.StoreDictionaries(store, domain.TopicName(filepath.Base(topicDir)))
 }

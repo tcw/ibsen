@@ -45,6 +45,7 @@ func Run(t *testing.T, newStore NewStore) {
 		{"SyncIsOptional", syncIsOptional},
 		{"ConcurrentAppendsAndReads", concurrentAppendsAndReads},
 		{"ModifiedIsWhenTheBlockLastChangedOrZero", modifiedIsWhenTheBlockLastChangedOrZero},
+		{"DictionariesAreAKindOfTheirOwn", dictionariesAreAKindOfTheirOwn},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -434,5 +435,33 @@ func modifiedIsWhenTheBlockLastChangedOrZero(t *testing.T, store driven.BlockSto
 	}
 	if blocks[0].Modified.Before(listed) {
 		t.Errorf("a truncate moved the modification time back from %v to %v", listed, blocks[0].Modified)
+	}
+}
+
+// A dictionary is named by a hash, which can be any uint64, and listed apart from the blocks
+// a topic's offsets name.
+func dictionariesAreAKindOfTheirOwn(t *testing.T, store driven.BlockStore) {
+	const id = ^uint64(0) - 1
+	mustAppend(t, store, driven.LogRef("topic", 0), []byte("log"))
+	mustAppend(t, store, driven.DictRef("topic", id), []byte("dictionary"))
+	dicts, err := store.List("topic", driven.Dict)
+	if err != nil || len(dicts) != 1 || dicts[0].Block != id || dicts[0].Size != 10 {
+		t.Fatalf("dictionaries %v, %v; want the one of 10 bytes", dicts, err)
+	}
+	logs, err := store.List("topic", driven.Log)
+	if err != nil || len(logs) != 1 || logs[0].Block != 0 {
+		t.Fatalf("log blocks %v, %v; want only block 0", logs, err)
+	}
+	reader, err := store.Open(driven.DictRef("topic", id), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := io.ReadAll(reader)
+	reader.Close()
+	if err != nil || string(content) != "dictionary" {
+		t.Fatalf("read back %q, %v", content, err)
+	}
+	if err := store.Remove(driven.DictRef("topic", id)); err != nil {
+		t.Fatal(err)
 	}
 }

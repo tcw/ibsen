@@ -40,14 +40,15 @@ import (
 // retries) or names a compression dictionary. The 36 bytes are laid out and checksummed
 // exactly as in version 1, with reserved holding the extension's length, so a build that only
 // knows version 1 verifies the header, reads version 2, and refuses the block as one it cannot
-// read rather than truncating it as damage. The extension, little endian:
+// read rather than truncating it as damage. The extension holds only what the frame uses,
+// little endian:
 //
-//	producer     [16]byte  the writer's producer id; zero for none
-//	sequence     uint64    the producer's number for the write this frame belongs to
-//	writeEntries uint32    how many entries the whole write holds, across all its frames
-//	reserved     uint32    zero
-//	dictID       uint64    the compression dictionary the payload was encoded with; zero for none
-//	extCrc       uint32    crc32c over the 40 bytes before it
+//	flags        uint8     bit 0: a producer follows; bit 1: a dictionary follows
+//	producer     [16]byte  the writer's producer id                   (bit 0)
+//	sequence     uint64    the producer's number for this write       (bit 0)
+//	writeEntries uint32    how many entries the whole write holds     (bit 0)
+//	dictID       uint64    the dictionary the payload was encoded with (bit 1)
+//	extCrc       uint32    crc32c over the extension bytes before it
 //
 // A frame with neither a producer nor a dictionary is written as version 1, so a log that
 // uses neither looks exactly as it did.
@@ -56,8 +57,9 @@ const (
 	// header, and the part of a version 2 header that precedes its extension.
 	FrameHeaderSize = 36
 
-	// FrameExtensionSize is the bytes a version 2 header adds after FrameHeaderSize.
-	FrameExtensionSize = 44
+	// FrameExtensionSize is the most bytes a version 2 header adds after FrameHeaderSize:
+	// the flags, a producer, a dictionary and the checksum.
+	FrameExtensionSize = 1 + frameProducerSize + frameDictSize + 4
 
 	// FrameMagic is "IBSF" read as a little endian uint32. A log block starts with it, so a
 	// block written before framing is reported as such instead of as corruption.
@@ -108,6 +110,28 @@ type FrameHeader struct {
 	DictID uint64
 }
 
+const (
+	frameProducerSize = 16 + 8 + 4
+	frameDictSize     = 8
+	extHasProducer    = 1 << 0
+	extHasDict        = 1 << 1
+)
+
+// extensionSize is the bytes of the version 2 extension h needs, or zero for none.
+func (h FrameHeader) extensionSize() int {
+	if !h.Extended() {
+		return 0
+	}
+	size := 1 + 4
+	if !h.Producer.IsZero() {
+		size += frameProducerSize
+	}
+	if h.DictID != 0 {
+		size += frameDictSize
+	}
+	return size
+}
+
 // Extended reports whether the header needs the version 2 extension.
 func (h FrameHeader) Extended() bool {
 	return !h.Producer.IsZero() || h.DictID != 0
@@ -115,10 +139,7 @@ func (h FrameHeader) Extended() bool {
 
 // HeaderSize is the bytes the header occupies.
 func (h FrameHeader) HeaderSize() int64 {
-	if h.Extended() {
-		return FrameHeaderSize + FrameExtensionSize
-	}
-	return FrameHeaderSize
+	return FrameHeaderSize + int64(h.extensionSize())
 }
 
 // Size is the bytes the whole frame occupies, header and payload.
@@ -145,16 +166,25 @@ func PutFrameHeader(dst []byte, h FrameHeader) {
 	binary.LittleEndian.PutUint32(encoded[0:], FrameMagic)
 	body := encoded[8:]
 	body[0] = h.Codec
-	if h.Extended() {
+	if size := h.extensionSize(); size > 0 {
 		body[1] = FrameVersionExtended
-		binary.LittleEndian.PutUint16(body[2:], FrameExtensionSize)
-		ext := dst[FrameHeaderSize : FrameHeaderSize+FrameExtensionSize]
-		copy(ext[0:16], h.Producer[:])
-		binary.LittleEndian.PutUint64(ext[16:], h.Sequence)
-		binary.LittleEndian.PutUint32(ext[24:], h.WriteEntries)
-		binary.LittleEndian.PutUint32(ext[28:], 0)
-		binary.LittleEndian.PutUint64(ext[32:], h.DictID)
-		binary.LittleEndian.PutUint32(ext[40:], crc32.Checksum(ext[:40], crc32q))
+		binary.LittleEndian.PutUint16(body[2:], uint16(size))
+		ext := dst[FrameHeaderSize : FrameHeaderSize+size]
+		ext[0] = 0
+		at := 1
+		if !h.Producer.IsZero() {
+			ext[0] |= extHasProducer
+			copy(ext[at:], h.Producer[:])
+			binary.LittleEndian.PutUint64(ext[at+16:], h.Sequence)
+			binary.LittleEndian.PutUint32(ext[at+24:], h.WriteEntries)
+			at += frameProducerSize
+		}
+		if h.DictID != 0 {
+			ext[0] |= extHasDict
+			binary.LittleEndian.PutUint64(ext[at:], h.DictID)
+			at += frameDictSize
+		}
+		binary.LittleEndian.PutUint32(ext[at:], crc32.Checksum(ext[:at], crc32q))
 	} else {
 		body[1] = FrameVersion
 		binary.LittleEndian.PutUint16(body[2:], 0)
@@ -209,27 +239,54 @@ func ReadFrameHeader(r io.Reader, maxStored uint64) (FrameHeader, error) {
 		PayloadCrc:  binary.LittleEndian.Uint32(body[24:]),
 	}
 	if version == FrameVersionExtended {
-		if extLen := binary.LittleEndian.Uint16(body[2:]); extLen != FrameExtensionSize {
-			// a checked header with an extension this build does not know is from a newer one
-			return FrameHeader{}, fmt.Errorf("%w: frame extension of %d bytes, this build reads %d",
-				ErrUnsupportedLogFormat, extLen, FrameExtensionSize)
+		extLen := int(binary.LittleEndian.Uint16(body[2:]))
+		if extLen > 0xFF {
+			// a checked header with an extension this large is from a newer build
+			return FrameHeader{}, fmt.Errorf("%w: frame extension of %d bytes", ErrUnsupportedLogFormat, extLen)
 		}
-		var ext [FrameExtensionSize]byte
-		if _, err := io.ReadFull(r, ext[:]); err != nil {
+		if extLen < 5 {
+			// checked, and not something this build writes
+			return FrameHeader{}, fmt.Errorf("%w: frame extension of %d bytes", ErrUnsupportedLogFormat, extLen)
+		}
+		var buf [0xFF]byte
+		ext := buf[:extLen]
+		if _, err := io.ReadFull(r, ext); err != nil {
 			if err == io.EOF {
 				err = io.ErrUnexpectedEOF
 			}
 			return FrameHeader{}, err
 		}
-		if binary.LittleEndian.Uint32(ext[40:]) != crc32.Checksum(ext[:40], crc32q) {
+		if binary.LittleEndian.Uint32(ext[extLen-4:]) != crc32.Checksum(ext[:extLen-4], crc32q) {
 			return FrameHeader{}, fmt.Errorf("%w: header extension checksum mismatch", ErrCorruptFrame)
 		}
-		copy(header.Producer[:], ext[0:16])
-		header.Sequence = binary.LittleEndian.Uint64(ext[16:])
-		header.WriteEntries = binary.LittleEndian.Uint32(ext[24:])
-		header.DictID = binary.LittleEndian.Uint64(ext[32:])
-		if maxStored >= FrameExtensionSize {
-			maxStored -= FrameExtensionSize
+		// only now, with the extension checked, are its flags worth reading
+		flags := ext[0]
+		if flags&^(extHasProducer|extHasDict) != 0 {
+			return FrameHeader{}, fmt.Errorf("%w: frame extension flags %#x", ErrUnsupportedLogFormat, flags)
+		}
+		at := 1
+		if flags&extHasProducer != 0 {
+			at += frameProducerSize
+		}
+		if flags&extHasDict != 0 {
+			at += frameDictSize
+		}
+		if at+4 != extLen {
+			// a newer build may add fields; this one knows exactly what these flags take
+			return FrameHeader{}, fmt.Errorf("%w: frame extension of %d bytes for flags %#x", ErrUnsupportedLogFormat, extLen, flags)
+		}
+		at = 1
+		if flags&extHasProducer != 0 {
+			copy(header.Producer[:], ext[at:at+16])
+			header.Sequence = binary.LittleEndian.Uint64(ext[at+16:])
+			header.WriteEntries = binary.LittleEndian.Uint32(ext[at+24:])
+			at += frameProducerSize
+		}
+		if flags&extHasDict != 0 {
+			header.DictID = binary.LittleEndian.Uint64(ext[at:])
+		}
+		if maxStored >= uint64(extLen) {
+			maxStored -= uint64(extLen)
 		} else {
 			maxStored = 0
 		}

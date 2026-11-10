@@ -41,6 +41,10 @@ type LogTopicManagerParams struct {
 	// ProducerWindowBlocks is how many of a topic's newest blocks a producer is remembered
 	// across; zero means topic.DefaultProducerWindowBlocks.
 	ProducerWindowBlocks int
+	// Dictionaries trains a compression dictionary per topic when Codec can use one, after
+	// DictTrainBytes of plain entries (zero means topic.DefaultDictTrainBytes).
+	Dictionaries   bool
+	DictTrainBytes int64
 	// FlushMode says when a write is acknowledged; the zero value is topic.FlushStrict. In
 	// topic.FlushLenient nothing is flushed until Flush is called, which is the composition
 	// root's job: the core starts no timer.
@@ -261,6 +265,8 @@ func (l *LogTopicsManager) loadOrCreateNewTopic(topicName domain.TopicName) (*to
 		FlushInterval:        l.Params.FlushInterval,
 		FlushMode:            l.Params.FlushMode,
 		ProducerWindowBlocks: l.Params.ProducerWindowBlocks,
+		Dictionaries:         l.Params.Dictionaries,
+		DictTrainBytes:       l.Params.DictTrainBytes,
 		Store:                l.Params.Store,
 		TopicName:            string(topicName),
 		MaxBlockSize:         l.Params.MaxBlockSize,

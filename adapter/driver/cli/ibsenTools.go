@@ -11,6 +11,7 @@ import (
 	"github.com/tcw/ibsen/core/index"
 	"github.com/tcw/ibsen/core/logfmt"
 	"github.com/tcw/ibsen/core/port/driven"
+	"github.com/tcw/ibsen/wiring"
 )
 
 // ReadLogFile prints a log block file, entry by entry. codecs is what its frames are
@@ -29,12 +30,13 @@ func ReadLogFile(fileName string, batchSize uint32, codecs driven.Codecs) error 
 	}
 	defer file.Close()
 	_, err = logfmt.ReadFile(logfmt.ReadFileParams{
-		Reader:    file,
-		Codecs:    codecs,
-		LogChan:   logChan,
-		Wg:        &wg,
-		BatchSize: batchSize,
-		EndOffset: math.MaxUint64,
+		Reader:       file,
+		Codecs:       codecs,
+		Dictionaries: wiring.DictionariesBeside(fileName),
+		LogChan:      logChan,
+		Wg:           &wg,
+		BatchSize:    batchSize,
+		EndOffset:    math.MaxUint64,
 	})
 	if err != nil {
 		return err

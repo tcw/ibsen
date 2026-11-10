@@ -19,6 +19,7 @@ func TestFrameV2_roundTrip(t *testing.T) {
 	want := v2Header()
 	encoded := AppendFrameHeader(nil, want)
 	if len(encoded) != FrameHeaderSize+FrameExtensionSize || int64(len(encoded)) != want.HeaderSize() {
+		// the full extension: flags, producer, dictionary, checksum
 		t.Fatalf("a v2 header is %d bytes", len(encoded))
 	}
 	got, err := ReadFrameHeader(bytes.NewReader(encoded), 1000)
@@ -74,8 +75,12 @@ func TestFrameV2_aCutExtensionIsTorn(t *testing.T) {
 
 func TestFrameV2_anUnknownExtensionLengthIsUnsupported(t *testing.T) {
 	encoded := AppendFrameHeader(nil, v2Header())
-	// say the extension is longer, and keep the base checksum right: a newer build's frame
-	binary.LittleEndian.PutUint16(encoded[10:], FrameExtensionSize+8)
+	// an extension longer than its flags take, with both checksums right: a newer build's
+	// frame, carrying a field this one does not know
+	ext := append(append([]byte(nil), encoded[FrameHeaderSize:len(encoded)-4]...), make([]byte, 8)...)
+	ext = binary.LittleEndian.AppendUint32(ext, crc32.Checksum(ext, crc32q))
+	encoded = append(encoded[:FrameHeaderSize], ext...)
+	binary.LittleEndian.PutUint16(encoded[10:], uint16(len(ext)))
 	binary.LittleEndian.PutUint32(encoded[4:], crc32.Checksum(encoded[8:36], crc32q))
 	if _, err := ReadFrameHeader(bytes.NewReader(encoded), 1000); !errors.Is(err, ErrUnsupportedLogFormat) {
 		t.Fatalf("got %v, want ErrUnsupportedLogFormat", err)
@@ -131,6 +136,28 @@ func TestProducerID_parsesAndPrints(t *testing.T) {
 	for _, bad := range []string{"xyz", "0102", "01020304-0506-0708-090a-0b0c0d0e0f1g"} {
 		if _, err := ParseProducerID(bad); !errors.Is(err, ErrInvalidProducerID) {
 			t.Errorf("%q: got %v", bad, err)
+		}
+	}
+}
+
+// A frame carries only the fields it uses: a dictionary alone costs 13 bytes, a producer
+// alone 33, both 41.
+func TestFrameV2_carriesOnlyWhatItUses(t *testing.T) {
+	for _, tc := range []struct {
+		h    FrameHeader
+		size int64
+	}{
+		{FrameHeader{DictID: 9}, FrameHeaderSize + 13},
+		{FrameHeader{Producer: ProducerID{1}, Sequence: 2, WriteEntries: 3}, FrameHeaderSize + 33},
+		{FrameHeader{Producer: ProducerID{1}, Sequence: 2, WriteEntries: 3, DictID: 9}, FrameHeaderSize + 41},
+	} {
+		encoded := AppendFrameHeader(nil, tc.h)
+		if int64(len(encoded)) != tc.size {
+			t.Errorf("%+v is %d bytes, want %d", tc.h, len(encoded), tc.size)
+		}
+		got, err := ReadFrameHeader(bytes.NewReader(encoded), 1000)
+		if err != nil || got != tc.h {
+			t.Errorf("read back %+v, %v; want %+v", got, err, tc.h)
 		}
 	}
 }

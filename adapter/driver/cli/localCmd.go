@@ -105,6 +105,10 @@ func runAppend(topic domain.TopicName) error {
 	if producerWindowBlocks < 1 {
 		return userErrorf("--producerWindowBlocks must be at least 1, got %d", producerWindowBlocks)
 	}
+	trainBytes, err := dictTrainBytesValue()
+	if err != nil {
+		return err
+	}
 	producer, err := domain.ParseProducerID(producerID)
 	if err != nil {
 		return userErrorf("--producerId %q is not a UUID, or 32 hex digits", producerID)
@@ -123,6 +127,8 @@ func runAppend(topic domain.TopicName) error {
 		RetainBytes:          retainBytes,
 		ConfigPath:           configPath,
 		ProducerWindowBlocks: producerWindowBlocks,
+		CompressionDict:      compressionDict,
+		DictTrainBytes:       trainBytes,
 		FlushEntries:         uint32(flushEntries),
 		FlushInterval:        time.Duration(flushIntervalMs) * time.Millisecond,
 		FlushMode:            flushMode,

@@ -80,6 +80,11 @@ type Params struct {
 	// ProducerWindowBlocks is how many of a topic's newest blocks a producer is remembered
 	// across for safe retries; zero means the core default.
 	ProducerWindowBlocks int
+	// Dictionaries trains a compression dictionary per topic, when Codec can use one: only a
+	// codec adapter that implements driven.DictionaryCodec can, so a build without one links
+	// nothing for it. DictTrainBytes is when; zero means the core default.
+	Dictionaries   bool
+	DictTrainBytes int64
 }
 
 // Log is an embedded log. It is the same driving port a gRPC server speaks, so code written
@@ -114,6 +119,8 @@ func Open(params Params) (*Log, error) {
 		FlushInterval:        params.FlushInterval,
 		FlushMode:            params.FlushMode,
 		ProducerWindowBlocks: params.ProducerWindowBlocks,
+		Dictionaries:         params.Dictionaries,
+		DictTrainBytes:       params.DictTrainBytes,
 		Logger:               params.Logger,
 	})
 	if err != nil {
