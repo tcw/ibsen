@@ -64,7 +64,7 @@ func newTestManagerWithStore(t *testing.T, store driven.BlockStore) *LogTopicsMa
 	}
 	// stop the background indexing before the test's directory goes away: on a real
 	// filesystem an indexer still writing races the cleanup, which the emulated one hid
-	t.Cleanup(m.Close)
+	t.Cleanup(func() { m.Close() })
 	return &m
 }
 
@@ -187,7 +187,7 @@ func TestManager_frameBoundsReachTheTopic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(m.Close)
+	t.Cleanup(func() { m.Close() })
 
 	writeTopic(t, &m, "topic", 0, 3)
 

@@ -22,7 +22,7 @@ func openTestLog(t *testing.T, params Params) *Log {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(log.Close)
+	t.Cleanup(func() { log.Close() })
 	return log
 }
 

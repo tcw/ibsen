@@ -278,6 +278,13 @@ the reason a change to framing, indexing or block rollover can be made with conf
 
 Tests that decide an interleaving with a gate (§2) and check the contract in it.
 
+- **Lenient mode** (`core/topic/lenient_test.go`): a write returns before any sync; nothing is
+  readable until `Flush`, nor while its sync is still running; a tailing reader sees every
+  entry once the ticker flushes; concurrent writers all land and one flush covers them;
+  `Close` flushes; a failed flush is logged with its offset range at error level and returned
+  by the next `Write`, `Flush` and `Close`, with nothing past the durable offset readable; a
+  power cut loses only what was not flushed and the log carries on from there. Strict mode's
+  tests below run unchanged, since strict is the core's zero value.
 - **Durability** (`core/topic/flush_test.go`): a reader sees nothing until the flush returns,
   and `Write` does not return either; a failed flush is reported, leaves nothing readable and
   refuses every later write; a batch that formed behind a failed flush fails with it; a failed
@@ -450,11 +457,21 @@ order, and every rule is a scan of it.
 | `write before an earlier acknowledged write` | real-time order broken: a write acknowledged before another was invoked is after it in the log |
 | `read saw what the log does not hold` | a reader was given an entry that is not at that offset afterwards — the durability promise from the reader's side |
 | `read not contiguous from where it asked` | a read skipped or repeated an offset |
+| `write lost while a later one to the same log survived` | lenient only: an acknowledged write that no flush covered is missing, but one invoked after it was acknowledged is there |
 
 **A failed write is indeterminate, not failed.** Ibsen does not promise that a write returning
 an error left nothing behind — a write is appended as frames, and recovery truncates at the
 first damaged one — so the checker allows any prefix of a failed write, at most once, and
 nothing else of it.
+
+**Lenient mode promises less, and the checker is told so.** `CheckWith(ops, final,
+Options{Lenient: true})` owes an acknowledged write to the log only once a `Flush` of the same
+log instance (recorded by `History.Flush`), invoked after the write was acknowledged, has
+succeeded. A write no flush covered may be lost or survive as a prefix, like a failed one —
+but a lost one takes with it every write to the same log invoked after it was acknowledged, and
+no reader may ever have seen it. `lenient_test.go` shows it both sides, and
+`TestCheck_strictStillOwesEveryAcknowledgedWrite` that the same lost write is still a lost
+write under `Check`.
 
 **Testing the checker.** `history_test.go` gives it every anomaly in a hand-built history, and
 the valid histories it must accept: concurrent writes in either order, a failed write that left
@@ -473,6 +490,14 @@ twelve seeds per scenario.
 | power cut keeps some of what was unsynced | `LoseSome(seed)` | |
 | power cut under coalesced flushes | `LoseSome(seed)` | `FlushEntries 20`, `FlushInterval 1ms` |
 | fsync fails, then power cut | `LoseEverything` | one log fsync fails at a random point of each life |
+| lenient: power cut loses everything unflushed | `LoseEverything` | lenient mode, a recorded flusher every 0.2–1.7 ms |
+| lenient: power cut keeps some of what was unflushed | `LoseSome(seed)` | the same |
+| lenient: fsync fails, then power cut | `LoseEverything` | the same, and one log fsync fails |
+
+The lenient scenarios run a fifth client that plays the composition root's ticker, calling
+`History.Flush` at random intervals, and are checked with `Options{Lenient: true}`. Making
+appended entries readable at once in lenient mode fails all three with lost writes and reads
+of what the power cut took.
 
 Blocks are 2000 bytes and frames three entries, so a life rolls over several times and most
 writes are several frames. The crash is brought by whichever writer reaches a random **write**
@@ -698,7 +723,8 @@ in rule 1.
 
 | promise | held by |
 |---|---|
-| an acknowledged write is durable | `flush_test.go`; `powerCut_test.go` (topic and store); `TestNemesis`; `TestCrashAtEveryStorageCall` lineage check and checker |
+| nothing is readable before it is durable (both modes); a lenient write is durable once flushed | `lenient_test.go`; `TestNemesis` lenient scenarios |
+| an acknowledged write is durable (strict) | `flush_test.go`; `powerCut_test.go` (topic and store); `TestNemesis`; `TestCrashAtEveryStorageCall` lineage check and checker |
 | nothing is readable before it is durable | `TestReadersDoNotSeeAnUnflushedEntry`; the checker's `read saw what the log does not hold`; the lineage check on reads |
 | a failed fsync is not retried | `TestAFailedFlushStopsTheTopic`, `TestABatchBehindAFailedFlushFailsWithIt`, `TestAFailedRolloverSyncStopsTheTopic`, `TestPowerCut_aFailedFsyncIsNotRetryable`, the failed-sync runs |
 | a restart does not trust a failed fsync | `TestPowerCut_aRestartAfterAFailedFsyncDoesNotWriteBehindTheHole`, `TestPowerCut_aRestartRetriesTheDirectorySyncThatFailed`, the failed-sync runs before the restart |
@@ -796,6 +822,10 @@ What the suite does not test, so nobody assumes it does:
 | `wiring/*_test.go`, `wiring/embedded/embedded_test.go` | L6 | the composition roots |
 | `adapter/driver/grpcapi/test/` | L7 | a real server on a free port; gRPC benchmarks |
 | `adapter/driver/history/history_test.go` | L8 | the checker, against hand-built histories |
-| `adapter/driver/history/nemesis_test.go` | L8 | randomised power cuts and failed fsyncs, checked |
+| `adapter/driver/history/nemesis_test.go` | L8 | randomised power cuts and failed fsyncs, checked, in both flush modes |
+| `adapter/driver/history/lenient_test.go` | L8 | the checker's lenient rules, both sides |
+| `core/topic/lenient_test.go` | L4 | lenient flush mode |
+| `wiring/flushmode_test.go` | L6 | `--flushMode`: names, the ticker in lenient mode only, a clean shutdown and close flushing |
+| `wiring/embedded/flush_test.go` | L6 | the embedded root starts no goroutine by default; its opt-in ticker; `StartFlushTicker` |
 | `adapter/driver/history/crashpoints_test.go` | L8 | a crash at every storage call, and every promise's support |
 | `adapter/driven/compression/zstd/bench_test.go`, `core/index/find_test.go` | bench | frame bound and index lookup |

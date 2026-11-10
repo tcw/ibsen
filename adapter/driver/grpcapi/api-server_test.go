@@ -48,7 +48,7 @@ func newTestServer(t *testing.T, entries int) server {
 	}
 	// stop the background indexing before the test's directory is removed: on a real
 	// filesystem an indexer still writing races the cleanup
-	t.Cleanup(logManager.Close)
+	t.Cleanup(func() { logManager.Close() })
 	s := server{manager: &logManager, TTL: time.Minute, CheckForNewEvery: time.Millisecond}
 	writeTestEntries(t, s, 0, entries)
 	return s

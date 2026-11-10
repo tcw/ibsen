@@ -13,6 +13,7 @@ import (
 )
 
 var _ driver.LogManager = &LogTopicsManager{}
+var _ driver.Flusher = &LogTopicsManager{}
 
 type LogTopicManagerParams struct {
 	ReadOnly bool
@@ -37,6 +38,10 @@ type LogTopicManagerParams struct {
 	// FlushInterval is how long a batch may be held back hoping for more entries; zero
 	// never holds one back.
 	FlushInterval time.Duration
+	// FlushMode says when a write is acknowledged; the zero value is topic.FlushStrict. In
+	// topic.FlushLenient nothing is flushed until Flush is called, which is the composition
+	// root's job: the core starts no timer.
+	FlushMode topic.FlushMode
 	// Logger is optional: a core built without one logs nothing rather than crashing.
 	Logger driven.Logger
 }
@@ -84,19 +89,38 @@ func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error)
 	return manager, nil
 }
 
-// Close stops accepting writes and topic loads, waits for those in flight, and waits for the
-// background indexing each topic's writes started, so nothing writes to storage once it
-// returns. Reads of loaded topics are not waited for: they do not write, and a tailing read
-// lasts until its client leaves. Calling Close again is a no-op.
-func (l *LogTopicsManager) Close() {
+// Close stops accepting writes and topic loads, waits for those in flight, flushes every
+// topic, and waits for the background indexing each topic's writes started, so nothing writes
+// to storage once it returns. It returns the first flush error. Reads of loaded topics are
+// not waited for: they do not write, and a tailing read lasts until its client leaves.
+// Calling Close again flushes nothing new.
+func (l *LogTopicsManager) Close() error {
 	l.state.mu.Lock()
 	l.state.closed = true
 	l.state.mu.Unlock()
 	l.state.requests.Wait()
+	var first error
 	l.Topics.Range(func(_, loaded any) bool {
-		loaded.(*topic.Topic).Close()
+		if err := loaded.(*topic.Topic).Close(); err != nil && first == nil {
+			first = err
+		}
 		return true
 	})
+	return first
+}
+
+// Flush makes every entry appended to any loaded topic before the call durable, and so
+// readable, and returns the first error. Every topic is flushed even when one fails, since a
+// failure stops only its own topic.
+func (l *LogTopicsManager) Flush() error {
+	var first error
+	l.Topics.Range(func(name, loaded any) bool {
+		if err := loaded.(*topic.Topic).Flush(); err != nil && first == nil {
+			first = errore.WrapWithContextF(err, "unable to flush topic %s", name)
+		}
+		return true
+	})
+	return first
 }
 
 // begin registers a request that may write to storage, or fails once the manager is closed.
@@ -202,6 +226,7 @@ func (l *LogTopicsManager) loadOrCreateNewTopic(topicName domain.TopicName) (*to
 		Codecs:          l.Params.Codecs,
 		FlushEntries:    l.Params.FlushEntries,
 		FlushInterval:   l.Params.FlushInterval,
+		FlushMode:       l.Params.FlushMode,
 		Store:           l.Params.Store,
 		TopicName:       string(topicName),
 		MaxBlockSize:    l.Params.MaxBlockSize,

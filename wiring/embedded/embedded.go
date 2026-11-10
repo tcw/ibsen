@@ -12,18 +12,22 @@
 // a program bringing memstore, flashstore or filestore stays inside the standard library, and
 // one wiring the zstd codec pays for zstd. Nothing in this package decides that for it.
 //
-// Nothing here is woken on a timer: indexing is driven by the write that dirtied the index,
-// and flushing by the writer that needs its entries durable.
+// Nothing here is woken on a timer unless the program asks for one: indexing is driven by
+// the write that dirtied the index, and in strict mode flushing by the writer that needs its
+// entries durable. Lenient mode needs something to call Flush; FlushInterval asks this
+// package to start a ticker that does, and leaving it zero leaves Flush to the program.
 package embedded
 
 import (
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/manager"
 	"github.com/tcw/ibsen/core/port/driven"
 	"github.com/tcw/ibsen/core/port/driver"
+	"github.com/tcw/ibsen/core/topic"
 )
 
 // DefaultMaxBlockSize is the block size an embedded build gets when it does not choose one.
@@ -48,11 +52,21 @@ type Params struct {
 	MaxBlockSize int
 	// IndexSparsity is the entries between two index pairs; zero means the core default.
 	IndexSparsity uint32
-	// FlushEntries and FlushInterval are the durability policy. Zero entries means every
-	// write is durable before it is acknowledged. A store that cannot sync ignores both,
-	// which is why memstore and flashstore pay nothing for durability.
+	// FlushMode says when a write is acknowledged: topic.FlushStrict (the zero value) once
+	// it is durable, topic.FlushLenient once it is appended, with Flush making it durable
+	// and readable later.
+	FlushMode topic.FlushMode
+	// FlushEntries and FlushInterval are the durability policy. In strict mode, zero entries
+	// means every write is durable before it is acknowledged, and the interval is how long a
+	// batch may wait for company. In lenient mode FlushInterval is the tick: Open starts a
+	// goroutine calling Flush that often, stopped by Close, and zero starts nothing and
+	// leaves Flush to the program. A store that cannot sync ignores all of it, which is why
+	// memstore and flashstore pay nothing for durability.
 	FlushEntries  uint32
 	FlushInterval time.Duration
+	// OnFlushError is told when a flush the ticker made failed; nil ignores it. The failure
+	// also stops the topic, and its next Write, Flush and Close return it.
+	OnFlushError func(error)
 	// MaxFrameEntries and MaxFrameBytes bound one frame; zero means the core defaults.
 	MaxFrameEntries uint32
 	MaxFrameBytes   int
@@ -68,10 +82,12 @@ type Params struct {
 // Log is an embedded log. It is the same driving port a gRPC server speaks, so code written
 // against one works against the other.
 type Log struct {
-	manager manager.LogTopicsManager
+	manager    manager.LogTopicsManager
+	stopTicker func()
 }
 
 var _ driver.LogManager = (*Log)(nil)
+var _ driver.Flusher = (*Log)(nil)
 
 // Open builds the log. The caller closes it, which waits for writes and the indexing they
 // started.
@@ -93,12 +109,49 @@ func Open(params Params) (*Log, error) {
 		Codecs:          params.Codecs,
 		FlushEntries:    params.FlushEntries,
 		FlushInterval:   params.FlushInterval,
+		FlushMode:       params.FlushMode,
 		Logger:          params.Logger,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Log{manager: built}, nil
+	opened := &Log{manager: built, stopTicker: func() {}}
+	if params.FlushMode == topic.FlushLenient && params.FlushInterval > 0 && !params.ReadOnly {
+		opened.stopTicker = StartFlushTicker(opened, params.FlushInterval, params.OnFlushError)
+	}
+	return opened, nil
+}
+
+// StartFlushTicker calls f.Flush every interval until the returned stop is called, which
+// waits for a flush under way to finish. It is the timer the core does not start, for a
+// composition root to own: this one in lenient mode, and the server's. onError, if not nil,
+// is told about every flush that failed.
+func StartFlushTicker(f driver.Flusher, interval time.Duration, onError func(error)) (stop func()) {
+	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
+	var stopped sync.WaitGroup
+	stopped.Add(1)
+	go func() {
+		defer stopped.Done()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if err := f.Flush(); err != nil && onError != nil {
+					onError(err)
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			ticker.Stop()
+			close(done)
+			stopped.Wait()
+		})
+	}
 }
 
 // List names the topics the log holds.
@@ -106,8 +159,9 @@ func (l *Log) List() []domain.TopicName {
 	return l.manager.List()
 }
 
-// Write appends entries to a topic, creating it if it is new, and returns once they are on
-// durable media.
+// Write appends entries to a topic, creating it if it is new. In strict mode it returns once
+// they are on durable media; in lenient mode once they are appended, and Flush makes them
+// durable.
 func (l *Log) Write(topic domain.TopicName, entries domain.EntriesPtr) error {
 	return l.manager.Write(topic, entries)
 }
@@ -117,8 +171,15 @@ func (l *Log) Read(params driver.ReadParams) error {
 	return l.manager.Read(params)
 }
 
-// Close refuses further writes and waits for those in flight and for the indexing they
-// started. Loaded topics stay readable.
-func (l *Log) Close() {
-	l.manager.Close()
+// Flush makes everything written so far durable, and readable, and returns the first error.
+func (l *Log) Flush() error {
+	return l.manager.Flush()
+}
+
+// Close stops the flush ticker if there is one, refuses further writes, waits for those in
+// flight and for the indexing they started, and flushes, so a clean exit loses nothing. It
+// returns the first flush error. Loaded topics stay readable.
+func (l *Log) Close() error {
+	l.stopTicker()
+	return l.manager.Close()
 }

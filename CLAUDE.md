@@ -218,8 +218,18 @@ Known, not yet fixed: none.
 
 ## 2. Durability
 
-Done. A write is acknowledged, and its offsets become readable, only once the flush covering
-them has returned, so a reader never sees an entry a power cut could take back.
+Done. An entry becomes readable only once the flush covering it has returned, so a reader never
+sees an entry a power cut could take back. **Since step 42 there are two flush modes** (spec 3):
+`lenient`, the default for the server and `append`, acknowledges a write once it is appended and
+fsyncs every `--flushIntervalMs` (1000) from a ticker in the composition root
+(`embedded.StartFlushTicker`), so a power cut can take back up to a tick of acknowledged writes;
+`strict` is everything below, unchanged, and is the core's zero value (`topic.FlushStrict`), so
+the embedded root defaults to it and starts no goroutine. `driver.Flusher` (beside
+`LogManager`, implemented by the manager and `embedded.Log`) is the explicit flush;
+`Topic.Close` and so every close flushes, and returns the error; `ibsen append` exits zero only
+after that last flush. A failed lenient flush is logged with its offset range and returned by
+the next `Write`, `Flush` and `Close`. Measured in `docs/OPERATIONS.md#durability`.
+What follows describes strict mode, and the parts both share:
 
 - `NextOffset` is still the next offset to assign. The read boundary is now the *durable*
   offset, which trails it by whatever is appended but not yet flushed:
@@ -657,7 +667,10 @@ and how to read their failures, recipes, and which test holds which promise — 
 41. ~~Hold the single-writer lock in the kernel (`flock`) where the platform, the filesystem
     and a self-test guarantee it, and fall back to the lease file elsewhere (spec 7).~~
 
-Every step ships green. Steps 0 to 41 are done, one commit each.
+42. ~~Lenient flushing by default, strict as an option: an explicit `Flush` behind
+    `driver.Flusher`, a ticker in the composition roots, close flushing (spec 3).~~
+
+Every step ships green. Steps 0 to 42 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —

@@ -22,7 +22,9 @@ import (
 	"github.com/tcw/ibsen/core/manager"
 	"github.com/tcw/ibsen/core/port/driven"
 	"github.com/tcw/ibsen/core/port/driver"
+	"github.com/tcw/ibsen/core/topic"
 	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/wiring/embedded"
 )
 
 var ibsenFiglet = `
@@ -77,8 +79,13 @@ type IbsenServer struct {
 	// FlushEntries and FlushInterval are the durability policy: how many entries may wait
 	// for a flush, and how long a batch may be held back hoping for more. Zero entries means
 	// topic.DefaultFlushEntries, which makes every write durable before it is acknowledged.
-	FlushEntries     uint32
-	FlushInterval    time.Duration
+	FlushEntries  uint32
+	FlushInterval time.Duration
+	// FlushMode is "lenient" (the default) or "strict". Lenient acknowledges a write once it
+	// is appended and flushes every FlushInterval, from a ticker this server owns; strict
+	// acknowledges a write once its flush has returned, and FlushEntries and FlushInterval
+	// keep their meaning above. Readers only ever see what is durable, either way.
+	FlushMode        string
 	OTELExporterAddr string
 	GRPCPrivateKey   string
 	GRPCCertKey      string
@@ -90,10 +97,12 @@ type IbsenServer struct {
 	mu            sync.Mutex
 	zstdCodec     *zstdcodec.Codec
 	topicsManager *manager.LogTopicsManager
-	grpcServer    *grpcapi.IbsenGrpcServer
-	shutdownOnce  sync.Once
-	stopping      chan struct{} // closed when a shutdown begins
-	stopped       chan struct{} // closed when the shutdown has finished
+	// stopFlushing stops the lenient flush ticker; nil when none runs
+	stopFlushing func()
+	grpcServer   *grpcapi.IbsenGrpcServer
+	shutdownOnce sync.Once
+	stopping     chan struct{} // closed when a shutdown begins
+	stopped      chan struct{} // closed when the shutdown has finished
 }
 
 // ErrUnknownCompression is returned by Start for a codec name it does not have an adapter
@@ -217,6 +226,11 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	if err := ibs.resolveCodecs(); err != nil {
 		return err
 	}
+	// refused before the lock is taken: a mode nobody asked for is not worth fencing for
+	flushMode, flushInterval, err := resolveFlushMode(ibs.FlushMode, ibs.FlushInterval)
+	if err != nil {
+		return err
+	}
 	stopping, stopped := ibs.lifecycle()
 	go ibs.initSignals()
 	log.Info().Msg(fmt.Sprintf("Using listener: %s", listener.Addr().String()))
@@ -264,7 +278,8 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 		Codec:           ibs.Codec,
 		Codecs:          ibs.Codecs,
 		FlushEntries:    ibs.FlushEntries,
-		FlushInterval:   ibs.FlushInterval,
+		FlushInterval:   flushInterval,
+		FlushMode:       flushMode,
 		Logger:          zerologger.New(log.Logger),
 	})
 	if err != nil {
@@ -272,6 +287,16 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	}
 	ibs.mu.Lock()
 	ibs.topicsManager = &topicsManager
+	if flushMode == topic.FlushLenient && !ibs.Readonly {
+		// the core starts no timer, so the one lenient mode needs is this server's; the
+		// shutdown stops it before the last flush, and a lost lease exits without either
+		ibs.stopFlushing = embedded.StartFlushTicker(&topicsManager, flushInterval, func(err error) {
+			log.Error().Err(err).Msg("a periodic flush failed; the topic it failed on takes no more writes")
+		})
+		log.Info().Msgf("flush mode lenient: acknowledging writes once appended, fsyncing every %s", flushInterval)
+	} else {
+		log.Info().Msgf("flush mode %s", flushMode)
+	}
 	ibs.mu.Unlock()
 	err = ibs.startGRPCServer(listener, &topicsManager)
 	// gRPC stops serving early in a shutdown, and the process exits once Start returns, so
@@ -382,10 +407,16 @@ func (ibs *IbsenServer) shutdown() {
 	// another instance must never write beside this one.
 	ibs.mu.Lock()
 	topicsManager := ibs.topicsManager
+	stopFlushing := ibs.stopFlushing
 	ibs.mu.Unlock()
+	if stopFlushing != nil {
+		stopFlushing()
+	}
 	if topicsManager != nil {
-		log.Info().Msg("waiting for in-flight writes and indexing to finish...")
-		topicsManager.Close()
+		log.Info().Msg("waiting for in-flight writes and indexing to finish, and flushing...")
+		if err := topicsManager.Close(); err != nil {
+			log.Error().Err(err).Msg("the last flush failed: acknowledged writes may not be on durable media")
+		}
 	}
 
 	// nothing reads or writes a frame any more, so the codec's buffers can go

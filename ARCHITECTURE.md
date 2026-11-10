@@ -266,6 +266,17 @@ The whole of what a log server offers. `grpcapi` consumes it, `core/manager` imp
 and `embedded.Log` satisfies it — which is why code written against an embedded log works
 against a server and back. A driving adapter names this port and never the implementation.
 
+```go
+type Flusher interface {
+	Flush() error
+}
+```
+
+`driver.Flusher` sits beside it, the way `driven.Syncable` sits beside `BlockStore`: when to
+flush is a decision for whoever runs the log, not for every client of it, so the three-call
+port stays three calls. The manager and `embedded.Log` implement it. In lenient mode it is the
+only thing that flushes; in strict mode it waits for flushes already under way.
+
 `ReadParams` carries a channel of batches, a `WaitGroup` the caller uses to take them back, a
 starting offset, a batch size and a `Cancel` channel. `Cancel` exists because a read can
 outlive its caller: a gRPC client that goes away, or a stream whose `Send` fails, must be able
@@ -460,8 +471,36 @@ them for good. A reader that wants more reads again, from where it stopped.
 
 ## 9. Durability
 
-**A write is acknowledged, and its offsets become readable, only once the flush covering them
-has returned.** A reader never sees an entry a power cut could take back.
+**An entry becomes readable only once the flush covering it has returned**, in every mode. A
+reader never sees an entry a power cut could take back.
+
+**When a writer is told its write succeeded depends on the flush mode**, and in the default it
+no longer means "durable":
+
+| | `lenient` (default) | `strict` |
+|---|---|---|
+| writer acknowledged | once the append is in the page cache | once the fsync covering it returns |
+| entry readable | after the next flush | after the fsync covering it |
+| fsync | every `--flushIntervalMs` (1000), and on close | per write, coalesced across concurrent writers |
+| process crash | nothing lost | nothing lost |
+| power cut or kernel crash | acknowledged writes since the last flush can be lost | nothing acknowledged is lost |
+
+`topic.FlushMode` carries it. `FlushStrict` is the zero value, so a core built by a caller that
+says nothing is as safe as it can be; the composition roots of the server and of `ibsen
+append` default to lenient, and the embedded root to strict.
+
+In lenient mode `Topic.Write` returns once `append` has, without waiting on the flusher — unless
+the batch it joined has already failed, since entries appended behind a failed fsync can never
+be covered by a later one. **Nothing in the core flushes a lenient topic.** `Topic.Flush`,
+`LogTopicsManager.Flush` and `embedded.Log.Flush` do, behind `driver.Flusher` (§6.1), and the
+composition root calls them on a ticker it owns (§14): the core still starts no timer
+(invariant 11). `Topic.Close`, and so the manager's and every root's close, flushes too, so a
+clean exit loses nothing in either mode; the lease-lost path still exits without flushing
+(§16.1).
+
+The rollover barrier (§9.4), directory syncs for new names (§9.5), dropping the head block's
+cache before recovery (§9.6) and recovery itself are the same in both modes. They are about
+what the media holds, and lenient mode changes only when the writer hears about it.
 
 `NextOffset` is still the next offset to assign. The read boundary is the **durable offset**,
 which trails it by whatever is appended but not yet flushed. `endBoundaryForReadOffset`
@@ -469,12 +508,20 @@ returns it, and `snapshot()` carries the flusher so a read is bounded by it.
 
 ### 9.1 Policy
 
+In strict mode:
+
 | parameter | zero means | effect |
 |---|---|---|
 | `FlushEntries` | `DefaultFlushEntries` = 1 | how many entries may wait before a flush is forced |
 | `FlushInterval` | never hold back | how long a batch may wait hoping for more entries |
 
+In lenient mode neither applies inside the core. `FlushInterval` is the composition root's
+tick, and `wiring` refuses to start a lenient server or append with an interval of 0 from the
+command line, since nothing would ever be flushed; a programmatic zero means the default second.
+
 ### 9.2 No background goroutine
+
+(In strict mode. In lenient mode the flush is driven by `Flush`, from the root's ticker.)
 
 The writer that needs its entries durable drives the flush; writers whose entries joined the
 same batch wait on it. The core starts no timers it does not own and no goroutine outlives a
@@ -700,13 +747,16 @@ Two packages, not two build tags. Nothing is excluded; a program imports the roo
 
 ```
 Start(listener)
-  ├─ defaults()            build the adapters not injected: file lease at <root>/.writeLock,
-  │                        or NoFileLock for in-memory mode
+  ├─ defaults()            build the adapters not injected: the --lock adapter over
+  │                        <root>/.writeLock, or NoFileLock for in-memory mode
   ├─ resolveCodecs()       "zstd" → build the adapter; unknown name → ErrUnknownCompression
+  ├─ resolveFlushMode()    lenient | strict; unknown name → ErrUnknownFlushMode
   ├─ blockStore()          memstore | filestore.NewOS | filestore.ReadOnly
-  ├─ AcquireLock()         refused → ErrWriteLockUnavailable (matchable with errors.Is)
+  ├─ acquireWriteLock()    refused → ErrWriteLockUnavailable (matchable with errors.Is)
   ├─ telemetry exporter    lifetime held here, not by the gRPC adapter
   ├─ manager.NewLogTopicsManager
+  ├─ flush ticker          lenient mode only: embedded.StartFlushTicker calls Flush every
+  │                        interval; the shutdown stops it, then closes (and so flushes)
   ├─ startGRPCServer
   └─ wait for shutdown     Start returns only once the shutdown has finished,
                            because the process exits when it returns
@@ -735,6 +785,11 @@ log, err := embedded.Open(embedded.Params{Store: memstore.New()})
 chosen**: this package imports nothing but `core/`, so a program bringing `memstore`,
 `flashstore` or `filestore` stays inside the standard library, and one wiring the zstd codec
 pays for zstd. The logger and codec default to `NopLogger` and `NoCodec`.
+
+It defaults to strict flushing and starts no goroutine. `Params.FlushMode` lenient
+acknowledges writes once appended; with `FlushInterval` set, `Open` starts a ticker calling
+`Flush` (stopped by `Close`), and with it zero the program calls `Flush` itself. The ticker is
+`embedded.StartFlushTicker`, which the server root uses too.
 
 `ErrNoStore` is returned when no store is given. There is no default, because where the bytes
 go is the one decision an embedded build has to make, and guessing would be the package
@@ -975,12 +1030,14 @@ The rules that must not be broken, collected:
 3. No length read from storage is acted on before it has been checked.
 4. `Append` is all or nothing; a failure that cannot be rolled back wraps `ErrDirtyBlock`.
 5. One `Write` reaches the store as exactly one `Append`.
-6. An entry is readable only once the flush covering it has returned.
+6. An entry is readable only once the flush covering it has returned, in every flush mode.
+   An acknowledgement means durable in strict mode only; in lenient mode it means appended.
 7. A codec id is a promise about bytes already on disk.
 8. A `BlockStore` decorator forwards `Syncable`.
 9. A block that is not damaged is never truncated.
 10. The index says nothing the log does not, and may always be rebuilt from it.
-11. The core starts no goroutine that outlives the call which made it, and no timer at all.
+11. The core starts no goroutine that outlives the call which made it, and no timer at all. The
+    lenient flush tick is the composition root's.
 12. A failed fsync stops the topic; it is never retried.
 13. A block before the head is whole: a rollover syncs the old head before the new block exists.
 14. A write is acknowledged only once its block's name, and its topic's, are durable too.

@@ -92,7 +92,7 @@ func TestSecureServer_loadsCertificateFromRelativePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(logManager.Close)
+	t.Cleanup(func() { logManager.Close() })
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

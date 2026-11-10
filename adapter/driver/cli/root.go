@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -27,6 +28,7 @@ var (
 	indexSparsity               int
 	flushEntries                int
 	flushIntervalMs             int
+	flushMode                   string
 	compression                 string
 	compressionLevel            string
 	maxFrameEntries             int
@@ -88,8 +90,8 @@ var (
 			if flushEntries < 1 {
 				log.Fatal().Msgf("flushEntries must be at least 1, got %d", flushEntries)
 			}
-			if flushIntervalMs < 0 {
-				log.Fatal().Msgf("flushIntervalMs cannot be negative, got %d", flushIntervalMs)
+			if err := validateFlush(flushMode, flushIntervalMs); err != nil {
+				fail(err, "invalid flush settings")
 			}
 			if err := validateFrameBounds(maxFrameEntries, maxFrameBytes); err != nil {
 				log.Fatal().Err(err).Msg("invalid frame bounds")
@@ -107,6 +109,7 @@ var (
 				CompressionLevel: compressionLevel,
 				FlushEntries:     uint32(flushEntries),
 				FlushInterval:    time.Duration(flushIntervalMs) * time.Millisecond,
+				FlushMode:        flushMode,
 				LockMode:         lockMode,
 				OTELExporterAddr: OTELExporterAddr,
 				GRPCCertKey:      AbsOrEmpty(certKey),
@@ -317,6 +320,24 @@ var (
 	}
 )
 
+// flushModeHelp is --flushMode's help, shared by the server and append.
+const flushModeHelp = "When a write is acknowledged: lenient (once it is in the page cache, fsyncing every --flushIntervalMs) or strict (once the fsync covering it returns). Entries are readable only once durable, in both"
+
+// validateFlush refuses flush settings that cannot work: an unknown mode, a negative interval,
+// and a lenient interval of zero, which would never flush and so never make anything readable.
+func validateFlush(mode string, intervalMs int) error {
+	if mode != wiring.FlushLenient && mode != wiring.FlushStrict {
+		return userErrorf("--flushMode %q is not one of %s", mode, strings.Join(wiring.FlushModes, ", "))
+	}
+	if intervalMs < 0 {
+		return userErrorf("--flushIntervalMs cannot be negative, got %d", intervalMs)
+	}
+	if mode == wiring.FlushLenient && intervalMs == 0 {
+		return userErrorf("--flushIntervalMs must be at least 1 in lenient mode, since it is how often anything is flushed; use --flushMode strict to flush every write")
+	}
+	return nil
+}
+
 // lockFlagHelp is --lock's help, shared by every command that writes.
 const lockFlagHelp = "Single-writer lock on the data directory: auto (a kernel lock where it is guaranteed, the lease file elsewhere), flock (a kernel lock, or refuse to start), file (the renewed lease file) or none"
 
@@ -423,7 +444,8 @@ func init() {
 	host = getenv("IBSEN_HOST", "0.0.0.0")
 	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "1000"))
 	flushEntries, _ = strconv.Atoi(getenv("IBSEN_FLUSH_ENTRIES", strconv.FormatUint(uint64(topic.DefaultFlushEntries), 10)))
-	flushIntervalMs, _ = strconv.Atoi(getenv("IBSEN_FLUSH_INTERVAL_MS", "0"))
+	flushIntervalMs, _ = strconv.Atoi(getenv("IBSEN_FLUSH_INTERVAL_MS", strconv.Itoa(int(wiring.DefaultFlushInterval/time.Millisecond))))
+	flushMode = getenv("IBSEN_FLUSH_MODE", wiring.DefaultFlushMode)
 	indexSparsity, _ = strconv.Atoi(getenv("IBSEN_INDEX_SPARSITY", strconv.FormatUint(uint64(topic.DefaultIndexSparsity), 10)))
 	maxFrameEntries, _ = strconv.Atoi(getenv("IBSEN_MAX_FRAME_ENTRIES", strconv.FormatUint(uint64(topic.DefaultMaxFrameEntries), 10)))
 	maxFrameBytes, _ = strconv.Atoi(getenv("IBSEN_MAX_FRAME_BYTES", strconv.Itoa(topic.DefaultMaxFrameBytes)))
@@ -442,8 +464,9 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&trace, "trace", "t", false, "set logging to trace level")
 
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
-	cmdServer.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush before --flushIntervalMs is up; it does nothing on its own, since an interval of 0 flushes every batch at once")
-	cmdServer.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits")
+	cmdServer.Flags().StringVarP(&flushMode, "flushMode", "", flushMode, flushModeHelp)
+	cmdServer.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Strict mode: entries that may wait for a flush before --flushIntervalMs is up; it does nothing on its own, since an interval of 0 flushes every batch at once")
+	cmdServer.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Lenient mode: milliseconds between fsyncs, at least 1. Strict mode: milliseconds a batch may wait for more entries before flushing, 0 never waits")
 	cmdServer.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
 	cmdServer.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
 	cmdServer.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
@@ -467,8 +490,9 @@ func init() {
 	cmdAppend.Flags().StringVarP(&framing, "framing", "", "lines", "How stdin delimits entries: lines or length (a little-endian uint64 byte count before each entry)")
 	cmdAppend.Flags().IntVarP(&appendBatchSize, "batchSize", "", stdio.DefaultAppendBatchSize, "Entries written in one call, which is one append and one flush: the throughput dial for a stream. A batch is also written whenever the stream has nothing more ready, so a slow feed never waits for one to fill")
 	cmdAppend.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
-	cmdAppend.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush; it groups concurrent writers, of which a stream has none, so use --batchSize instead")
-	cmdAppend.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits. A stream has nobody to wait for, so this only delays it")
+	cmdAppend.Flags().StringVarP(&flushMode, "flushMode", "", flushMode, flushModeHelp+". Either way append exits zero only once everything it wrote is durable")
+	cmdAppend.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Strict mode: entries that may wait for a flush; it groups concurrent writers, of which a stream has none, so use --batchSize instead")
+	cmdAppend.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Lenient mode: milliseconds between fsyncs, at least 1. Strict mode: milliseconds a batch may wait for more entries before flushing; a stream has nobody to wait for, so this only delays it")
 	cmdAppend.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
 	cmdAppend.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
 	cmdAppend.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")

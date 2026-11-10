@@ -27,3 +27,13 @@ type LogManager interface {
 	Write(topic domain.TopicName, entries domain.EntriesPtr) error
 	Read(params ReadParams) error
 }
+
+// Flusher is the optional capability to make everything written so far durable, and so
+// readable, now. It sits beside LogManager rather than in it, the way driven.Syncable sits
+// beside BlockStore: the three calls are the whole of what a log offers its clients, and when
+// to flush is a decision for whoever runs the log, not for every client of it. In lenient
+// flush mode it is the only thing that flushes; in strict mode it waits for flushes already
+// under way.
+type Flusher interface {
+	Flush() error
+}

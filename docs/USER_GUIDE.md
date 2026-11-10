@@ -165,6 +165,13 @@ func main() {
 A runnable version of this is in
 [`wiring/embedded/example`](../wiring/embedded/example/main.go).
 
+An embedded log is strict by default: `Write` returns once the entries are on durable media.
+`embedded.Params{FlushMode: topic.FlushLenient}` acknowledges a write once it is appended
+instead, and nothing is durable or readable until it is flushed. Set `FlushInterval` and
+`Open` starts a ticker that calls `Flush` that often, or leave it zero and call `log.Flush()`
+yourself. `Close` flushes either way, and returns the error if that flush failed. See
+[Durability](OPERATIONS.md#durability) for what each mode risks.
+
 ### Swapping stores
 
 Swap `filestore.NewOS(dir)` for `memstore.New()` to keep it in RAM, or for `flashstore` to

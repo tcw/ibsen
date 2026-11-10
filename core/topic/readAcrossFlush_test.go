@@ -34,7 +34,7 @@ func TestReadDoesNotSkipTheEndOfABlockWhenAFlushLandsDuringIt(t *testing.T) {
 	if err = topic.LoadOrCreate(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(topic.Close)
+	t.Cleanup(func() { topic.Close() })
 	if err = topic.Write(&three); err != nil {
 		t.Fatal(err)
 	}

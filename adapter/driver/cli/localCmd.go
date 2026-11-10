@@ -93,6 +93,9 @@ func runAppend(topic domain.TopicName) error {
 	if err := validateFrameBounds(maxFrameEntries, maxFrameBytes); err != nil {
 		return err
 	}
+	if err := validateFlush(flushMode, flushIntervalMs); err != nil {
+		return err
+	}
 	root, err := localRoot()
 	if err != nil {
 		return err
@@ -105,6 +108,7 @@ func runAppend(topic domain.TopicName) error {
 		MaxFrameBytes:    maxFrameBytes,
 		FlushEntries:     uint32(flushEntries),
 		FlushInterval:    time.Duration(flushIntervalMs) * time.Millisecond,
+		FlushMode:        flushMode,
 		Compression:      compression,
 		CompressionLevel: compressionLevel,
 		LockMode:         lockMode,
@@ -112,13 +116,18 @@ func runAppend(topic domain.TopicName) error {
 	if err != nil {
 		return localOpenError(root, err)
 	}
-	defer local.Close()
 	written, err := stdio.Append(local, topic, os.Stdin, stdio.AppendParams{
 		Framing:   chosen,
 		BatchSize: appendBatchSize,
 	})
+	// closing flushes what lenient mode has not yet: append exits zero only once everything
+	// it wrote is on durable media, in either mode, so a pipeline that finished means durable
+	closeErr := local.Close()
 	if err != nil {
 		return errore.WrapWithContextF(err, "wrote %d entries before failing", written)
+	}
+	if closeErr != nil {
+		return errore.WrapWithContextF(closeErr, "wrote %d entries, and the flush that would have made them durable failed", written)
 	}
 	log.Debug().Msgf("appended %d entries to %s", written, topic)
 	return nil

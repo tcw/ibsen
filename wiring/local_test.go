@@ -22,7 +22,7 @@ func openLocal(t *testing.T, params LocalParams) *LocalLog {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(local.Close)
+	t.Cleanup(func() { local.Close() })
 	return local
 }
 

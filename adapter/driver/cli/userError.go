@@ -59,6 +59,8 @@ func localOpenError(root string, err error) error {
 		return userErrorf("%s is not there, give a data directory that exists", root)
 	case errors.Is(err, wiring.ErrWriteLockUnavailable):
 		return userErrorf("%s is being written by another process, and a log takes one writer at a time", root)
+	case errors.Is(err, wiring.ErrUnknownFlushMode):
+		return userErrorf("--flushMode %q is not one of %s", flushMode, strings.Join(wiring.FlushModes, ", "))
 	case errors.Is(err, wiring.ErrUnknownLock):
 		return userErrorf("--lock %q is not one of %s", lockMode, strings.Join(wiring.LockModes, ", "))
 	case errors.Is(err, wiring.ErrLockNotGuaranteed):

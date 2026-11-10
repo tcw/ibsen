@@ -61,8 +61,9 @@ showed that a database can be a file and a library. Ibsen does the same for logs
 - **The file format is the interface.** Every entry carries its own checksum, so damage is
   caught, never served.
 
-And it is safe: once Ibsen says a write is saved, it really is on disk, and no reader ever sees
-an entry that a power cut could take back.
+And it is safe: no reader ever sees an entry that a power cut could take back. Writes are
+fast by default, and `--flushMode strict` makes every acknowledged write durable before Ibsen
+says it is saved.
 
 ## Try it in a minute
 

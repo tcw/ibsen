@@ -30,8 +30,9 @@ Every server flag has an environment variable, so containers need no command lin
 | `-d, --rootDirectory` | `IBSEN_ROOT_DIRECTORY` | *(unset)* | where the log is kept; unset means in memory |
 | `-l, --host` / `-p, --port` | `IBSEN_HOST` / `IBSEN_PORT` | `0.0.0.0` / `54321` | gRPC listener |
 | `-m, --maxBlockSize` | `IBSEN_MAX_BLOCK_SIZE` | `1000` | MB per block before rolling over |
-| `-f, --flushEntries` | `IBSEN_FLUSH_ENTRIES` | `1` | entries that may wait for a flush before `--flushIntervalMs` is up; on its own it does nothing |
-| `--flushIntervalMs` | `IBSEN_FLUSH_INTERVAL_MS` | `0` | how long a batch may wait for company; `0` never waits |
+| `--flushMode` | `IBSEN_FLUSH_MODE` | `lenient` | when a write is acknowledged: `lenient` or `strict`; see [Durability](#durability) |
+| `--flushIntervalMs` | `IBSEN_FLUSH_INTERVAL_MS` | `1000` | lenient: milliseconds between fsyncs, at least 1. Strict: how long a batch may wait for company, `0` never waits |
+| `-f, --flushEntries` | `IBSEN_FLUSH_ENTRIES` | `1` | strict only: entries that may wait for a flush before `--flushIntervalMs` is up; on its own it does nothing |
 | `-i, --indexSparsity` | `IBSEN_INDEX_SPARSITY` | `10` | entries between index pairs |
 | `--maxFrameEntries` | `IBSEN_MAX_FRAME_ENTRIES` | `1000` | entries that may share a frame |
 | `--maxFrameBytes` | `IBSEN_MAX_FRAME_BYTES` | `1 MiB` | entry bytes that may share a frame, before compression |
@@ -52,25 +53,73 @@ The filter commands (`append`, `cat`, `topics`) and their own flags are describe
 
 ## Durability
 
-A write is acknowledged, and its entries become readable, only once the flush covering them
-has returned. A reader never sees an entry that a power cut could take back. There is no
-background flusher goroutine: the writer that needs its entries durable drives the sync, and
-writers whose entries joined the same batch wait on the same one.
+Ibsen has two flush modes. Both keep the promise that matters most to readers: **no reader
+ever sees an entry that a power cut could take back**. They differ in when a *writer* is told
+its write is saved.
 
-The default is an fsync per write. The two flush flags work as a pair, and raising
-`--flushEntries` on its own changes nothing: with `--flushIntervalMs 0` a batch is never held
-back, so every write is flushed at once whatever the entry count says. Set an interval and the
-count becomes the escape from it — "enough have arrived, do not wait out the rest" — and what
-you are buying is writers whose entries wait together, at the cost of the latency of the ones
-that arrive early. The entries are still never *readable* before they are durable. A store
-that cannot sync, like `memstore`, pays none of this: its entries are durable the moment the
-append returns.
+- **Lenient (the default) is fast.** A write is acknowledged as soon as it is in the operating
+  system's page cache, and Ibsen fsyncs about once a second. If the Ibsen process crashes,
+  nothing is lost: the operating system still has the data. If the machine loses power, or
+  the kernel crashes, writes acknowledged since the last fsync can be lost.
+- **Strict waits for the disk.** A write is acknowledged only once the fsync covering it has
+  returned, so nothing that was acknowledged can be lost, even to a power cut. Concurrent
+  writers share fsyncs, but each write still waits for one.
+
+| | `lenient` (default) | `strict` |
+|---|---|---|
+| writer acknowledged | once the append is in the page cache | once the fsync covering it returns |
+| entry readable | after the next fsync | after the fsync covering it |
+| fsync | every `--flushIntervalMs` (default 1000), and on a clean exit | per write, shared by writers arriving together |
+| Ibsen process crash | nothing lost | nothing lost |
+| power cut or kernel crash | acknowledged writes since the last fsync can be lost | nothing acknowledged is lost |
+
+**Pick strict** (`--flushMode strict`, or `IBSEN_FLUSH_MODE=strict`) when losing up to a
+second of acknowledged writes after a power cut is unacceptable: payments, orders, anything a
+client will not send again because it was told the write succeeded. Lenient is the right
+default for events, metrics and logs, where the source can be replayed or a second's loss in a
+power cut is tolerable.
+
+In both modes a clean shutdown of the server, and the end of an `ibsen append`, flushes
+everything first: **`append` exits zero only once everything it wrote is on durable media**,
+so a pipeline that finished means durable either way. A store that cannot sync, like
+`memstore`, pays none of this: its entries are durable, and readable, the moment the append
+returns.
+
+What it costs and buys, appending 30,000 JSON lines one per write (`--batchSize 1`) to ext4 on
+a virtio disk, and reading back one entry written alone (the time from the write being sent to
+a reader seeing it):
+
+| | `lenient` | `strict` |
+|---|---|---|
+| 30,000 one-entry writes | **0.37 s** | 5.4 s |
+| 30,000 entries, 10 per write | 0.12 s | 0.65 s |
+| 300,000 entries, default `--batchSize` | 0.18 s | 0.19 s |
+| one write acknowledged (median) | 0.10 ms | 0.65 ms |
+| one entry readable (median / max) | 0.95 s / 1.00 s | 0.75 ms / 3.7 ms |
+
+So lenient is what makes small writes fast — fourteen times here, more on slower disks — and a
+large batch costs the same either way, because one fsync per ten thousand entries is nothing.
+The price is the reader's: in lenient mode an entry becomes readable at the next tick, so a
+tailing reader runs up to `--flushIntervalMs` behind the writer. Lower it to shorten the lag
+at the cost of more fsyncs.
+
+### Strict mode's flush policy
+
+In strict mode the two flush flags work as a pair, and raising `--flushEntries` on its own
+changes nothing: with `--flushIntervalMs 0` a batch is never held back, so every write is
+flushed at once whatever the entry count says. (The default interval of 1000 is held back only
+while fewer than `--flushEntries` entries are waiting, and with the default of 1 that is never.)
+Set an interval and a larger count and the count becomes the escape from it — "enough have
+arrived, do not wait out the rest" — and what you are buying is writers whose entries wait
+together, at the cost of the latency of the ones that arrive early. There is no background
+flusher goroutine in strict mode: the writer that needs its entries durable drives the sync,
+and writers whose entries joined the same batch wait on the same one.
 
 ### `--batchSize` is the dial for `append`
 
-For `append` none of that applies, because a stream is a single writer and there is nobody
-else's batch for its entries to join: holding one back only makes it wait. **`--batchSize` is
-the dial there.** One write is one append and one flush, so appending 126,574 lines costs 14
+In strict mode the flush policy does nothing for `append`, because a stream is a single writer
+and there is nobody else's batch for its entries to join: holding one back only makes it wait.
+**`--batchSize` is the dial there.** One write is one append and one flush, so appending 126,574 lines costs 14
 fsyncs at the default 10000 and 128 at `--batchSize 1000`, while `--flushEntries 10000` costs
 the same as not passing it at all. A 400 MB stream of 12.6M lines took 11–22s at the default
 against 55–86s at 1000, three runs each on an ordinary disk. Nothing about durability changes
@@ -86,8 +135,11 @@ bulk load keeps the reader's buffer full, so its batches fill before they run dr
 
 ### A failed fsync stops the topic
 
-The writes waiting on it get the error, and every later write to that topic is refused until
-the process is restarted; other topics carry on. It is not retried, because on Linux a retry
+In strict mode the writes waiting on it get the error. In lenient mode those writes were
+already acknowledged, so the failure is logged at error level with the range of offsets it
+covered, and the next write, flush or shutdown of that topic reports it. In both, every later
+write to that topic is refused until the process is restarted, nothing past the last
+successful fsync ever becomes readable, and other topics carry on. It is not retried, because on Linux a retry
 succeeds without writing what the failed one dropped, and the next write would be acknowledged
 behind a hole. On restart the head block is read from the disk rather than the page cache (on
 Linux), so recovery sees the hole and cuts there. A failing fsync usually means failing

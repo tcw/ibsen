@@ -46,6 +46,10 @@ type LocalParams struct {
 	// MaxFrameEntries and MaxFrameBytes bound one frame; zero means the core defaults.
 	MaxFrameEntries uint32
 	MaxFrameBytes   int
+	// FlushMode is "lenient" (the default) or "strict"; see IbsenServer.FlushMode. In
+	// lenient mode FlushInterval is the tick, zero meaning DefaultFlushInterval, and Close
+	// flushes whatever the last tick did not.
+	FlushMode string
 	// FlushEntries and FlushInterval are the durability policy; zero entries flushes every
 	// write before acknowledging it.
 	FlushEntries  uint32
@@ -85,6 +89,10 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 			"path [%s] will not be opened unless it exists", params.RootPath)
 	}
 
+	flushMode, flushInterval, err := resolveFlushMode(params.FlushMode, params.FlushInterval)
+	if err != nil {
+		return nil, err
+	}
 	codec, codecs, zstd, err := buildCodecs(params.Compression, params.CompressionLevel, nil, nil)
 	if err != nil {
 		return nil, err
@@ -124,10 +132,14 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 		MaxFrameEntries: params.MaxFrameEntries,
 		MaxFrameBytes:   params.MaxFrameBytes,
 		FlushEntries:    params.FlushEntries,
-		FlushInterval:   params.FlushInterval,
-		Codec:           codec,
-		Codecs:          codecs,
-		Logger:          logger,
+		FlushInterval:   flushInterval,
+		FlushMode:       flushMode,
+		OnFlushError: func(err error) {
+			log.Error().Err(err).Msg("a periodic flush failed; the topic it failed on takes no more writes")
+		},
+		Codec:  codec,
+		Codecs: codecs,
+		Logger: logger,
 	})
 	if err != nil {
 		zstd.Close()
@@ -149,14 +161,16 @@ func localStore(params LocalParams) driven.BlockStore {
 
 // Close finishes what is under way and releases the directory, in the order the server's
 // shutdown uses: the log first, because closing it waits for writes and the indexing they
-// started; then the codec's buffers, once nothing reads or writes a frame; then the lease,
-// once nothing will write again.
-func (l *LocalLog) Close() {
-	l.Log.Close()
+// started and flushes what they left; then the codec's buffers, once nothing reads or writes
+// a frame; then the lease, once nothing will write again. It returns the last flush's error,
+// which in lenient mode is the difference between a clean exit and lost writes.
+func (l *LocalLog) Close() error {
+	err := l.Log.Close()
 	if l.zstd != nil {
 		l.zstd.Close()
 	}
 	if l.lock != nil {
 		l.lock.ReleaseLock()
 	}
+	return err
 }

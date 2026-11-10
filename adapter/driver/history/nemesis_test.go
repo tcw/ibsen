@@ -14,6 +14,7 @@ import (
 	"github.com/tcw/ibsen/adapter/driver/history"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/manager"
+	"github.com/tcw/ibsen/core/topic"
 )
 
 // These tests are the Jepsen shape on one machine: concurrent clients write and read through
@@ -32,6 +33,9 @@ type scenario struct {
 	// the flush policy under test; zero is the default, every write synced before it is acked
 	flushEntries  uint32
 	flushInterval time.Duration
+	// lenient acknowledges writes once appended; a ticker goroutine, recorded in the history,
+	// flushes every millisecond or so, as the composition root's would
+	lenient bool
 }
 
 const (
@@ -54,6 +58,13 @@ func TestNemesis(t *testing.T) {
 		{name: "fsync fails, then power cut",
 			loss:      func(uint64) faultfs.Loss { return faultfs.LoseEverything() },
 			failSyncs: true},
+		{name: "lenient: power cut loses everything unflushed",
+			loss: func(uint64) faultfs.Loss { return faultfs.LoseEverything() }, lenient: true},
+		{name: "lenient: power cut keeps some of what was unflushed",
+			loss: faultfs.LoseSome, lenient: true},
+		{name: "lenient: fsync fails, then power cut",
+			loss:      func(uint64) faultfs.Loss { return faultfs.LoseEverything() },
+			failSyncs: true, lenient: true},
 	} {
 		t.Run(s.name, func(t *testing.T) {
 			for seed := uint64(1); seed <= seedsPerRun; seed++ {
@@ -109,6 +120,18 @@ func runSeed(t *testing.T, s scenario, seed uint64) {
 				}
 			}()
 		}
+		if s.lenient {
+			process := life*100 + 90
+			rng := rand.New(rand.NewPCG(seed, uint64(process)))
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for !cache.Crashed() {
+					time.Sleep(time.Duration(200+rng.IntN(1500)) * time.Microsecond)
+					_ = h.Flush(m, process)
+				}
+			}()
+		}
 		for r := 0; r < readers; r++ {
 			process := life*100 + 50 + r
 			rng := rand.New(rand.NewPCG(seed, uint64(process)))
@@ -141,7 +164,7 @@ func runSeed(t *testing.T, s scenario, seed uint64) {
 	if acked := countAcked(ops); acked == 0 {
 		t.Fatalf("seed %d: no write was acknowledged, so nothing was tested", seed)
 	}
-	if anomalies := history.Check(ops, final); len(anomalies) > 0 {
+	if anomalies := history.CheckWith(ops, final, history.Options{Lenient: s.lenient}); len(anomalies) > 0 {
 		t.Errorf("seed %d: %d anomalies, first %s", seed, len(anomalies), summarize(anomalies))
 	}
 }
@@ -156,11 +179,19 @@ func newManager(t *testing.T, store *filestore.Store, s scenario) *manager.LogTo
 		MaxFrameEntries: 3,
 		FlushEntries:    s.flushEntries,
 		FlushInterval:   s.flushInterval,
+		FlushMode:       flushModeOf(s),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return &m
+}
+
+func flushModeOf(s scenario) topic.FlushMode {
+	if s.lenient {
+		return topic.FlushLenient
+	}
+	return topic.FlushStrict
 }
 
 // readBack opens the directory as a restarted server would, on the real filesystem, and reads

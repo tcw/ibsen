@@ -115,6 +115,11 @@ type Params struct {
 	// FlushInterval is how long a batch may be held back hoping for more entries. Zero
 	// never holds one back. A store that cannot sync ignores both.
 	FlushInterval time.Duration
+	// FlushMode says when a write is acknowledged: FlushStrict (the zero value) once it is
+	// durable, FlushLenient once it is appended, leaving Flush to the caller. Readers are held
+	// to the durable offset either way. In lenient mode the two settings above do nothing:
+	// nothing is flushed until Flush is called.
+	FlushMode FlushMode
 	// Logger is optional: a core built without one logs nothing rather than crashing.
 	Logger driven.Logger
 }
@@ -152,7 +157,7 @@ func NewLogTopic(params Params) *Topic {
 		MaxFrameBytes:   maxFrameBytes,
 		Codec:           codec,
 		Codecs:          codecs,
-		flush:           newFlusher(params.Store, params.FlushEntries, params.FlushInterval),
+		flush:           newFlusher(params.Store, params.FlushEntries, params.FlushInterval, params.FlushMode, logger, params.TopicName),
 		TopicName:       params.TopicName,
 		indexWg:         &sync.WaitGroup{},
 		NextOffset:      0,
@@ -460,7 +465,15 @@ func (t *Topic) Write(entries domain.EntriesPtr) error {
 		return err
 	}
 	// waiting happens outside t.mu: a sync can be slow, and readers take that lock
-	return t.flush.wait(pending)
+	return t.flush.acknowledge(pending)
+}
+
+// Flush makes every entry appended to the topic before the call durable, and so readable,
+// and returns the first error. In strict mode there is nothing for it to do but wait for
+// flushes already under way. A failed flush stops the topic, and every later Flush returns
+// that failure.
+func (t *Topic) Flush() error {
+	return t.flush.flushAll()
 }
 
 // append writes entries into the head block and returns the flush that will make them
@@ -535,15 +548,20 @@ func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 	return pending, nil
 }
 
-// Close refuses further writes and waits for the background indexing started by earlier
-// writes. It does not wait for UpdateIndex calls made by others; stop those first. Every
-// writer waits for its own batch, so nothing is left to flush: a flush that failed is not
-// tried again here either (see ErrFlushFailed).
-func (t *Topic) Close() {
+// Close refuses further writes, flushes what was appended, and waits for the background
+// indexing started by earlier writes. It does not wait for UpdateIndex calls made by others;
+// stop those first. It returns the flush's error, or the failure that stopped the topic
+// earlier: a flush that failed is not tried again here (see ErrFlushFailed).
+//
+// In strict mode every writer waited for its own batch, so the flush finds nothing. In
+// lenient mode it is what makes a clean exit lose nothing.
+func (t *Topic) Close() error {
 	t.mu.Lock()
 	t.closed = true
 	t.mu.Unlock()
+	err := t.flush.flushAll()
 	t.indexWg.Wait()
+	return err
 }
 
 func (t *Topic) debugLogLoadResult(logBlocks []driven.Block, indexBlocks []driven.Block) {
