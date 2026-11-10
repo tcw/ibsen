@@ -107,6 +107,7 @@ func runAppend(topic domain.TopicName) error {
 		FlushInterval:    time.Duration(flushIntervalMs) * time.Millisecond,
 		Compression:      compression,
 		CompressionLevel: compressionLevel,
+		LockMode:         lockMode,
 	})
 	if err != nil {
 		return localOpenError(root, err)

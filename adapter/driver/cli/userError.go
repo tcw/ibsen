@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/adapter/driver/stdio"
@@ -58,6 +59,10 @@ func localOpenError(root string, err error) error {
 		return userErrorf("%s is not there, give a data directory that exists", root)
 	case errors.Is(err, wiring.ErrWriteLockUnavailable):
 		return userErrorf("%s is being written by another process, and a log takes one writer at a time", root)
+	case errors.Is(err, wiring.ErrUnknownLock):
+		return userErrorf("--lock %q is not one of %s", lockMode, strings.Join(wiring.LockModes, ", "))
+	case errors.Is(err, wiring.ErrLockNotGuaranteed):
+		return userErrorf("--lock flock cannot be relied on for %s: %s", root, lockReason(err))
 	case errors.Is(err, wiring.ErrUnknownCompression):
 		return userErrorf("compression %q is not one of none, zstd", compression)
 	default:
@@ -73,4 +78,16 @@ func fail(err error, format string, v ...any) {
 		os.Exit(1)
 	}
 	log.Fatal().Err(err).Msgf(format, v...)
+}
+
+// lockReason is the part of a refused flock that says why, without errore's trace.
+func lockReason(err error) string {
+	msg := err.Error()
+	if i := strings.Index(msg, "a kernel file lock is not guaranteed here: "); i >= 0 {
+		msg = msg[i+len("a kernel file lock is not guaranteed here: "):]
+	}
+	if i := strings.Index(msg, "\n"); i >= 0 {
+		msg = msg[:i]
+	}
+	return msg
 }

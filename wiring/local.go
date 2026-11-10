@@ -2,13 +2,11 @@ package wiring
 
 import (
 	"errors"
-	"path/filepath"
 	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	zstdcodec "github.com/tcw/ibsen/adapter/driven/compression/zstd"
-	"github.com/tcw/ibsen/adapter/driven/locking"
 	"github.com/tcw/ibsen/adapter/driven/logging/zerologger"
 	"github.com/tcw/ibsen/core/port/driven"
 	"github.com/tcw/ibsen/errore"
@@ -56,9 +54,11 @@ type LocalParams struct {
 	// Every codec this binary links can be read whatever is written with.
 	Compression      string
 	CompressionLevel string
-	// Lock is optional: a writable open builds a file lease over RootPath when none is
-	// given, the same lease at the same path the server takes.
+	// Lock is optional: a writable open builds the lock LockMode names over RootPath when
+	// none is given, the same lock at the same path the server takes.
 	Lock driven.SingleIbsenWriterLock
+	// LockMode names that lock: auto (the default), flock, file or none.
+	LockMode string
 	// Logger is optional; nil logs through zerolog, like the server.
 	Logger driven.Logger
 }
@@ -93,21 +93,22 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 	lock := params.Lock
 	if !params.ReadOnly {
 		if lock == nil {
-			lock = locking.NewFileLock(
-				filepath.Join(params.RootPath, writeLockFileName), writeLockLease, writeLockReclaim,
-				func(reason error) {
-					// the same reasoning as the server's: whatever this process still holds
-					// is already lost, and a clean shutdown would flush and write on the way
-					// out, so the only safe move is to stop touching the data directory
-					log.Fatal().Err(reason).Msgf(
-						"lost the single writer lock on [%s], stopping before another instance writes beside us",
-						params.RootPath)
-				})
+			lock, err = buildWriteLock(params.LockMode, params.RootPath, func(reason error) {
+				// the same reasoning as the server's: whatever this process still holds
+				// is already lost, and a clean shutdown would flush and write on the way
+				// out, so the only safe move is to stop touching the data directory
+				log.Fatal().Err(reason).Msgf(
+					"lost the single writer lock on [%s], stopping before another instance writes beside us",
+					params.RootPath)
+			})
+			if err != nil {
+				zstd.Close()
+				return nil, err
+			}
 		}
-		if !lock.AcquireLock() {
+		if err := acquireWriteLock(lock, params.RootPath); err != nil {
 			zstd.Close()
-			return nil, errore.WrapWithContextF(ErrWriteLockUnavailable,
-				"unable to acquire the single writer lock on path [%s]", params.RootPath)
+			return nil, err
 		}
 	}
 

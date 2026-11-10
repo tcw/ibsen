@@ -30,6 +30,9 @@ edges() {
 #    The stdio driving adapter is here for the same reason, and it is the only driving adapter
 #    that can be: it speaks a byte stream and the driving port, so a program that appends to a
 #    log or reads one back pays for neither a transport nor a command-line framework.
+#
+#    The kernel lock is here because it is a lock a microcontroller-sized build could carry:
+#    flock and statfs, and nothing else.
 impure=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
 	./core/... \
 	./wiring/embedded/... \
@@ -37,7 +40,8 @@ impure=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
 	./adapter/driven/blockstore/filestore/... \
 	./adapter/driven/blockstore/memstore/... \
 	./adapter/driven/blockstore/flashstore/... \
-	./adapter/driven/blockstore/conformance/... |
+	./adapter/driven/blockstore/conformance/... \
+	./adapter/driven/locking/flock/... |
 	{ grep -v '^github.com/tcw/ibsen' || true; })
 if [ -n "$impure" ]; then
 	fail "the core or the embedded wiring reaches outside the standard library" $impure

@@ -34,7 +34,7 @@ ibsen server -d /tmp/ibsen/data
 
 ```
 /tmp/ibsen/data/
-├── .writeLock                    single-writer lease, so a second server cannot write here
+├── .writeLock                    single-writer lock, so a second server cannot write here
 └── greetings/
     ├── 00000000000000000000.log  entries, framed and checksummed
     └── 00000000000000000000.idx  sparse offset → byte offset index
@@ -82,7 +82,8 @@ readable and writable by both commands, and nothing to do with the format on dis
 **`cat` opens the log read-only and takes no lock**, so it is safe to point at a directory a
 server is writing: it cannot truncate, re-index or create anything. **`append` takes the
 single-writer lock**, so it is refused while a server holds that directory — two writers on
-one log is what the lock exists to prevent.
+one log is what the lock exists to prevent. It takes `--lock` like the server; see
+[Choosing a lock](OPERATIONS.md#choosing-a-lock).
 
 ### The filter commands' flags
 

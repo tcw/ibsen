@@ -336,6 +336,10 @@ Each adapter is tested for its own job and nothing more.
   contracts, an unknown level refused, concurrent frames, an oversized frame refused before it
   is decoded, and a real topic through the codec: smaller, readable from every offset,
   reloadable, and readable by a build without zstd for its plain frames.
+- `adapter/driven/locking/flock` — the kernel lock. A second holder is a second *process*,
+  the test binary re-executed holding the lock, and it is killed rather than released to show
+  the kernel letting go on death. The filesystem check and the self-test are variables a test
+  replaces to play NFS or a filesystem that grants a lock twice.
 - `adapter/driven/locking` — the file lease on real directories: renewal, release, a stalled
   holder not stealing its lease back, a lease that aged out treated as lost, loss reported,
   release not removing a lock it no longer holds, one claimant for a fresh lock and for an
@@ -703,7 +707,7 @@ in rule 1.
 | offsets are contiguous | the property tests; `TestPowerCut_aRolloverWaitsForTheOldBlock`; the checker's `offsets not contiguous` |
 | a read does not skip | `TestReadDoesNotSkipTheEndOfABlockWhenAFlushLandsDuringIt`; the property tests; the checker's `read not contiguous` |
 | recovery never destroys what is not damaged | `logUtils_test.go` (pre-framing reported, offset gap an error, unwired codec recovered); `indexChecksum_test.go` |
-| one writer | `locking/singleInstanceLock_test.go`; `wiring/lock_test.go`; `wiring/local_test.go` |
+| one writer | `locking/singleInstanceLock_test.go`; `locking/flock/flock_test.go`; `wiring/lock_test.go`; `wiring/writelock_test.go`; `wiring/local_test.go` |
 | a reader changes nothing | `TestReadOnlyOpenWritesNothing`; `TestReadonlyModeBuildsAStoreThatCannotWrite`; `TestList_aReadOnlyStoreKeepsTheCache` |
 | the core is pure | `scripts/check-architecture.sh`; `scripts/embedded-size.sh` |
 
@@ -786,6 +790,8 @@ What the suite does not test, so nobody assumes it does:
 | `adapter/driver/grpcapi/*_test.go` | L6 | the handler, TLS, dialling |
 | `adapter/driven/compression/zstd/*_test.go` | L6 | the codec, and a topic through it |
 | `adapter/driven/locking/singleInstanceLock_test.go` | L6 | the file lease |
+| `adapter/driven/locking/flock/flock_test.go` | L6 | the kernel lock: a second process holding it (the test binary re-executed), release on death, a live lease file refused, the self-test, remote filesystems refused |
+| `wiring/writelock_test.go` | L6 | `--lock`: auto's choice and both fallbacks, explicit flock refusing with its reason, and the two adapters seeing each other |
 | `adapter/driven/logging/zerologger/zerologger_test.go` | L6 | the logging adapter |
 | `wiring/*_test.go`, `wiring/embedded/embedded_test.go` | L6 | the composition roots |
 | `adapter/driver/grpcapi/test/` | L7 | a real server on a free port; gRPC benchmarks |

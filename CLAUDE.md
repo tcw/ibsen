@@ -98,6 +98,16 @@ errore/                     stdlib-only, shared by both sides
   running it (every flag, durability, compression, locks, Docker, TLS, development).
   `ARCHITECTURE.md` and `TESTING.md` stay the level below. `scripts/check-links.py` fails CI on
   a relative link or `#anchor` that does not resolve, so a moved section cannot strand a link.
+- **The write lock is chosen by `--lock`** (`IBSEN_LOCK`): `auto` (default), `flock`, `file`,
+  `none`, built by `wiring/writelock.go` for the server and `OpenLocal`. `auto` takes
+  `adapter/driven/locking/flock` (kernel `flock(2)`, stdlib + syscall only, in rule 1) where
+  `flock.Guaranteed` passes — a platform with flock, a local filesystem on the allow-list by
+  `statfs` — and the self-test on a second descriptor confirms it; otherwise the lease file,
+  logging why. Explicit `flock` refuses with `wiring.ErrLockNotGuaranteed`. The two adapters see
+  each other (the lease refuses a flock-held file; flock refuses a live lease). Tests:
+  `flock/flock_test.go` (a second process via the test binary, killed to show release on
+  death) and `wiring/writelock_test.go`. CI cross-compiles windows, darwin, freebsd, openbsd and
+  linux/arm, since the choice is made by build constraints.
 - **Releases** are a tag: `.github/workflows/release.yml` runs GoReleaser
   (`.goreleaser.yaml`), which builds `ibsen` for linux/darwin/windows on amd64 and arm64 (and
   linux/arm), archives, `checksums.txt`, release notes and multi-arch images at
@@ -644,7 +654,10 @@ and how to read their failures, recipes, and which test holds which promise — 
 40. ~~Publish release binaries and images from a tag with GoReleaser, and stamp the version
     (spec 9A).~~
 
-Every step ships green. Steps 0 to 40 are done, one commit each.
+41. ~~Hold the single-writer lock in the kernel (`flock`) where the platform, the filesystem
+    and a self-test guarantee it, and fall back to the lease file elsewhere (spec 7).~~
+
+Every step ships green. Steps 0 to 41 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —

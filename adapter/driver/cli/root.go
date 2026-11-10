@@ -33,6 +33,7 @@ var (
 	maxFrameBytes               int
 	readOnly                    bool
 	rootDirectory               string
+	lockMode                    string
 	benchEntiesByteSize         int
 	benchEntiesInEachBatchWrite int
 	benchWriteBatches           int
@@ -106,6 +107,7 @@ var (
 				CompressionLevel: compressionLevel,
 				FlushEntries:     uint32(flushEntries),
 				FlushInterval:    time.Duration(flushIntervalMs) * time.Millisecond,
+				LockMode:         lockMode,
 				OTELExporterAddr: OTELExporterAddr,
 				GRPCCertKey:      AbsOrEmpty(certKey),
 				GRPCPrivateKey:   AbsOrEmpty(privateKey),
@@ -117,6 +119,10 @@ var (
 				log.Fatal().Err(err).Msgf("unable to listen on %s:%d", host, port)
 			}
 			err = ibsenServer.Start(lis)
+			if msg, ok := userMessage(localOpenError(absolutePath, err)); ok && err != nil {
+				fmt.Fprintf(os.Stderr, "ibsen: %s\n", msg)
+				os.Exit(1)
+			}
 			if err != nil {
 				log.Fatal().Err(err).Msg("ibsen server failed")
 			}
@@ -311,6 +317,9 @@ var (
 	}
 )
 
+// lockFlagHelp is --lock's help, shared by every command that writes.
+const lockFlagHelp = "Single-writer lock on the data directory: auto (a kernel lock where it is guaranteed, the lease file elsewhere), flock (a kernel lock, or refuse to start), file (the renewed lease file) or none"
+
 // defaultReadBatchSize is how many entries a read asks for at a time when the caller does
 // not say.
 const defaultReadBatchSize uint32 = 1000
@@ -422,6 +431,7 @@ func init() {
 	compressionLevel = getenv("IBSEN_COMPRESSION_LEVEL", "default")
 	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
 	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
+	lockMode = getenv("IBSEN_LOCK", wiring.DefaultLock)
 
 	rootCmd.PersistentFlags().IntVarP(&port, "port", "p", port, "config file (default is current directory)")
 	rootCmd.PersistentFlags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
@@ -441,6 +451,7 @@ func init() {
 	cmdServer.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
 	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
 	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
+	cmdServer.Flags().StringVarP(&lockMode, "lock", "", lockMode, lockFlagHelp)
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")
 
@@ -462,6 +473,7 @@ func init() {
 	cmdAppend.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
 	cmdAppend.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
 	cmdAppend.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
+	cmdAppend.Flags().StringVarP(&lockMode, "lock", "", lockMode, lockFlagHelp)
 	cmdAppend.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
 
 	cmdCat.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to read")

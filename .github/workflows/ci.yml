@@ -34,6 +34,16 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # The kernel lock is chosen by build constraints, so the platforms without flock, or
+      # without a way to read the filesystem type, are built too: they must compile and pick
+      # the lease file.
+      - name: cross-compile
+        run: |
+          for target in windows/amd64 darwin/arm64 freebsd/amd64 openbsd/amd64 linux/arm; do
+            echo "$target"
+            GOOS=${target%/*} GOARCH=${target#*/} go build ./...
+          done
+
       # The north star: the core imports only the standard library, and dependencies point
       # inward. See scripts/check-architecture.sh for the three rules.
       - name: architecture

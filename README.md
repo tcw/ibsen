@@ -189,6 +189,7 @@ cluster, use Kafka. The reasoning is in
 
 Under development, and heavily tested: property tests, a storage conformance suite, power-cut
 fault injection and history-checked crash tests. There are no known correctness bugs.
+On one machine, the single-writer lock is held by the kernel where the filesystem supports it.
 Known gaps:
 
 - Dictionaries for compression are designed, not built.

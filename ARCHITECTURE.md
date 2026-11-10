@@ -354,7 +354,9 @@ type SingleIbsenWriterLock interface {
 ```
 
 Two methods, no token — see §16 for why that is deliberate and what it costs. `NoFileLock` is
-the no-op adapter for a single-process or embedded deployment.
+the no-op adapter for a single-process or embedded deployment. The adapters are the lease file
+(`adapter/driven/locking`) and the kernel lock (`adapter/driven/locking/flock`); `--lock`
+chooses between them in `wiring`.
 
 ## 7. Adapters
 
@@ -835,6 +837,52 @@ shutting down cleanly.
 
 This is a read followed by a write, not an atomic renewal. It closes the window a stall opens;
 it does not remove it.
+
+### 16.1a The kernel lock, where it is guaranteed
+
+On one machine there is a lock with no window at all: `flock(2)`.
+`adapter/driven/locking/flock` takes `LOCK_EX|LOCK_NB` on the same `<root>/.writeLock` and
+holds the descriptor open for the life of the process. The kernel grants it atomically, a
+process frozen for a minute still holds it — so nobody can take over while it is stalled — and
+the kernel drops it the moment the process dies, however it dies. There is no renewal, so
+there is nothing to lose and no lease-lost path. It is standard library and `syscall` only,
+and sits in rule 1 of the architecture check.
+
+`--lock` chooses: `auto` (the default), `flock`, `file` (the lease of §16.1) or `none`.
+`wiring/writelock.go` builds the adapter; `cat` and every read-only open still take nothing.
+
+A kernel lock is only as good as the filesystem honouring it, so it is used only where three
+checks pass:
+
+1. **Platform.** Linux, macOS and the BSDs have `flock`, chosen by build constraints. Solaris,
+   AIX, Windows and the rest build a stub that refuses, and `auto` picks the lease file there.
+2. **Filesystem.** `statfs` on the data directory. On Linux by magic number, on macOS and
+   FreeBSD by `f_fstypename`, against an allow-list of local types (ext4, xfs, btrfs, tmpfs,
+   zfs, overlayfs; apfs, hfs, ufs). Network and cluster filesystems — NFS, SMB/CIFS, CephFS,
+   FUSE (GlusterFS and the rest), GFS2, OCFS2, Lustre — are named and refused, because a lock
+   there may hold on one machine only or not at all. Anything unknown is refused too.
+3. **Self-test.** With the lock held, a second, independent descriptor on the same file must be
+   refused it. flock locks belong to an open file description, so this holds within one
+   process on any filesystem that enforces them, and catches one that only pretends to.
+
+`auto` logs which lock it chose and why, and falls back to the lease file when any check
+fails. Explicit `flock` refuses to start instead (`wiring.ErrLockNotGuaranteed`), naming the
+reason; it never quietly becomes something else.
+
+Two details keep the file honest. A holder that releases removes the file *while still holding
+the lock*, and an acquirer checks after locking that its descriptor and the path are still the
+same inode, retrying otherwise — without both, a lock taken on an inode somebody had just
+unlinked would be a lock on nothing. And the two adapters see each other: the flock holder
+writes its id into the file and refuses a file whose content names a holder that renewed within
+a lease, and the lease adapter refuses a file that is flock-held, since a kernel lock renews
+nothing and its file would otherwise read as an expired lease. An *older* binary that knows
+only the lease file does not know to look, so every instance on one directory should run the
+same version.
+
+What remains: the lease file is still what runs where a kernel lock is not guaranteed — on a
+network filesystem, which is exactly where two machines can share a directory — and the
+stall window of §16.1 is still open there. Across machines, the volume's own single-node
+attachment (§16.2) is the fence.
 
 ### 16.2 Why there is no Raft
 

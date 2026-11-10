@@ -10,6 +10,7 @@ every promise here is in [ARCHITECTURE.md](../ARCHITECTURE.md).
 - [Compression](#compression)
 - [Read-only mode](#read-only-mode)
 - [One writer per directory](#one-writer-per-directory)
+- [Choosing a lock](#choosing-a-lock)
 - [Docker](#docker)
 - [TLS](#tls)
 - [OpenTelemetry](#opentelemetry)
@@ -37,6 +38,7 @@ Every server flag has an environment variable, so containers need no command lin
 | `--compression` | `IBSEN_COMPRESSION` | `zstd` | codec for new frames: `zstd` or `none` |
 | `--compressionLevel` | `IBSEN_COMPRESSION_LEVEL` | `default` | `fastest`, `default`, `better`, `best` |
 | `-o, --readOnly` | `IBSEN_READ_ONLY` | `false` | serve a directory without changing a byte of it |
+| `--lock` | `IBSEN_LOCK` | `auto` | single-writer lock: `auto`, `flock`, `file` or `none`; see [Choosing a lock](#choosing-a-lock) |
 | `-e, --OTELExporter` | | | OpenTelemetry collector address, e.g. `0.0.0.0:4317` |
 | `--certKey` / `--privateKey` | | | TLS for gRPC |
 | `-z` / `-y` | | | write a CPU / memory profile |
@@ -148,9 +150,10 @@ log should use them rather than reimplement them:
   single-writer guarantee, etcd, Kubernetes leases or your cloud's lock service already give
   you one. Ibsen is built so that it becomes a thin storage decorator at wiring time — no
   change to the core, no change to any port.
-- **What Ibsen ships itself is a backstop, not a cluster.** A file lease at
-  `<root>/.writeLock` keeps a second server from writing the same directory. It is honest
-  about its limits: claiming a free lock is `O_CREATE|O_EXCL`, which a real filesystem makes
+- **What Ibsen ships itself is a backstop, not a cluster.** A lock at `<root>/.writeLock`
+  keeps a second server from writing the same directory. On a local filesystem it is a kernel
+  lock, which has no weak spots worth naming; see [Choosing a lock](#choosing-a-lock). Where
+  that is not guaranteed it is a lease file, which is honest about its limits: claiming a free lock is `O_CREATE|O_EXCL`, which a real filesystem makes
   atomic; taking over an expired one is confirmed by re-reading rather than assumed, because
   a filesystem has no compare-and-swap. Renewal proves the lease is still its own before
   extending it, and the moment it cannot, the process stops writing — it does **not** shut
@@ -163,6 +166,41 @@ The honest version of the trade: Ibsen gives you a very good single-writer log a
 your platform to provide durability across machines. If you need multi-master writes with
 automatic failover and no external system, Ibsen is the wrong tool and Kafka is waiting for
 you. The full reasoning is in [ARCHITECTURE.md §16](../ARCHITECTURE.md#16-single-writer-and-distribution).
+
+## Choosing a lock
+
+Two programs writing one log at the same time would corrupt it, so a writer — `ibsen server`
+or `ibsen append` — takes a lock on the data directory first, and a second writer is refused.
+Readers (`ibsen cat`, `ibsen topics`, `--readOnly`) take nothing. `--lock` (or `IBSEN_LOCK`)
+says which lock:
+
+| `--lock` | what it is | use it when |
+|---|---|---|
+| `auto` (default) | a kernel lock where one is guaranteed, the lease file everywhere else; it logs which and why | almost always |
+| `flock` | a kernel lock (`flock(2)`), or refuse to start, naming the reason | you want to be told rather than fall back: a data directory that must be on local disk |
+| `file` | the lease file: a file renewed every few seconds, taken over by another instance once it stops being renewed | a directory several machines can see, such as a network filesystem; or matching older Ibsen versions on the same directory |
+| `none` | nothing | one process will ever open the directory, and you would rather not pay for a lock |
+
+**Why the kernel lock is safer.** The kernel holds it for exactly as long as the process lives.
+A process that freezes for a minute still holds it, so nobody takes over while it is stalled,
+and a process that crashes lets go of it at that instant. The lease file has to be renewed, and
+a process that stalls past its lease can briefly overlap with the one that took over; it
+notices on its next renewal and exits, but it cannot make the overlap zero.
+
+**When the kernel lock is guaranteed.** On Linux, macOS and the BSDs, on a local filesystem —
+ext4, xfs, btrfs, tmpfs, zfs, overlayfs, apfs, hfs or ufs — and only once a self-test has
+confirmed the filesystem really enforces it. **Network filesystems are refused** (NFS,
+SMB/CIFS, CephFS, GlusterFS and other FUSE filesystems, and the like): a lock there may hold on
+one machine and be invisible to another, which is the very case a lock exists for. Windows has
+no `flock`, so `auto` uses the lease file there.
+
+**Containers.** Two containers on one host sharing a `hostPath` or local volume share one
+kernel, so the kernel lock works between them. Across machines it does not — that is what the
+volume's own single-node attachment is for on Kubernetes.
+
+**Mixed versions.** The kernel lock and the lease file see each other, but an Ibsen from before
+the kernel lock knows only the lease file and would read a kernel-locked directory as free
+after ten seconds. Run the same version on every instance that can reach one directory.
 
 ## Docker
 

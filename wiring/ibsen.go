@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"sync"
@@ -17,7 +16,6 @@ import (
 	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/memstore"
 	zstdcodec "github.com/tcw/ibsen/adapter/driven/compression/zstd"
-	"github.com/tcw/ibsen/adapter/driven/locking"
 	"github.com/tcw/ibsen/adapter/driven/logging/zerologger"
 	"github.com/tcw/ibsen/adapter/driven/telemetry"
 	"github.com/tcw/ibsen/adapter/driver/grpcapi"
@@ -42,8 +40,12 @@ var ibsenFiglet = `
 
 type IbsenServer struct {
 	Readonly bool
-	// Lock is optional: Start builds a file lease over RootPath when none is injected.
+	// Lock is optional: Start builds the one LockMode names over RootPath when none is
+	// injected.
 	Lock driven.SingleIbsenWriterLock
+	// LockMode names the single-writer lock: auto (the default), flock, file or none. See
+	// writelock.go.
+	LockMode string
 	// InMemory keeps the whole log in memory, in a memstore. Nothing is written anywhere and
 	// nothing survives the process.
 	InMemory     bool
@@ -130,18 +132,21 @@ func (ibs *IbsenServer) lifecycle() (stopping, stopped chan struct{}) {
 // defaults fills in the adapters the caller did not inject. It runs before Start begins
 // anything that reads them, so the signal handler never races the assignment. A test injects
 // its own Lock and keeps it.
-func (ibs *IbsenServer) defaults() {
+func (ibs *IbsenServer) defaults() error {
 	if ibs.Lock == nil {
 		if ibs.InMemory {
 			// the log lives in this process and is shared with nobody, so there is no second
 			// writer to fence off and no filesystem to keep a lease on
 			ibs.Lock = driven.NoFileLock{}
 		} else {
-			ibs.Lock = locking.NewFileLock(
-				filepath.Join(ibs.RootPath, writeLockFileName), writeLockLease, writeLockReclaim,
-				ibs.writeLockLost)
+			lock, err := buildWriteLock(ibs.LockMode, ibs.RootPath, ibs.writeLockLost)
+			if err != nil {
+				return err
+			}
+			ibs.Lock = lock
 		}
 	}
+	return nil
 }
 
 // resolveCodecs builds the compression adapters this server writes and reads frames with.
@@ -206,7 +211,9 @@ func rootExists(path string) (bool, error) {
 }
 
 func (ibs *IbsenServer) Start(listener net.Listener) error {
-	ibs.defaults()
+	if err := ibs.defaults(); err != nil {
+		return err
+	}
 	if err := ibs.resolveCodecs(); err != nil {
 		return err
 	}
@@ -227,9 +234,10 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 			return errore.NewF("path [%s] does not exist, will not start unless existing path is specified", ibs.RootPath)
 		}
 		log.Info().Msg(fmt.Sprintf("Waiting for single writer lock on file [%s]...", ibs.RootPath))
-		if !ibs.Readonly && !ibs.Lock.AcquireLock() {
-			return errore.WrapWithContextF(ErrWriteLockUnavailable,
-				"unable to acquire the single writer lock on path [%s], aborting start", ibs.RootPath)
+		if !ibs.Readonly {
+			if err := acquireWriteLock(ibs.Lock, ibs.RootPath); err != nil {
+				return err
+			}
 		}
 	}
 

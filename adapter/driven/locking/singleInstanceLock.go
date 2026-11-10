@@ -95,6 +95,12 @@ func (fl FileLock) AcquireLock() bool {
 		return true
 	}
 
+	if heldByKernelLock(fl.lockFile) {
+		// an instance on the flock adapter holds it, and renews nothing, so the file's age
+		// would have read as an expired lease
+		log.Info().Msgf("lock file %s is held by a kernel lock", fl.lockFile)
+		return false
+	}
 	owner, err := fl.readOwner()
 	if err != nil {
 		log.Err(err).Msgf("failed while reading lock file %s", fl.lockFile)
