@@ -440,10 +440,13 @@ gofmt -l .
 ./scripts/embedded-size.sh        # an embedded build is still small
 python3 scripts/check-links.py    # every Markdown link resolves
 ./scripts/smoke-test.sh BINARY    # the README's quick start against a built binary
+./scripts/gen-clients.sh          # regenerate everything generated from the proto (pinned tools)
+./scripts/client-example.sh LANG BINARY   # build and run one bundled client against a server
 ```
 
-CI runs the first six on every push, and the smoke test on a release snapshot of every push
-to master. The architecture check is the important one: it fails if any
+CI runs the first six on every push, regenerates the generated code and fails if it is stale,
+builds and runs every bundled client in a container holding only its toolchain, and runs the
+smoke test on a release snapshot of every push to master. The architecture check is the important one: it fails if any
 package under `core/` reaches outside the standard library, if the core imports an adapter,
 or if a driving adapter reaches a driven one.
 

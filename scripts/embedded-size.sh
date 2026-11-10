@@ -37,6 +37,10 @@ awk -v target="$target" -v server="$server" -v embedded="$embedded" 'BEGIN {
 	printf "embedded is   %8.2fx smaller\n", server / embedded
 }'
 
+# What `ibsen generate client` costs the server binary: the bundled client folders it embeds.
+clients=$(find adapter/driver/cli/clientgen/clients adapter/driver/cli/clientgen/ibsen.proto -type f -exec cat {} + | wc -c)
+awk -v clients="$clients" 'BEGIN { printf "clients       %8.2f MB  embedded in the server by ibsen generate client\n", clients / 1048576 }'
+
 # A sanity check rather than a budget: a hard byte ceiling would drift with every Go release,
 # but an embedded build that stopped being smaller than the server would mean the wiring had
 # quietly pulled the server in, and that is worth failing over.

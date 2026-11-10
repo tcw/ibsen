@@ -8,6 +8,9 @@ project_name: ibsen
 before:
   hooks:
     - go mod download
+    # the clients `ibsen generate client` hands out are generated from the proto before the
+    # build, so the embedded ones match the release; CI has already failed if this changes a file
+    - ./scripts/gen-clients.sh
 
 builds:
   - id: ibsen

@@ -20,8 +20,10 @@ GoReleaser with [`.goreleaser.yaml`](.goreleaser.yaml). It publishes:
 - **Container images** for linux/amd64 and linux/arm64 at `ghcr.io/tcw/ibsen`, tagged with the
   version and `latest`.
 
-Nothing else has to happen first. The generated gRPC code is committed, so no `protoc` runs
-at release time, and CI has already run the tests on the commit you tag.
+Nothing else has to happen first. The release regenerates the clients `ibsen generate client`
+bundles (`scripts/gen-clients.sh`) before it builds, so they match the release; CI has already
+failed any commit whose committed generated code was stale, and run the tests on the commit you
+tag.
 
 ## Before you tag
 

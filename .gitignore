@@ -2,3 +2,4 @@
 ibsen
 bin/
 target/
+.cache/

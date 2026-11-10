@@ -13,8 +13,9 @@ def slug(h):
     return h.replace(' ','-')
 anchors={}
 files=[]
-for d,_,fs in os.walk(root):
-    if '.git' in d: continue
+for d,dirs,fs in os.walk(root):
+    # tools and their dependencies are not ours to check
+    dirs[:] = [x for x in dirs if not x.startswith('.') and x != 'node_modules']
     for f in fs:
         if f.endswith('.md'): files.append(os.path.join(d,f))
 for f in files:

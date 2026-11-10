@@ -309,11 +309,67 @@ Embedded programs get them as a Go interface, `driver.LogManager`; `ibsen append
 and `ibsen topics` are the same three over stdin and stdout. Nothing in the log knows which
 one is driving it.
 
-### Generating clients yourself
+### A client in your language
+
+The `ibsen` binary carries ready-to-build clients for **Go, Java, Python and TypeScript**,
+generated from the proto when Ibsen was built. There is nothing else to install: no protoc, no
+plugins.
 
 ```shell
-apt install -y protobuf-compiler
-go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-protoc --proto_path=api/grpcApi ibsen.proto --go_out=. --go-grpc_out=.
+ibsen generate client --list                          # the bundled languages
+ibsen generate client java                            # into ./ibsen-client-java
+ibsen generate client python -o ./client --package acme_logs
+ibsen generate proto > ibsen.proto                    # just the proto
 ```
+
+Each folder holds:
+
+- the generated gRPC stubs and messages;
+- a build file with pinned versions — `go.mod`, `pom.xml` (Maven), `pyproject.toml`, or
+  `package.json` and `tsconfig.json`;
+- a small hand-written client that makes the three calls easy — write, read (once, or following
+  the log) and list — with [safe retries](#safe-retries) built in;
+- a runnable example that writes two entries and reads them back from `localhost:54321`;
+- a README: how to build, how to run the example, how to use TLS, and which Ibsen and proto
+  version the folder came from.
+
+`--package` names the package: a Java package (default `com.example.ibsen`), a Python package
+(`ibsen_client`), an npm package (`ibsen-client`) or a Go module path (`example.com/ibsen-client`,
+also `--module`). The folder must be empty unless `--force` is given.
+
+**End to end, in Java:**
+
+```shell
+ibsen server &                                        # in memory, on localhost:54321
+ibsen generate client java --package com.acme.logs
+cd ibsen-client-java
+mvn -q compile exec:java
+```
+
+```
+wrote 2 entries at offset 0
+0	hello
+1	world
+topics: [example]
+```
+
+Then, in your own code:
+
+```java
+try (IbsenClient client = IbsenClient.plaintext("localhost:54321").withProducer()) {
+    client.write("orders", List.of(order.getBytes(StandardCharsets.UTF_8)));
+    client.read("orders", 0, true, false, entry -> process(entry.getContent()));
+}
+```
+
+### Generating clients yourself
+
+For another language, or with your own toolchain, take the proto and run protoc:
+
+```shell
+ibsen generate proto > ibsen.proto
+protoc --proto_path=. ibsen.proto --go_out=. --go-grpc_out=.   # with protoc-gen-go and protoc-gen-go-grpc
+```
+
+The repository's own generated code is regenerated with pinned generators by
+`scripts/gen-clients.sh`.

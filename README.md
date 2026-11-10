@@ -162,6 +162,9 @@ ibsen client read greetings
 
 `client read` keeps following the log until you press Ctrl-C.
 
+Need a client in another language? `ibsen generate client java` (or `go`, `python`,
+`typescript`) writes a folder that builds, with nothing else to install.
+
 ## Three ways to use it
 
 **On the command line.** `ibsen append`, `ibsen cat` and `ibsen topics` read and write a data
@@ -191,9 +194,9 @@ cluster, use Kafka. The reasoning is in
 Under development, and heavily tested: property tests, a storage conformance suite, power-cut
 fault injection and history-checked crash tests. There are no known correctness bugs.
 On one machine, the single-writer lock is held by the kernel where the filesystem supports it,
-and a client can retry a write without storing it twice. Known gaps:
-
-- Clients exist for Go; other languages are generated from the proto and nothing more.
+and a client can retry a write without storing it twice. Ready-to-build clients for Go, Java,
+Python and TypeScript come bundled in the binary. What it deliberately leaves out is the section
+above; what its tests do not yet cover is listed in [TESTING.md](TESTING.md#13-known-gaps).
 
 ## Learn more
 

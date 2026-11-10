@@ -119,9 +119,9 @@ errore/                     stdlib-only, shared by both sides
   unknown keys refused. The server runs it every minute; `OpenLocal` once on a writable close.
   Found on the way: a lenient flush batch naming a block retention removed failed with
   `ErrBlockNotFound` and stopped the topic; `syncBlocks` now skips it, pinned by
-  `TestRetain_aLenientFlushAfterRetentionDoesNotFail`. `scripts/gen-proto.sh` regenerates the
-  Go gRPC code (protoc 3.21, protoc-gen-go 1.36.12, protoc-gen-go-grpc 1.6.2).
-- **Safe retries** (spec 5, ARCHITECTURE §5.2 and §8.4). Frame header version 2 adds a 44-byte
+  `TestRetain_aLenientFlushAfterRetentionDoesNotFail`. `scripts/gen-clients.sh` regenerates the
+  Go gRPC code and every bundled client, with pinned generators (protoc 29.0).
+- **Safe retries** (spec 5, ARCHITECTURE §5.2 and §8.4). Frame header version 2 adds a variable
   extension (producer, sequence, `writeEntries`, `dictID`, its own CRC) after a version 1 base
   whose CRC an older build still verifies, so it refuses v2 as unsupported instead of
   truncating it. The topic keeps a producer table under `Topic.mu` (`core/topic/producers.go`):
@@ -136,6 +136,17 @@ errore/                     stdlib-only, shared by both sides
   them. Both generated Go copies of the proto register the same names, so no binary may link
   `adapter/driver/grpcapi` and `clients/go/api/grpcApi` together; the client's test serves the
   real manager through its own stubs for that reason.
+- **Bundled clients** (spec 8): `adapter/driver/cli/clientgen` embeds
+  `clients/<lang>/` (generated stubs, build file, wrapper, example, README) and a copy of the
+  proto; `ibsen generate client <lang> [-o dir] [--force] [--package]` copies a folder out,
+  stripping `.tmpl` (Go sources and `go.mod` are kept so, so the main module does not build
+  them) and filling `@@MODULE@@`, `@@PACKAGE@@`, `@@PACKAGE_PATH@@`, `@@IBSEN_VERSION@@`,
+  `@@PROTO_VERSION@@`. `scripts/gen-clients.sh` regenerates everything from the proto — the
+  server's and `clients/go`'s stubs too — with pinned generators: protoc 29.0 (Maven Central),
+  grpcio-tools 1.71.0 for Python, protoc-gen-go 1.36.12, protoc-gen-go-grpc 1.6.2, grpc-java
+  1.68.1, ts-proto 2.18.4. The Go wrapper template is derived from `clients/go/ibsen`. CI
+  fails on stale generated code and runs `scripts/client-example.sh` per language in that
+  language's container. The bundle is 0.25 MB of the server binary. `clients/java` is gone.
 - **Releases** are a tag: `.github/workflows/release.yml` runs GoReleaser
   (`.goreleaser.yaml`), which builds `ibsen` for linux/darwin/windows on amd64 and arm64 (and
   linux/arm), archives, `checksums.txt`, release notes and multi-arch images at
@@ -728,7 +739,10 @@ and how to read their failures, recipes, and which test holds which promise — 
 46. ~~Skip compression attempts below a size threshold and on topics where it keeps not
     paying (spec 9B).~~
 
-Every step ships green. Steps 0 to 46 are done, one commit each.
+47. ~~`ibsen generate client go|java|python|typescript` and `ibsen generate proto`, from
+    clients generated at build time and embedded (spec 8).~~
+
+Every step ships green. Steps 0 to 47 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: §7, which is untouched. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
