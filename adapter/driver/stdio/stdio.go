@@ -93,6 +93,13 @@ type AppendParams struct {
 	// writer, so there is never anybody else's batch for its entries to join, and holding a
 	// batch back for company that cannot come only makes it wait.
 	BatchSize int
+	// Producer, when set, makes rerunning the same input safe: the batches are numbered 1, 2,
+	// 3 under this producer, and a batch the topic already holds from an earlier run is
+	// skipped rather than written twice. For the numbers to line up between runs the batches
+	// must too, so with a producer a batch is written only when it is full or the stream
+	// ends, never because the stream paused; and a stream that is cut writes nothing of its
+	// last batch, since a rerun with the whole input would number it the same and find it.
+	Producer domain.ProducerID
 }
 
 // Append reads entries from in and writes them to the topic, returning how many it wrote.
@@ -111,6 +118,7 @@ func Append(log driver.LogManager, topic domain.TopicName, in io.Reader, params 
 		return 0, err
 	}
 	var written uint64
+	var sequence uint64
 	// the batch size comes from a flag, so the room made for it up front is capped; a larger
 	// one is still honoured, it just grows into it
 	prealloc := min(batchSize, DefaultAppendBatchSize)
@@ -120,10 +128,19 @@ func Append(log driver.LogManager, topic domain.TopicName, in io.Reader, params 
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := log.Write(topic, &batch); err != nil {
+		sequence++
+		result, err := log.Write(driver.WriteParams{Topic: topic, Entries: &batch,
+			Producer: params.Producer, Sequence: sequence})
+		if errors.Is(err, domain.ErrStaleSequence) && !params.Producer.IsZero() {
+			// an earlier run of this input got further than this: the topic holds this batch
+			err, result.Duplicate = nil, true
+		}
+		if err != nil {
 			return err
 		}
-		written += uint64(len(batch))
+		if !result.Duplicate {
+			written += uint64(len(batch))
+		}
 		batch = make([][]byte, 0, prealloc)
 		batchBytes = 0
 		return nil
@@ -136,7 +153,11 @@ func Append(log driver.LogManager, topic domain.TopicName, in io.Reader, params 
 		if err != nil {
 			// the entries read before the cut are whole entries, so they are written: what
 			// survives a damaged stream must not depend on where the batch boundary happened
-			// to fall, which is a tuning choice and nothing to do with the stream
+			// to fall, which is a tuning choice and nothing to do with the stream. With a
+			// producer they are not, so that the rerun numbers them as it numbered them here
+			if !params.Producer.IsZero() {
+				return written, err
+			}
 			if flushErr := flush(); flushErr != nil {
 				return written, errore.WrapError(flushErr, err)
 			}
@@ -146,7 +167,8 @@ func Append(log driver.LogManager, topic domain.TopicName, in io.Reader, params 
 		batchBytes = batchBytes + len(entry)
 		// a full batch is written, and so is one with nothing behind it: a stream that has
 		// gone quiet leaves what it has already said on durable media rather than in memory
-		if len(batch) == batchSize || batchBytes >= MaxBatchBytes || !reader.buffered() {
+		paused := !reader.buffered() && params.Producer.IsZero()
+		if len(batch) == batchSize || batchBytes >= MaxBatchBytes || paused {
 			if err := flush(); err != nil {
 				return written, err
 			}

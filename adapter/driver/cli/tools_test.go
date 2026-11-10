@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tcw/ibsen/core/domain"
+	"github.com/tcw/ibsen/core/port/driver"
 	"github.com/tcw/ibsen/wiring"
 )
 
@@ -31,7 +31,7 @@ func TestReadLogFile_readsABlockWrittenWithTheDefaultCodec(t *testing.T) {
 		entries[i] = []byte(fmt.Sprintf(
 			`{"event":"order-placed","id":%d,"customer":"cust-%04d","currency":"NOK"}`, i, i%50))
 	}
-	if err := local.Write(domain.TopicName("topic"), &entries); err != nil {
+	if _, err := local.Write(driver.WriteParams{Topic: "topic", Entries: &entries}); err != nil {
 		t.Fatal(err)
 	}
 	local.Close()

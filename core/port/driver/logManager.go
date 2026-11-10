@@ -24,10 +24,25 @@ type ReadParams struct {
 	FromEarliest bool
 }
 
-// LogManager is the driving port: the whole of what a log server offers.
+// WriteParams is one write: the topic, the entries, and optionally the producer sending them
+// and its number for this write. A write with no producer behaves as writes always have.
+type WriteParams struct {
+	Topic   domain.TopicName
+	Entries domain.EntriesPtr
+	// Producer and Sequence make a retry safe. A producer numbers its writes to a topic 1, 2,
+	// 3; sent again with the number last accepted, a write is reported as already written,
+	// at the offsets it was stored at, and nothing is appended. A number that is neither that
+	// nor the next is refused with domain.ErrSequenceGap or domain.ErrStaleSequence. The first
+	// write from a producer the topic does not remember may carry any number.
+	Producer domain.ProducerID
+	Sequence uint64
+}
+
+// LogManager is the driving port: the whole of what a log server offers. Write returns where
+// the entries went.
 type LogManager interface {
 	List() []domain.TopicName
-	Write(topic domain.TopicName, entries domain.EntriesPtr) error
+	Write(params WriteParams) (domain.WriteResult, error)
 	Read(params ReadParams) error
 }
 

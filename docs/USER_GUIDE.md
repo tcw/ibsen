@@ -10,6 +10,7 @@ the idea.
 - [Keep the data](#keep-the-data)
 - [Use it as a filter](#use-it-as-a-filter)
 - [Embed it](#embed-it)
+- [Safe retries](#safe-retries)
 - [The API](#the-api)
 
 ---
@@ -158,7 +159,7 @@ func main() {
 	defer log.Close()
 
 	entries := [][]byte{[]byte("hello"), []byte("world")}
-	if err := log.Write("greetings", &entries); err != nil {
+	if _, err := log.Write(driver.WriteParams{Topic: "greetings", Entries: &entries}); err != nil {
 		panic(err)
 	}
 
@@ -228,6 +229,61 @@ An embedded build defaults to no compression, because linking zstd is what those
 measure the absence of. A directory written by the server with its default (zstd) can only be
 read by an embedded build that wires the zstd adapter too.
 
+## Safe retries
+
+A write can succeed on the server and still look like a failure to the client: the reply is
+lost to a timeout, a dropped connection or a server restart. The client cannot tell whether
+the entries were stored, and if it simply sends them again they may be stored twice.
+
+Safe retries fix this. The client picks a **producer ID** — 16 random bytes, written as a UUID
+— and numbers its writes to each topic 1, 2, 3. If the reply to write 7 is lost, the client
+sends write 7 again with the same number. The server remembers the last number it accepted
+from each producer: if it already has write 7, it stores nothing and answers "already
+written", with the offsets the original went to. The ID and the number are saved in the log
+itself, so this still works after the server restarts.
+
+The rules, for a client that wants to know exactly:
+
+- The same number as the last one accepted is a duplicate: success, original offsets, nothing
+  stored. The next number is a normal write.
+- A gap, or an older number, is refused (`FAILED_PRECONDITION` over gRPC). It means the client
+  numbered something wrong, and is caught rather than hidden.
+- The first write from a producer the server does not know may carry any number.
+- Writes with no producer ID behave exactly as before, so old clients keep working.
+
+**In Go**, the client in [`clients/go/ibsen`](../clients/go/ibsen/client.go) does all of it:
+
+```go
+client, err := ibsen.Dial("localhost:54321", []ibsen.Option{ibsen.WithProducer()})
+if err != nil {
+	panic(err)
+}
+defer client.Close()
+result, err := client.Write(ctx, "orders", [][]byte{[]byte(`{"id":1}`)})
+// a lost reply was retried with the same number; result.Duplicate says the server already had it
+```
+
+**From the shell**, give `ibsen append` a producer ID and rerunning a pipeline that failed half
+way is safe — the batches the topic already holds are skipped:
+
+```shell
+ibsen append -d /srv/ibsen orders --producerId 3f2a9c1e-5b7d-4e8a-9c21-7d4e5f6a8b90 < orders.ndjson
+```
+
+Use one ID per input. With a producer ID a batch is written only when it is full or the input
+ends — never because the input paused — so that a rerun cuts the input into the same batches
+and gives them the same numbers.
+
+**The forgetting window.** The server remembers a producer only while its last write is in one
+of the topic's newest `--producerWindowBlocks` blocks (default 4, and a block is up to
+`--maxBlockSize`, a gigabyte by default). A producer that has written nothing for longer is
+treated as new: its next write is accepted whatever its number, and a retry of a write that
+old would be stored again. Retry promptly, or raise the window.
+
+**With lenient flushing** (the default, see [Durability](OPERATIONS.md#durability)) "already
+written" means the original is in the log. After a power cut that lost the original, the
+server no longer knows about it, and the retry is simply written — which is what you want.
+
 ## The API
 
 Three calls, defined in [`api/grpcApi/ibsen.proto`](../api/grpcApi/ibsen.proto):
@@ -241,7 +297,12 @@ service Ibsen {
 ```
 
 `read` takes a topic, a starting offset, a batch size and `stopOnCompletion`: false keeps the
-stream open and follows the log, true ends it when it reaches the end.
+stream open and follows the log, true ends it when it reaches the end. `fromEarliest` starts
+at the earliest retained offset when the one asked for has been deleted.
+
+`write` takes a topic and its entries, and optionally a 16-byte `producerId` and a `sequence`
+for [safe retries](#safe-retries). It answers with `wrote`, the `firstOffset` the entries went
+to, and `duplicate` when the write was a retry the server already held.
 
 Those three calls are the whole of what Ibsen offers, and gRPC is one way to reach them.
 Embedded programs get them as a Go interface, `driver.LogManager`; `ibsen append`, `ibsen cat`

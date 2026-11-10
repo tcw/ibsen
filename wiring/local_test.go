@@ -32,7 +32,7 @@ func writeEntries(t *testing.T, log driver.LogManager, topic string, entries ...
 	for i, entry := range entries {
 		batch[i] = []byte(entry)
 	}
-	if err := log.Write(domain.TopicName(topic), &batch); err != nil {
+	if _, err := log.Write(driver.WriteParams{Topic: domain.TopicName(topic), Entries: &batch}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -194,7 +194,7 @@ func TestReadOnlyOpenRefusesWrites(t *testing.T) {
 
 	reader := openLocal(t, LocalParams{RootPath: root, ReadOnly: true})
 	batch := [][]byte{[]byte("nope")}
-	if err := reader.Write("topic", &batch); err == nil {
+	if _, err := reader.Write(driver.WriteParams{Topic: "topic", Entries: &batch}); err == nil {
 		t.Fatal("a read-only open accepted a write")
 	}
 }

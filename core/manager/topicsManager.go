@@ -38,6 +38,9 @@ type LogTopicManagerParams struct {
 	// FlushInterval is how long a batch may be held back hoping for more entries; zero
 	// never holds one back.
 	FlushInterval time.Duration
+	// ProducerWindowBlocks is how many of a topic's newest blocks a producer is remembered
+	// across; zero means topic.DefaultProducerWindowBlocks.
+	ProducerWindowBlocks int
 	// FlushMode says when a write is acknowledged; the zero value is topic.FlushStrict. In
 	// topic.FlushLenient nothing is flushed until Flush is called, which is the composition
 	// root's job: the core starts no timer.
@@ -168,21 +171,21 @@ func (l *LogTopicsManager) List() []domain.TopicName {
 	return l.StatusAccess.List()
 }
 
-func (l *LogTopicsManager) Write(topicName domain.TopicName, entries domain.EntriesPtr) error {
+func (l *LogTopicsManager) Write(params driver.WriteParams) (domain.WriteResult, error) {
 	if l.Params.ReadOnly {
-		return errors.New("ibsen is in read only mode and will not accept any writes")
+		return domain.WriteResult{}, errors.New("ibsen is in read only mode and will not accept any writes")
 	}
 	if err := l.begin(); err != nil {
-		return err
+		return domain.WriteResult{}, err
 	}
 	defer l.state.requests.Done()
-	loaded, err := l.getOrCreateTopic(topicName)
+	loaded, err := l.getOrCreateTopic(params.Topic)
 	if err != nil {
-		return err
+		return domain.WriteResult{}, err
 	}
 	// no lock of our own: the topic assigns offsets under its own, and writers to one topic
 	// have to be inside it together for their entries to share a flush
-	return loaded.Write(entries)
+	return loaded.WriteWith(topic.WriteRequest{Entries: params.Entries, Producer: params.Producer, Sequence: params.Sequence})
 }
 
 func (l *LogTopicsManager) Read(params driver.ReadParams) error {
@@ -248,18 +251,19 @@ func (l *LogTopicsManager) getOrCreateTopic(name domain.TopicName) (*topic.Topic
 // keep working.
 func (l *LogTopicsManager) loadOrCreateNewTopic(topicName domain.TopicName) (*topic.Topic, error) {
 	loaded := topic.NewLogTopic(topic.Params{
-		Logger:          l.Params.Logger,
-		IndexSparsity:   l.Params.IndexSparsity,
-		MaxFrameEntries: l.Params.MaxFrameEntries,
-		MaxFrameBytes:   l.Params.MaxFrameBytes,
-		Codec:           l.Params.Codec,
-		Codecs:          l.Params.Codecs,
-		FlushEntries:    l.Params.FlushEntries,
-		FlushInterval:   l.Params.FlushInterval,
-		FlushMode:       l.Params.FlushMode,
-		Store:           l.Params.Store,
-		TopicName:       string(topicName),
-		MaxBlockSize:    l.Params.MaxBlockSize,
+		Logger:               l.Params.Logger,
+		IndexSparsity:        l.Params.IndexSparsity,
+		MaxFrameEntries:      l.Params.MaxFrameEntries,
+		MaxFrameBytes:        l.Params.MaxFrameBytes,
+		Codec:                l.Params.Codec,
+		Codecs:               l.Params.Codecs,
+		FlushEntries:         l.Params.FlushEntries,
+		FlushInterval:        l.Params.FlushInterval,
+		FlushMode:            l.Params.FlushMode,
+		ProducerWindowBlocks: l.Params.ProducerWindowBlocks,
+		Store:                l.Params.Store,
+		TopicName:            string(topicName),
+		MaxBlockSize:         l.Params.MaxBlockSize,
 	})
 	if err := loaded.LoadOrCreate(); err != nil {
 		return nil, errore.WrapWithContextF(err, "unable to load topic %s", topicName)

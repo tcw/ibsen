@@ -40,6 +40,7 @@ Every server flag has an environment variable, so containers need no command lin
 | `--compression` | `IBSEN_COMPRESSION` | `zstd` | codec for new frames: `zstd` or `none` |
 | `--compressionLevel` | `IBSEN_COMPRESSION_LEVEL` | `default` | `fastest`, `default`, `better`, `best` |
 | `-o, --readOnly` | `IBSEN_READ_ONLY` | `false` | serve a directory without changing a byte of it |
+| `--producerWindowBlocks` | `IBSEN_PRODUCER_WINDOW_BLOCKS` | `4` | [safe retries](USER_GUIDE.md#safe-retries): how many of a topic's newest blocks a producer is remembered across |
 | `--retainAge` | `IBSEN_RETAIN_AGE` | *(unset)* | delete whole blocks older than this, such as `168h` or `7d`; see [Retention](#retention) |
 | `--retainBytes` | `IBSEN_RETAIN_BYTES` | *(unset)* | keep each topic to about this size, such as `10GB` or `512MiB` |
 | `--config` | `IBSEN_CONFIG` | `<rootDirectory>/ibsen.json` | settings file with per-topic overrides |

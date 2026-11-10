@@ -77,6 +77,9 @@ type Params struct {
 	Codecs driven.Codecs
 	// Logger is where the log says what it did; nil says nothing and links nothing.
 	Logger driven.Logger
+	// ProducerWindowBlocks is how many of a topic's newest blocks a producer is remembered
+	// across for safe retries; zero means the core default.
+	ProducerWindowBlocks int
 }
 
 // Log is an embedded log. It is the same driving port a gRPC server speaks, so code written
@@ -99,18 +102,19 @@ func Open(params Params) (*Log, error) {
 		params.MaxBlockSize = DefaultMaxBlockSize
 	}
 	built, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
-		ReadOnly:        params.ReadOnly,
-		Store:           params.Store,
-		MaxBlockSize:    params.MaxBlockSize,
-		IndexSparsity:   params.IndexSparsity,
-		MaxFrameEntries: params.MaxFrameEntries,
-		MaxFrameBytes:   params.MaxFrameBytes,
-		Codec:           params.Codec,
-		Codecs:          params.Codecs,
-		FlushEntries:    params.FlushEntries,
-		FlushInterval:   params.FlushInterval,
-		FlushMode:       params.FlushMode,
-		Logger:          params.Logger,
+		ReadOnly:             params.ReadOnly,
+		Store:                params.Store,
+		MaxBlockSize:         params.MaxBlockSize,
+		IndexSparsity:        params.IndexSparsity,
+		MaxFrameEntries:      params.MaxFrameEntries,
+		MaxFrameBytes:        params.MaxFrameBytes,
+		Codec:                params.Codec,
+		Codecs:               params.Codecs,
+		FlushEntries:         params.FlushEntries,
+		FlushInterval:        params.FlushInterval,
+		FlushMode:            params.FlushMode,
+		ProducerWindowBlocks: params.ProducerWindowBlocks,
+		Logger:               params.Logger,
 	})
 	if err != nil {
 		return nil, err
@@ -162,8 +166,8 @@ func (l *Log) List() []domain.TopicName {
 // Write appends entries to a topic, creating it if it is new. In strict mode it returns once
 // they are on durable media; in lenient mode once they are appended, and Flush makes them
 // durable.
-func (l *Log) Write(topic domain.TopicName, entries domain.EntriesPtr) error {
-	return l.manager.Write(topic, entries)
+func (l *Log) Write(params driver.WriteParams) (domain.WriteResult, error) {
+	return l.manager.Write(params)
 }
 
 // Read sends entries from an offset onwards to the caller's channel.

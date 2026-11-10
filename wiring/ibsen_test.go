@@ -14,6 +14,7 @@ import (
 	"github.com/tcw/ibsen/adapter/driver/grpcapi"
 	"github.com/tcw/ibsen/core/manager"
 	"github.com/tcw/ibsen/core/port/driven"
+	"github.com/tcw/ibsen/core/port/driver"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -48,7 +49,7 @@ func TestShutdown_closesLogBeforeReleasingLockAndStartWaitsForIt(t *testing.T) {
 		topicsManager := ibs.topicsManager
 		ibs.mu.Unlock()
 		entries := [][]byte{[]byte("late")}
-		writeAtRelease = topicsManager.Write("topic", &entries)
+		_, writeAtRelease = topicsManager.Write(driver.WriteParams{Topic: "topic", Entries: &entries})
 		// releasing takes a while, so a Start that does not wait returns first
 		time.Sleep(100 * time.Millisecond)
 	}

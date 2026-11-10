@@ -228,6 +228,39 @@ The entry checksum still earns its place inside the frame: the frame checksum ca
 media, the entry checksum catches everything after it, and a frame that verifies whole can
 still hold an entry that does not.
 
+#### Version 2: the extension
+
+A frame that carries a producer (§8.4) or names a compression dictionary (§13.3) is version 2.
+Its first 36 bytes are laid out and checksummed exactly as version 1's, except that `version`
+is 2 and `reserved` holds the extension's length; 44 bytes of extension follow, with a
+checksum of their own:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ the 36-byte header above, version 2, reserved = 44            │
+├──────────────────────────────────────────────────────────────┤
+│ producer  [16]byte      zero for none                         │
+├───────────────────────────┬──────────────────────────────────┤
+│ sequence  uint64     8B   │ writeEntries uint32 4B │ zero 4B  │
+├───────────────────────────┼──────────────────────────────────┤
+│ dictID    uint64     8B   │ extCrc  uint32  4B (the 40 before)│
+├───────────────────────────┴──────────────────────────────────┤
+│ payload                                                       │
+└──────────────────────────────────────────────────────────────┘
+```
+
+- **An older build refuses version 2 rather than truncating it.** It verifies the 28 bytes
+  after the checksum, which version 2 keeps valid, and then refuses a version it does not
+  know with `ErrUnsupportedLogFormat`, which recovery never truncates. Had the extension been
+  folded into `headerCrc`, an older build would have read every version 2 frame as corrupt
+  and cut the block there. `core/domain/frameV2_test.go` carries a copy of the version 1
+  reader to pin this.
+- **Version 1 frames remain readable forever**, and a frame with neither a producer nor a
+  dictionary is still written as version 1, so a log that uses neither looks exactly as it
+  did. The two mix freely in one block.
+- `writeEntries` is the size of the whole write the frame belongs to, which is what makes a
+  producer's write torn by a crash recognisable (§11).
+
 ### 5.3 Index pair
 
 An index block is a sequence of 20-byte pairs (`index.PairSize`):
@@ -258,7 +291,7 @@ keeps them in flash pages with a page table in RAM. The core names a block with 
 ```go
 type LogManager interface {
 	List() []domain.TopicName
-	Write(topic domain.TopicName, entries domain.EntriesPtr) error
+	Write(params WriteParams) (domain.WriteResult, error)
 	Read(params ReadParams) error
 }
 ```
@@ -471,6 +504,46 @@ first block had been cut at the old one, the entries that became durable at its 
 never sent, and the read carried on from the next block's first offset. A tailing reader lost
 them for good. A reader that wants more reads again, from where it stopped.
 
+### 8.4 Safe retries: the producer table
+
+A client that retries a write after a lost reply must not get its entries stored twice. A
+write may carry a **producer ID** (16 bytes) and a **sequence number**: the client numbers its
+writes to a topic 1, 2, 3, and the topic remembers, per producer, the last number it accepted,
+where that write's entries are, and which block they went into.
+
+| the write's number | what happens |
+|---|---|
+| the last one accepted | a duplicate: nothing is appended, and the original's offsets come back with `Duplicate` set |
+| the last one + 1 | a normal write, recorded |
+| anything else | refused: `domain.ErrSequenceGap` or `ErrStaleSequence` (gRPC `FAILED_PRECONDITION`) |
+| any, from a producer not remembered | a normal write, recorded |
+
+- **The check and the append are one step**, under `Topic.mu` in `append`, so a retry and its
+  original — or two retries racing — can never both be appended.
+- **The ID and the number are in the log itself**: every frame of a producer's write carries
+  them in the version 2 extension. `LoadOrCreate` rebuilds the table, once the head block is
+  recovered, from the frame headers of the newest `ProducerWindowBlocks` blocks
+  (`logfmt.ScanProducers`, headers only, nothing decoded). A retry that arrives after a
+  restart is recognised.
+- **A producer is remembered across the newest `--producerWindowBlocks` blocks (4)**, and
+  forgotten once its last write falls out of them, at runtime as on a rebuild. A forgotten
+  producer is new, so its next write may carry any number — and a retry of a write that old
+  is stored again.
+- **A torn producer write is cut whole.** All frames of one write go in one append, so after a
+  crash only the last write can be incomplete, and recovery cuts it from its first frame
+  rather than keeping a prefix (§11): keeping one would give its retry half a write to call a
+  duplicate of. A write with no producer keeps the old rule.
+- **The same number on a different write** — a different entry count — is refused with
+  `ErrSequenceReused` rather than answered as a duplicate of something the client did not send.
+- **"Already written" means what "written" means.** In strict mode a duplicate that arrives
+  while the original still waits for its flush waits for it too. In lenient mode it means the
+  original is in the log; after a power cut that took the original, the rebuilt table does not
+  hold it, and the retry is stored normally.
+
+The driving port carries it: `LogManager.Write(driver.WriteParams) (domain.WriteResult,
+error)`, where `WriteParams` has the topic, the entries and the optional producer and number,
+and `WriteResult` the first offset, the count and `Duplicate`.
+
 ### 8.3 Failure states
 
 | state | cause | escape |
@@ -654,7 +727,8 @@ RecoverBlock(store, ref, firstOffset, blockSize)
   ├─ scan frames from the start of the block
   │    ├─ header does not verify, or payload CRC fails  ─▶ valid region ends here
   │    ├─ payload is shorter than storedSize            ─▶ valid region ends here
-  │    └─ a valid frame with an unexpected firstOffset  ─▶ error, truncate nothing
+  │    ├─ a valid frame with an unexpected firstOffset  ─▶ error, truncate nothing
+  │    └─ the region ends inside a producer's write      ─▶ it ends before that write
   ├─ truncate the block to the end of the valid region
   └─ return (nextOffset, validSize, truncatedBytes)
 ```
@@ -675,7 +749,10 @@ Rules worth stating explicitly:
 - **A frame whose codec this build does not carry is still recoverable**, because scanning
   needs only the checksums. The missing codec is reported when a read asks for the entries.
 - **Complete entries of a batch whose write returned an error can survive recovery**, as with
-  any crash. There are no batch markers.
+  any crash — unless the write carried a producer. A producer's frames say how many entries
+  the whole write holds (`writeEntries`, §5.2), so a group that ends short is recognisable,
+  and recovery cuts it from its first frame. Only the last write in a block can be torn, since
+  a write is one append; the cut keeps safe retries exactly-once (§8.4).
 - **The index is cut to match.** Pairs past the recovered end, and torn partial pairs, are
   dropped from the head index, and indexing resumes right after the last kept entry.
 
@@ -1089,3 +1166,5 @@ The rules that must not be broken, collected:
 16. A writable store reads a head block from the media, not the cache, before recovering it.
 17. Retention removes only a prefix of whole log blocks, never the head; the log block before
     its index; and a reader of a removed offset is told so, never skipped ahead.
+18. A producer's write is appended whole or recovered away whole, and a sequence number is
+    checked and recorded in the same step as the append.

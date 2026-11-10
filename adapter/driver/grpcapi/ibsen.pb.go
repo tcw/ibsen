@@ -58,8 +58,12 @@ func (*EmptyArgs) Descriptor() ([]byte, []int) {
 }
 
 type WriteStatus struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Wrote         int64                  `protobuf:"varint,1,opt,name=wrote,proto3" json:"wrote,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Wrote int64                  `protobuf:"varint,1,opt,name=wrote,proto3" json:"wrote,omitempty"`
+	// where the entries are: the first offset, and wrote of them from there
+	FirstOffset uint64 `protobuf:"varint,2,opt,name=firstOffset,proto3" json:"firstOffset,omitempty"`
+	// the write was a retry of one already stored at these offsets, and nothing was appended
+	Duplicate     bool `protobuf:"varint,3,opt,name=duplicate,proto3" json:"duplicate,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -99,6 +103,20 @@ func (x *WriteStatus) GetWrote() int64 {
 		return x.Wrote
 	}
 	return 0
+}
+
+func (x *WriteStatus) GetFirstOffset() uint64 {
+	if x != nil {
+		return x.FirstOffset
+	}
+	return 0
+}
+
+func (x *WriteStatus) GetDuplicate() bool {
+	if x != nil {
+		return x.Duplicate
+	}
+	return false
 }
 
 type ReadParams struct {
@@ -180,9 +198,14 @@ func (x *ReadParams) GetFromEarliest() bool {
 }
 
 type InputEntries struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Topic         string                 `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
-	Entries       [][]byte               `protobuf:"bytes,2,rep,name=entries,proto3" json:"entries,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Topic   string                 `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	Entries [][]byte               `protobuf:"bytes,2,rep,name=entries,proto3" json:"entries,omitempty"`
+	// optional, for safe retries: 16 bytes naming the writer, and its number for this write.
+	// Numbers run 1, 2, 3 per topic; a write sent again with the last number accepted is
+	// answered as a duplicate, and a gap or an older number is FAILED_PRECONDITION.
+	ProducerId    []byte `protobuf:"bytes,3,opt,name=producerId,proto3" json:"producerId,omitempty"`
+	Sequence      uint64 `protobuf:"varint,4,opt,name=sequence,proto3" json:"sequence,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -229,6 +252,20 @@ func (x *InputEntries) GetEntries() [][]byte {
 		return x.Entries
 	}
 	return nil
+}
+
+func (x *InputEntries) GetProducerId() []byte {
+	if x != nil {
+		return x.ProducerId
+	}
+	return nil
+}
+
+func (x *InputEntries) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
 }
 
 type TopicList struct {
@@ -376,19 +413,25 @@ var File_ibsen_proto protoreflect.FileDescriptor
 const file_ibsen_proto_rawDesc = "" +
 	"\n" +
 	"\vibsen.proto\"\v\n" +
-	"\tEmptyArgs\"#\n" +
+	"\tEmptyArgs\"c\n" +
 	"\vWriteStatus\x12\x14\n" +
-	"\x05wrote\x18\x01 \x01(\x03R\x05wrote\"\xa8\x01\n" +
+	"\x05wrote\x18\x01 \x01(\x03R\x05wrote\x12 \n" +
+	"\vfirstOffset\x18\x02 \x01(\x04R\vfirstOffset\x12\x1c\n" +
+	"\tduplicate\x18\x03 \x01(\bR\tduplicate\"\xa8\x01\n" +
 	"\n" +
 	"ReadParams\x12\x14\n" +
 	"\x05topic\x18\x01 \x01(\tR\x05topic\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x04R\x06offset\x12\x1c\n" +
 	"\tbatchSize\x18\x03 \x01(\rR\tbatchSize\x12*\n" +
 	"\x10stopOnCompletion\x18\x04 \x01(\bR\x10stopOnCompletion\x12\"\n" +
-	"\ffromEarliest\x18\x05 \x01(\bR\ffromEarliest\">\n" +
+	"\ffromEarliest\x18\x05 \x01(\bR\ffromEarliest\"z\n" +
 	"\fInputEntries\x12\x14\n" +
 	"\x05topic\x18\x01 \x01(\tR\x05topic\x12\x18\n" +
-	"\aentries\x18\x02 \x03(\fR\aentries\"#\n" +
+	"\aentries\x18\x02 \x03(\fR\aentries\x12\x1e\n" +
+	"\n" +
+	"producerId\x18\x03 \x01(\fR\n" +
+	"producerId\x12\x1a\n" +
+	"\bsequence\x18\x04 \x01(\x04R\bsequence\"#\n" +
 	"\tTopicList\x12\x16\n" +
 	"\x06topics\x18\x01 \x03(\tR\x06topics\"9\n" +
 	"\x05Entry\x12\x16\n" +

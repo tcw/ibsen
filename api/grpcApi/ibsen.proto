@@ -20,6 +20,10 @@ message EmptyArgs{
 
 message WriteStatus {
   int64 wrote = 1;
+  // where the entries are: the first offset, and wrote of them from there
+  uint64 firstOffset = 2;
+  // the write was a retry of one already stored at these offsets, and nothing was appended
+  bool duplicate = 3;
 }
 
 message ReadParams {
@@ -35,6 +39,11 @@ message ReadParams {
 message InputEntries {
   string topic = 1;
   repeated bytes entries = 2;
+  // optional, for safe retries: 16 bytes naming the writer, and its number for this write.
+  // Numbers run 1, 2, 3 per topic; a write sent again with the last number accepted is
+  // answered as a duplicate, and a gap or an older number is FAILED_PRECONDITION.
+  bytes producerId = 3;
+  uint64 sequence = 4;
 }
 
 message TopicList{

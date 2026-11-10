@@ -490,6 +490,8 @@ twelve seeds per scenario.
 | power cut keeps some of what was unsynced | `LoseSome(seed)` | |
 | power cut under coalesced flushes | `LoseSome(seed)` | `FlushEntries 20`, `FlushInterval 1ms` |
 | fsync fails, then power cut | `LoseEverything` | one log fsync fails at a random point of each life |
+| producers retry across power cuts | `LoseSome(seed)` | every writer has a producer ID and retries a failed write, same number, before anything else |
+| producers retry across a failed fsync and power cuts | `LoseEverything` | the same, and one log fsync fails |
 | lenient: power cut loses everything unflushed | `LoseEverything` | lenient mode, a recorded flusher every 0.2–1.7 ms |
 | lenient: power cut keeps some of what was unflushed | `LoseSome(seed)` | the same |
 | lenient: fsync fails, then power cut | `LoseEverything` | the same, and one log fsync fails |
@@ -763,9 +765,9 @@ unsynced tail at all, which reverting the rollover fix and watching the harness 
 
 What the suite does not test, so nobody assumes it does:
 
-- **Clients that retry.** Every harness drives the manager. A gRPC client that retries a write
-  would duplicate it, since writes carry no idempotency key, and the checker would say so — but
-  nothing exercises it.
+- **Clients that retry over gRPC.** The nemesis retries through the manager with producer IDs,
+  and the Go client's retry is tested against a real manager; no history-checked test retries
+  through a real server under a nemesis.
 - **The lease under failure.** The lease's own tests cover stalls and races between instances;
   no history-checked test runs two writers against one directory with a nemesis.
 - **Nested crashes.** A second crash during the recovery from the first is not enumerated.
@@ -825,6 +827,11 @@ What the suite does not test, so nobody assumes it does:
 | `adapter/driver/history/nemesis_test.go` | L8 | randomised power cuts and failed fsyncs, checked, in both flush modes |
 | `adapter/driver/history/lenient_test.go` | L8 | the checker's lenient rules, both sides |
 | `core/topic/lenient_test.go` | L4 | lenient flush mode |
+| `core/topic/producer_test.go` | L4 | safe retries: duplicate, next, gap, stale, reused; a restart; the window, live and rebuilt; producers racing themselves; a torn producer write cut whole and one without a producer keeping its prefix; v1 and v2 frames in one block; a strict duplicate waiting for the original's flush |
+| `core/domain/frameV2_test.go` | L1 | frame header v2: round trip, every extension byte checked, a cut extension torn, an unknown extension unsupported, and a copy of the v1 reader refusing v2 rather than calling it corrupt |
+| `adapter/driver/stdio/producer_test.go` | L6 | `append --producerId`: a rerun after a failure at every batch stores the input once |
+| `adapter/driver/grpcapi/producer_test.go` | L6 | a retry answered as a duplicate; `FAILED_PRECONDITION`; a malformed producer id |
+| `clients/go/ibsen/client_test.go` | L6 | the Go client retrying lost replies with the same number, and not retrying without a producer |
 | `core/topic/retention_test.go` | L4 | retention: age, size, both, the head kept, a prefix only, reads of deleted offsets and from the earliest, a reader whose next block goes, an orphan index after a crash, a lenient flush naming a removed block |
 | `wiring/config_test.go` | L6 | sizes and ages, overrides replacing the global limits, bad settings files refused, read-only opens deleting nothing, append and the server applying retention |
 | `adapter/driver/grpcapi/retention_test.go` | L6 | a deleted offset is `OUT_OF_RANGE`; `fromEarliest` |

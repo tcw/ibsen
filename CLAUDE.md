@@ -121,6 +121,21 @@ errore/                     stdlib-only, shared by both sides
   `ErrBlockNotFound` and stopped the topic; `syncBlocks` now skips it, pinned by
   `TestRetain_aLenientFlushAfterRetentionDoesNotFail`. `scripts/gen-proto.sh` regenerates the
   Go gRPC code (protoc 3.21, protoc-gen-go 1.36.12, protoc-gen-go-grpc 1.6.2).
+- **Safe retries** (spec 5, ARCHITECTURE §5.2 and §8.4). Frame header version 2 adds a 44-byte
+  extension (producer, sequence, `writeEntries`, `dictID`, its own CRC) after a version 1 base
+  whose CRC an older build still verifies, so it refuses v2 as unsupported instead of
+  truncating it. The topic keeps a producer table under `Topic.mu` (`core/topic/producers.go`):
+  last sequence, offsets, block; duplicate, next, gap, stale and reused are decided in `append`.
+  It is rebuilt from the headers of the newest `ProducerWindowBlocks` (4) blocks and pruned to
+  them at rollover. Recovery cuts a torn producer write whole (`producerGroup` in
+  `logfmt/logUtils.go`). **The driving port changed**: `LogManager.Write(driver.WriteParams)
+  (domain.WriteResult, error)`. gRPC `InputEntries` has `producerId`/`sequence`, `WriteStatus`
+  `firstOffset`/`duplicate`; a bad number is `FAILED_PRECONDITION`. `clients/go/ibsen` retries
+  with the same number; `ibsen append --producerId` makes a rerun safe (batches then only cut
+  when full). The nemesis has two producer scenarios, and turning duplicate detection off fails
+  them. Both generated Go copies of the proto register the same names, so no binary may link
+  `adapter/driver/grpcapi` and `clients/go/api/grpcApi` together; the client's test serves the
+  real manager through its own stubs for that reason.
 - **Releases** are a tag: `.github/workflows/release.yml` runs GoReleaser
   (`.goreleaser.yaml`), which builds `ibsen` for linux/darwin/windows on amd64 and arm64 (and
   linux/arm), archives, `checksums.txt`, release notes and multi-arch images at
@@ -686,7 +701,10 @@ and how to read their failures, recipes, and which test holds which promise — 
 43. ~~Retention: delete whole old blocks by age, size or both, never the head, with per-topic
     overrides in `<root>/ibsen.json`, and tell a reader of a deleted offset so (spec 4).~~
 
-Every step ships green. Steps 0 to 43 are done, one commit each.
+44. ~~Safe retries: frame header version 2 with a producer ID and sequence, a producer table
+    rebuilt from headers, and the driving port's `Write` taking `WriteParams` (spec 5).~~
+
+Every step ships green. Steps 0 to 44 are done, one commit each.
 
 Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
 are narrower than they look; and §7, which is untouched. The frame-bound default is settled —

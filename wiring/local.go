@@ -67,6 +67,9 @@ type LocalParams struct {
 	LockMode string
 	// Logger is optional; nil logs through zerolog, like the server.
 	Logger driven.Logger
+	// ProducerWindowBlocks is how many of a topic's newest blocks a producer is remembered
+	// across for safe retries; zero means the core default.
+	ProducerWindowBlocks int
 	// RetainAge, RetainBytes and ConfigPath are retention, as for the server. A writable open
 	// applies it once, when it is closed; a read-only one reads the file but deletes nothing.
 	RetainAge   string
@@ -136,15 +139,16 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 		logger = zerologger.New(log.Logger)
 	}
 	opened, err := embedded.Open(embedded.Params{
-		Store:           localStore(params),
-		ReadOnly:        params.ReadOnly,
-		MaxBlockSize:    params.MaxBlockSize,
-		IndexSparsity:   params.IndexSparsity,
-		MaxFrameEntries: params.MaxFrameEntries,
-		MaxFrameBytes:   params.MaxFrameBytes,
-		FlushEntries:    params.FlushEntries,
-		FlushInterval:   flushInterval,
-		FlushMode:       flushMode,
+		Store:                localStore(params),
+		ReadOnly:             params.ReadOnly,
+		MaxBlockSize:         params.MaxBlockSize,
+		IndexSparsity:        params.IndexSparsity,
+		MaxFrameEntries:      params.MaxFrameEntries,
+		MaxFrameBytes:        params.MaxFrameBytes,
+		FlushEntries:         params.FlushEntries,
+		FlushInterval:        flushInterval,
+		FlushMode:            flushMode,
+		ProducerWindowBlocks: params.ProducerWindowBlocks,
 		OnFlushError: func(err error) {
 			log.Error().Err(err).Msg("a periodic flush failed; the topic it failed on takes no more writes")
 		},

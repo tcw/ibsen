@@ -12,6 +12,7 @@ import (
 	"github.com/tcw/ibsen/adapter/driver/grpcapi"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/port/driven"
+	"github.com/tcw/ibsen/core/port/driver"
 	"github.com/tcw/ibsen/core/topic"
 )
 
@@ -113,7 +114,7 @@ func TestReadOnlyOpenReadsTheConfigButDeletesNothing(t *testing.T) {
 	}
 	for i := 0; i < 4; i++ {
 		entries := [][]byte{[]byte("x")}
-		if err := writer.Write("t", &entries); err != nil {
+		if _, err := writer.Write(driver.WriteParams{Topic: "t", Entries: &entries}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -150,7 +151,7 @@ func TestAWritableOpenAppliesRetentionWhenItCloses(t *testing.T) {
 	}
 	for i := 0; i < 4; i++ {
 		entries := [][]byte{[]byte("x")}
-		if err := local.Write("t", &entries); err != nil {
+		if _, err := local.Write(driver.WriteParams{Topic: "t", Entries: &entries}); err != nil {
 			t.Fatal(err)
 		}
 	}

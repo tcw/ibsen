@@ -72,6 +72,11 @@ type Op struct {
 	From uint64
 	Seen []Entry
 	Err  error
+	// Producer and Sequence are what a write carried for safe retries; zero for none. A
+	// retry is recorded as a write of its own with the same entries, and the checker's rule
+	// that nothing is in the log twice is then exactly-once.
+	Producer domain.ProducerID
+	Sequence uint64
 	// log is the instance the operation went to. A flush covers writes to its own instance
 	// only: a restarted log has nothing of what the one before it did not flush.
 	log any
@@ -106,7 +111,22 @@ func (h *History) Write(log driver.LogManager, process int, topic domain.TopicNa
 	}
 	op := Op{Kind: Write, Process: process, Topic: topic, Written: entries, log: log}
 	op.Invoke = h.clock.Add(1)
-	op.Err = log.Write(topic, &batch)
+	_, op.Err = log.Write(driver.WriteParams{Topic: topic, Entries: &batch})
+	op.Complete = h.clock.Add(1)
+	h.record(op)
+	return op.Err
+}
+
+// WriteAs is Write for a client with a producer ID, numbering this write sequence. A retry
+// is the same call again with the same entries and number.
+func (h *History) WriteAs(log driver.LogManager, process int, topic domain.TopicName, entries []string, producer domain.ProducerID, sequence uint64) error {
+	batch := make([][]byte, len(entries))
+	for i, entry := range entries {
+		batch[i] = []byte(entry)
+	}
+	op := Op{Kind: Write, Process: process, Topic: topic, Written: entries, Producer: producer, Sequence: sequence, log: log}
+	op.Invoke = h.clock.Add(1)
+	_, op.Err = log.Write(driver.WriteParams{Topic: topic, Entries: &batch, Producer: producer, Sequence: sequence})
 	op.Complete = h.clock.Add(1)
 	h.record(op)
 	return op.Err

@@ -86,6 +86,10 @@ type Topic struct {
 	writeFailure error
 	// closed is set by Close; writes are refused so no new background indexing starts
 	closed bool
+	// producers is the last write accepted from each producer seen in the newest
+	// ProducerWindowBlocks blocks, so a retry is recognised; guarded by mu
+	producers            map[domain.ProducerID]producerState
+	ProducerWindowBlocks int
 }
 
 // Params is what the core needs to open one topic: the driven store to keep its blocks in,
@@ -122,6 +126,9 @@ type Params struct {
 	FlushMode FlushMode
 	// Logger is optional: a core built without one logs nothing rather than crashing.
 	Logger driven.Logger
+	// ProducerWindowBlocks is how many of the newest blocks a producer is remembered across;
+	// zero means DefaultProducerWindowBlocks.
+	ProducerWindowBlocks int
 }
 
 func NewLogTopic(params Params) *Topic {
@@ -149,23 +156,28 @@ func NewLogTopic(params Params) *Topic {
 	if maxFrameBytes == 0 {
 		maxFrameBytes = DefaultMaxFrameBytes
 	}
+	window := params.ProducerWindowBlocks
+	if window <= 0 {
+		window = DefaultProducerWindowBlocks
+	}
 	return &Topic{
-		Store:           params.Store,
-		Log:             logger,
-		IndexSparsity:   sparsity,
-		MaxFrameEntries: maxFrameEntries,
-		MaxFrameBytes:   maxFrameBytes,
-		Codec:           codec,
-		Codecs:          codecs,
-		flush:           newFlusher(params.Store, params.FlushEntries, params.FlushInterval, params.FlushMode, logger, params.TopicName),
-		TopicName:       params.TopicName,
-		indexWg:         &sync.WaitGroup{},
-		NextOffset:      0,
-		HeadBlockSize:   0,
-		MaxBlockSize:    params.MaxBlockSize,
-		LogBlockList:    []domain.LogBlock{},
-		IndexBlockList:  []domain.IndexBlock{},
-		IndexPosition:   nil,
+		ProducerWindowBlocks: window,
+		Store:                params.Store,
+		Log:                  logger,
+		IndexSparsity:        sparsity,
+		MaxFrameEntries:      maxFrameEntries,
+		MaxFrameBytes:        maxFrameBytes,
+		Codec:                codec,
+		Codecs:               codecs,
+		flush:                newFlusher(params.Store, params.FlushEntries, params.FlushInterval, params.FlushMode, logger, params.TopicName),
+		TopicName:            params.TopicName,
+		indexWg:              &sync.WaitGroup{},
+		NextOffset:           0,
+		HeadBlockSize:        0,
+		MaxBlockSize:         params.MaxBlockSize,
+		LogBlockList:         []domain.LogBlock{},
+		IndexBlockList:       []domain.IndexBlock{},
+		IndexPosition:        nil,
 	}
 }
 
@@ -334,6 +346,10 @@ func (t *Topic) LoadOrCreate() error {
 	t.HeadBlockSize = int(validSize)
 	t.writeFailure = nil
 
+	if err := t.rebuildProducersLocked(); err != nil {
+		return errore.Wrap(err)
+	}
+
 	// Find position of last entry write to index
 	position, err := t.findCurrentIndexLogBlockPosition()
 	if err != nil {
@@ -492,15 +508,34 @@ func (t *Topic) sendBlock(ref driven.BlockRef, byteOffset int64, from domain.Off
 // only become readable at that point, so an acknowledged write and a readable write are the
 // same thing.
 func (t *Topic) Write(entries domain.EntriesPtr) error {
+	_, err := t.WriteWith(WriteRequest{Entries: entries})
+	return err
+}
+
+// WriteWith is Write for a write that may carry a producer and its number, and that wants to
+// know where its entries went. A retry of the producer's last accepted write appends nothing
+// and returns the offsets the original was stored at, with Duplicate set; a number that is
+// neither that nor the next is refused with domain.ErrSequenceGap or ErrStaleSequence.
+func (t *Topic) WriteWith(req WriteRequest) (domain.WriteResult, error) {
 	if err := domain.ValidateTopicName(t.topic()); err != nil {
-		return err
+		return domain.WriteResult{}, err
 	}
-	pending, err := t.append(entries)
+	pending, result, err := t.append(req)
 	if err != nil {
-		return err
+		return domain.WriteResult{}, err
+	}
+	if result.Duplicate {
+		// in strict mode "already written" must mean what "written" means: durable. The
+		// original may still be waiting for its flush when its retry arrives
+		if t.flush.mode == FlushStrict && t.flush.durableOffset() < result.First+domain.Offset(result.Count) {
+			if err := t.flush.flushAll(); err != nil {
+				return domain.WriteResult{}, err
+			}
+		}
+		return result, nil
 	}
 	// waiting happens outside t.mu: a sync can be slow, and readers take that lock
-	return t.flush.acknowledge(pending)
+	return result, t.flush.acknowledge(pending)
 }
 
 // Flush makes every entry appended to the topic before the call durable, and so readable,
@@ -513,17 +548,22 @@ func (t *Topic) Flush() error {
 
 // append writes entries into the head block and returns the flush that will make them
 // durable, or nil when the store has nothing to flush.
-func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
+func (t *Topic) append(req WriteRequest) (*pendingFlush, domain.WriteResult, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.writeFailure != nil {
-		return nil, errore.Wrap(t.writeFailure)
+		return nil, domain.WriteResult{}, errore.Wrap(t.writeFailure)
 	}
 	if t.closed {
-		return nil, ErrTopicClosed
+		return nil, domain.WriteResult{}, ErrTopicClosed
 	}
 	if err := t.flush.failure(); err != nil {
-		return nil, err
+		return nil, domain.WriteResult{}, err
+	}
+	// the check and the append happen under one lock, so a retry and its original, or two
+	// retries, can never both be appended
+	if duplicate, isDuplicate, err := t.checkSequenceLocked(req); err != nil || isDuplicate {
+		return nil, duplicate, err
 	}
 
 	// if topic is empty create the first log block
@@ -537,20 +577,21 @@ func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 	if t.HeadBlockSize > t.MaxBlockSize {
 		if old, ok := t.logBlockHead(); ok {
 			if err := t.flush.barrier(t.logRef(old)); err != nil {
-				return nil, err
+				return nil, domain.WriteResult{}, err
 			}
 		}
 		t.addNewLogBlock()
 		t.resetHeadBlockSize()
+		t.forgetOldProducersLocked()
 	}
 	// encode the entries into frames and append them to the head block
 	head, hasBlockHead := t.logBlockHead()
 	if !hasBlockHead {
-		return nil, errors.New("Topic " + t.TopicName + " has no block head")
+		return nil, domain.WriteResult{}, errors.New("Topic " + t.TopicName + " has no block head")
 	}
-	frames, offsets, err := t.buildFrames(entries)
+	frames, offsets, err := t.buildFrames(req)
 	if err != nil {
-		return nil, errore.Wrap(err)
+		return nil, domain.WriteResult{}, errore.Wrap(err)
 	}
 
 	block, err := t.Store.Append(t.logRef(head), frames)
@@ -560,10 +601,12 @@ func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 		if errors.Is(err, driven.ErrDirtyBlock) {
 			t.writeFailure = err
 		}
-		return nil, errore.Wrap(err)
+		return nil, domain.WriteResult{}, errore.Wrap(err)
 	}
 
 	// update internal log state
+	first := t.NextOffset
+	t.recordProducerLocked(req, first, offsets, head)
 	t.incrementOffset(offsets)
 	t.HeadBlockSize = int(block.Size)
 	pending := t.flush.appended(t.logRef(head), t.NextOffset, offsets)
@@ -580,7 +623,7 @@ func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 		}
 		t.Log.Log(driven.LevelTrace, "index update executed", driven.Bool("executed", wasExecuted))
 	}()
-	return pending, nil
+	return pending, domain.WriteResult{First: first, Count: uint32(offsets)}, nil
 }
 
 // Close refuses further writes, flushes what was appended, and waits for the background
@@ -672,7 +715,8 @@ func (t *Topic) ToString() string {
 // a frame may be. They are appended in one call, so the store still sees a write whole or
 // not at all and a flush still never lands inside a frame; what changes is only that a large
 // write is addressable at more than one point.
-func (t *Topic) buildFrames(entries domain.EntriesPtr) ([]byte, int, error) {
+func (t *Topic) buildFrames(req WriteRequest) ([]byte, int, error) {
+	entries := req.Entries
 	var frames []byte
 	var payload []byte
 	firstOffset := t.NextOffset
@@ -685,7 +729,13 @@ func (t *Topic) buildFrames(entries domain.EntriesPtr) ([]byte, int, error) {
 			return nil
 		}
 		var err error
-		frames, err = logfmt.AppendFrame(frames, t.Codec, firstOffset, inFrame, payload)
+		frames, err = logfmt.AppendFrameWith(frames, t.Codec, domain.FrameHeader{
+			FirstOffset:  firstOffset,
+			EntryCount:   uint32(inFrame),
+			Producer:     req.Producer,
+			Sequence:     req.Sequence,
+			WriteEntries: uint32(len(*entries)),
+		}, payload)
 		if err != nil {
 			return err
 		}

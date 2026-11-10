@@ -26,6 +26,8 @@ import (
 var (
 	framing string
 	offsets bool
+	// producerID makes rerunning an append of the same input safe
+	producerID string
 	// fromEarliest starts cat at the earliest retained offset when the one asked for is gone
 	fromEarliest bool
 	follow       bool
@@ -100,25 +102,33 @@ func runAppend(topic domain.TopicName) error {
 	if err := validateFlush(flushMode, flushIntervalMs); err != nil {
 		return err
 	}
+	if producerWindowBlocks < 1 {
+		return userErrorf("--producerWindowBlocks must be at least 1, got %d", producerWindowBlocks)
+	}
+	producer, err := domain.ParseProducerID(producerID)
+	if err != nil {
+		return userErrorf("--producerId %q is not a UUID, or 32 hex digits", producerID)
+	}
 	root, err := localRoot()
 	if err != nil {
 		return err
 	}
 	local, err := wiring.OpenLocal(wiring.LocalParams{
-		RootPath:         root,
-		MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
-		IndexSparsity:    uint32(indexSparsity),
-		MaxFrameEntries:  uint32(maxFrameEntries),
-		MaxFrameBytes:    maxFrameBytes,
-		RetainAge:        retainAge,
-		RetainBytes:      retainBytes,
-		ConfigPath:       configPath,
-		FlushEntries:     uint32(flushEntries),
-		FlushInterval:    time.Duration(flushIntervalMs) * time.Millisecond,
-		FlushMode:        flushMode,
-		Compression:      compression,
-		CompressionLevel: compressionLevel,
-		LockMode:         lockMode,
+		RootPath:             root,
+		MaxBlockSize:         maxBlockSizeMB * 1024 * 1024,
+		IndexSparsity:        uint32(indexSparsity),
+		MaxFrameEntries:      uint32(maxFrameEntries),
+		MaxFrameBytes:        maxFrameBytes,
+		RetainAge:            retainAge,
+		RetainBytes:          retainBytes,
+		ConfigPath:           configPath,
+		ProducerWindowBlocks: producerWindowBlocks,
+		FlushEntries:         uint32(flushEntries),
+		FlushInterval:        time.Duration(flushIntervalMs) * time.Millisecond,
+		FlushMode:            flushMode,
+		Compression:          compression,
+		CompressionLevel:     compressionLevel,
+		LockMode:             lockMode,
 	})
 	if err != nil {
 		return localOpenError(root, err)
@@ -126,6 +136,7 @@ func runAppend(topic domain.TopicName) error {
 	written, err := stdio.Append(local, topic, os.Stdin, stdio.AppendParams{
 		Framing:   chosen,
 		BatchSize: appendBatchSize,
+		Producer:  producer,
 	})
 	// closing flushes what lenient mode has not yet: append exits zero only once everything
 	// it wrote is on durable media, in either mode, so a pipeline that finished means durable

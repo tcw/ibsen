@@ -183,7 +183,7 @@ func TestPowerCut_aRolloverWaitsForTheOldBlock(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			one := [][]byte{[]byte("a0")}
-			frame, _, err := NewLogTopic(Params{Store: newSyncGate(), TopicName: "t", MaxBlockSize: 1}).buildFrames(&one)
+			frame, _, err := NewLogTopic(Params{Store: newSyncGate(), TopicName: "t", MaxBlockSize: 1}).buildFrames(WriteRequest{Entries: &one})
 			if err != nil {
 				t.Fatal(err)
 			}

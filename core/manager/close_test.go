@@ -12,6 +12,7 @@ import (
 	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/index"
+	"github.com/tcw/ibsen/core/port/driver"
 )
 
 // gatedWriteFs holds every write to a file with the given suffix until release is closed,
@@ -90,7 +91,8 @@ func TestManager_closeWaitsForInFlightWrite(t *testing.T) {
 		for i := range entries {
 			entries[i] = []byte(fmt.Sprintf("topic-%d", i))
 		}
-		written <- m.Write("topic", &entries)
+		_, err := m.Write(driver.WriteParams{Topic: "topic", Entries: &entries})
+		written <- err
 	}()
 	<-fs.entered
 
@@ -103,7 +105,7 @@ func TestManager_closeWaitsForInFlightWrite(t *testing.T) {
 	waitForClose(t, closed)
 
 	entries := [][]byte{[]byte("late")}
-	if err := m.Write("topic", &entries); !errors.Is(err, ErrClosed) {
+	if _, err := m.Write(driver.WriteParams{Topic: "topic", Entries: &entries}); !errors.Is(err, ErrClosed) {
 		t.Errorf("write after Close: err=%v, want ErrClosed", err)
 	}
 	if _, err := readTopic(m, "unloaded"); !errors.Is(err, ErrClosed) {
@@ -135,7 +137,7 @@ func TestManager_closeWaitsForBackgroundIndexing(t *testing.T) {
 		t.Fatalf("index has %d bytes after Close, want %d", len(idx), index.PairSize)
 	}
 	var entries = [][]byte{[]byte("late")}
-	if err := m.Write(domain.TopicName("topic"), &entries); !errors.Is(err, ErrClosed) {
+	if _, err := m.Write(driver.WriteParams{Topic: domain.TopicName("topic"), Entries: &entries}); !errors.Is(err, ErrClosed) {
 		t.Errorf("write after Close: err=%v, want ErrClosed", err)
 	}
 }

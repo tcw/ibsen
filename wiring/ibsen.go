@@ -92,6 +92,9 @@ type IbsenServer struct {
 	RetainAge   string
 	RetainBytes string
 	ConfigPath  string
+	// ProducerWindowBlocks is how many of a topic's newest blocks a producer is remembered
+	// across for safe retries; zero means the core default.
+	ProducerWindowBlocks int
 	// RetentionInterval is how often retention runs; zero means DefaultRetentionInterval.
 	RetentionInterval time.Duration
 	OTELExporterAddr  string
@@ -291,19 +294,20 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	}
 
 	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
-		ReadOnly:        ibs.Readonly,
-		Store:           ibs.blockStore(),
-		TTL:             ibs.TTL,
-		MaxBlockSize:    ibs.MaxBlockSize,
-		IndexSparsity:   ibs.IndexSparsity,
-		MaxFrameEntries: ibs.MaxFrameEntries,
-		MaxFrameBytes:   ibs.MaxFrameBytes,
-		Codec:           ibs.Codec,
-		Codecs:          ibs.Codecs,
-		FlushEntries:    ibs.FlushEntries,
-		FlushInterval:   flushInterval,
-		FlushMode:       flushMode,
-		Logger:          zerologger.New(log.Logger),
+		ReadOnly:             ibs.Readonly,
+		Store:                ibs.blockStore(),
+		TTL:                  ibs.TTL,
+		MaxBlockSize:         ibs.MaxBlockSize,
+		IndexSparsity:        ibs.IndexSparsity,
+		MaxFrameEntries:      ibs.MaxFrameEntries,
+		MaxFrameBytes:        ibs.MaxFrameBytes,
+		Codec:                ibs.Codec,
+		Codecs:               ibs.Codecs,
+		FlushEntries:         ibs.FlushEntries,
+		FlushInterval:        flushInterval,
+		FlushMode:            flushMode,
+		ProducerWindowBlocks: ibs.ProducerWindowBlocks,
+		Logger:               zerologger.New(log.Logger),
 	})
 	if err != nil {
 		return errore.Wrap(err)

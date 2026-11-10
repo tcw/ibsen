@@ -190,12 +190,11 @@ cluster, use Kafka. The reasoning is in
 
 Under development, and heavily tested: property tests, a storage conformance suite, power-cut
 fault injection and history-checked crash tests. There are no known correctness bugs.
-On one machine, the single-writer lock is held by the kernel where the filesystem supports it.
-Known gaps:
+On one machine, the single-writer lock is held by the kernel where the filesystem supports it,
+and a client can retry a write without storing it twice. Known gaps:
 
 - Dictionaries for compression are designed, not built.
 - Clients exist for Go; other languages are generated from the proto and nothing more.
-- A client that retries a failed write can store it twice.
 
 ## Learn more
 

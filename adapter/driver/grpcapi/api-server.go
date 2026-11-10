@@ -13,12 +13,11 @@ import (
 	"github.com/tcw/ibsen/core/manager"
 	"github.com/tcw/ibsen/core/port/driver"
 	"github.com/tcw/ibsen/errore"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
-
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 )
 
 type server struct {
@@ -165,16 +164,30 @@ func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus,
 	if err := domain.ValidateTopicName(domain.TopicName(entries.Topic)); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	err := s.manager.Write(domain.TopicName(entries.Topic), &entries.Entries)
+	producer, err := domain.ProducerIDFromBytes(entries.ProducerId)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	result, err := s.manager.Write(driver.WriteParams{
+		Topic:    domain.TopicName(entries.Topic),
+		Entries:  &entries.Entries,
+		Producer: producer,
+		Sequence: entries.Sequence,
+	})
 	if errors.Is(err, manager.ErrClosed) {
 		return nil, status.Error(codes.Unavailable, "ibsen is shutting down")
+	}
+	if errors.Is(err, domain.ErrSequenceGap) || errors.Is(err, domain.ErrStaleSequence) || errors.Is(err, domain.ErrSequenceReused) {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
 	}
 	if err != nil {
 		log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("write api failed")
 		return nil, status.Error(codes.Unknown, "error writing batch")
 	}
 	return &WriteStatus{
-		Wrote: int64(len(entries.Entries)),
+		Wrote:       int64(result.Count),
+		FirstOffset: uint64(result.First),
+		Duplicate:   result.Duplicate,
 	}, nil
 }
 

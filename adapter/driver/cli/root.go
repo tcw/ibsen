@@ -37,6 +37,7 @@ var (
 	rootDirectory               string
 	lockMode                    string
 	retainAge                   string
+	producerWindowBlocks        int
 	retainBytes                 string
 	configPath                  string
 	clientFromEarliest          bool
@@ -97,32 +98,36 @@ var (
 			if err := validateFlush(flushMode, flushIntervalMs); err != nil {
 				fail(err, "invalid flush settings")
 			}
+			if producerWindowBlocks < 1 {
+				fail(userErrorf("--producerWindowBlocks must be at least 1, got %d", producerWindowBlocks), "")
+			}
 			if err := validateFrameBounds(maxFrameEntries, maxFrameBytes); err != nil {
 				log.Fatal().Err(err).Msg("invalid frame bounds")
 			}
 			ibsenServer := wiring.IbsenServer{
-				Readonly:         readOnly,
-				InMemory:         inMemory,
-				RootPath:         absolutePath,
-				TTL:              30 * time.Second,
-				MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
-				IndexSparsity:    uint32(indexSparsity),
-				MaxFrameEntries:  uint32(maxFrameEntries),
-				MaxFrameBytes:    maxFrameBytes,
-				Compression:      compression,
-				CompressionLevel: compressionLevel,
-				FlushEntries:     uint32(flushEntries),
-				FlushInterval:    time.Duration(flushIntervalMs) * time.Millisecond,
-				FlushMode:        flushMode,
-				LockMode:         lockMode,
-				RetainAge:        retainAge,
-				RetainBytes:      retainBytes,
-				ConfigPath:       configPath,
-				OTELExporterAddr: OTELExporterAddr,
-				GRPCCertKey:      AbsOrEmpty(certKey),
-				GRPCPrivateKey:   AbsOrEmpty(privateKey),
-				CpuProfile:       cpuProfile,
-				MemProfile:       memProfile,
+				Readonly:             readOnly,
+				InMemory:             inMemory,
+				RootPath:             absolutePath,
+				TTL:                  30 * time.Second,
+				MaxBlockSize:         maxBlockSizeMB * 1024 * 1024,
+				IndexSparsity:        uint32(indexSparsity),
+				MaxFrameEntries:      uint32(maxFrameEntries),
+				MaxFrameBytes:        maxFrameBytes,
+				Compression:          compression,
+				CompressionLevel:     compressionLevel,
+				FlushEntries:         uint32(flushEntries),
+				FlushInterval:        time.Duration(flushIntervalMs) * time.Millisecond,
+				FlushMode:            flushMode,
+				LockMode:             lockMode,
+				RetainAge:            retainAge,
+				RetainBytes:          retainBytes,
+				ConfigPath:           configPath,
+				ProducerWindowBlocks: producerWindowBlocks,
+				OTELExporterAddr:     OTELExporterAddr,
+				GRPCCertKey:          AbsOrEmpty(certKey),
+				GRPCPrivateKey:       AbsOrEmpty(privateKey),
+				CpuProfile:           cpuProfile,
+				MemProfile:           memProfile,
 			}
 			lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 			if err != nil {
@@ -345,6 +350,8 @@ func validateFlush(mode string, intervalMs int) error {
 	return nil
 }
 
+const producerWindowHelp = "Safe retries: how many of a topic's newest blocks a producer is remembered across. A producer silent for longer is treated as new, and its retry stored again"
+
 const (
 	retainAgeHelp   = "Delete whole blocks whose last entry is older than this, such as 168h or 7d; never the newest block. Unset keeps everything"
 	retainBytesHelp = "Delete the oldest whole blocks of a topic until it holds at most this, such as 10GB or 512MiB; never the newest block. Unset keeps everything"
@@ -468,6 +475,7 @@ func init() {
 	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
 	lockMode = getenv("IBSEN_LOCK", wiring.DefaultLock)
 	retainAge = getenv("IBSEN_RETAIN_AGE", "")
+	producerWindowBlocks, _ = strconv.Atoi(getenv("IBSEN_PRODUCER_WINDOW_BLOCKS", strconv.Itoa(topic.DefaultProducerWindowBlocks)))
 	retainBytes = getenv("IBSEN_RETAIN_BYTES", "")
 	configPath = getenv("IBSEN_CONFIG", "")
 
@@ -491,6 +499,7 @@ func init() {
 	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
 	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
 	cmdServer.Flags().StringVarP(&lockMode, "lock", "", lockMode, lockFlagHelp)
+	cmdServer.Flags().IntVarP(&producerWindowBlocks, "producerWindowBlocks", "", producerWindowBlocks, producerWindowHelp)
 	cmdServer.Flags().StringVarP(&retainAge, "retainAge", "", retainAge, retainAgeHelp)
 	cmdServer.Flags().StringVarP(&retainBytes, "retainBytes", "", retainBytes, retainBytesHelp)
 	cmdServer.Flags().StringVarP(&configPath, "config", "", configPath, configHelp)
@@ -518,6 +527,8 @@ func init() {
 	cmdAppend.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
 	cmdAppend.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
 	cmdAppend.Flags().StringVarP(&lockMode, "lock", "", lockMode, lockFlagHelp)
+	cmdAppend.Flags().StringVarP(&producerID, "producerId", "", "", "A UUID naming this input, which makes rerunning it safe: batches the topic already holds from an earlier run with the same id are skipped. Batches are then written only when full or at the end of the input")
+	cmdAppend.Flags().IntVarP(&producerWindowBlocks, "producerWindowBlocks", "", producerWindowBlocks, producerWindowHelp)
 	cmdAppend.Flags().StringVarP(&retainAge, "retainAge", "", retainAge, retainAgeHelp+"; append applies it once, when it finishes")
 	cmdAppend.Flags().StringVarP(&retainBytes, "retainBytes", "", retainBytes, retainBytesHelp+"; append applies it once, when it finishes")
 	cmdAppend.Flags().StringVarP(&configPath, "config", "", configPath, configHelp)

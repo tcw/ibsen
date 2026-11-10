@@ -33,6 +33,13 @@ var crcTable = crc32.MakeTable(crc32.Castagnoli)
 // This is per frame, so it costs nothing to get wrong at the topic level: a topic that
 // batches well compresses, and the same topic's occasional single-entry write does not.
 func AppendFrame(dst []byte, codec driven.Codec, firstOffset domain.Offset, entryCount int, entries []byte) ([]byte, error) {
+	return AppendFrameWith(dst, codec, domain.FrameHeader{FirstOffset: firstOffset, EntryCount: uint32(entryCount)}, entries)
+}
+
+// AppendFrameWith is AppendFrame for a frame that says more about itself: the producer, the
+// sequence and the size of the write it belongs to, taken from header along with its first
+// offset and entry count. The sizes, codec and checksum are filled in here.
+func AppendFrameWith(dst []byte, codec driven.Codec, header domain.FrameHeader, entries []byte) ([]byte, error) {
 	if codec == nil {
 		codec = driven.NoCodec{}
 	}
@@ -40,7 +47,7 @@ func AppendFrame(dst []byte, codec driven.Codec, firstOffset domain.Offset, entr
 	if len(entries) > domain.MaxFrameSize {
 		return dst, errore.NewF("frame payload of %d bytes exceeds %d", len(entries), domain.MaxFrameSize)
 	}
-	dst = append(dst, make([]byte, domain.FrameHeaderSize)...)
+	dst = append(dst, make([]byte, header.HeaderSize())...)
 	payloadStart := len(dst)
 
 	codecID := codec.ID()
@@ -63,14 +70,11 @@ func AppendFrame(dst []byte, codec driven.Codec, firstOffset domain.Offset, entr
 	if len(stored) > domain.MaxFrameSize {
 		return dst[:start], errore.NewF("frame of %d stored bytes exceeds %d", len(stored), domain.MaxFrameSize)
 	}
-	domain.PutFrameHeader(dst[start:], domain.FrameHeader{
-		Codec:       uint8(codecID),
-		FirstOffset: firstOffset,
-		EntryCount:  uint32(entryCount),
-		StoredSize:  uint32(len(stored)),
-		PlainSize:   uint32(len(entries)),
-		PayloadCrc:  crc32.Checksum(stored, crcTable),
-	})
+	header.Codec = uint8(codecID)
+	header.StoredSize = uint32(len(stored))
+	header.PlainSize = uint32(len(entries))
+	header.PayloadCrc = crc32.Checksum(stored, crcTable)
+	domain.PutFrameHeader(dst[start:], header)
 	return dst, nil
 }
 

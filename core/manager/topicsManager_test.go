@@ -91,7 +91,7 @@ func writeTopic(t *testing.T, m *LogTopicsManager, topic string, from, count int
 	for i := range entries {
 		entries[i] = []byte(fmt.Sprintf("%s-%d", topic, from+i))
 	}
-	if err := m.Write(domain.TopicName(topic), &entries); err != nil {
+	if _, err := m.Write(driver.WriteParams{Topic: domain.TopicName(topic), Entries: &entries}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -159,7 +159,7 @@ func TestManager_topicThatFailsToLoadReturnsError(t *testing.T) {
 	}
 	m := newTestManager(t, afs)
 	entries := [][]byte{[]byte("x")}
-	if err := m.Write("notes.txt", &entries); err == nil {
+	if _, err := m.Write(driver.WriteParams{Topic: "notes.txt", Entries: &entries}); err == nil {
 		t.Fatal("write to a topic that cannot be loaded succeeded")
 	}
 	if _, err := readTopic(m, "notes.txt"); err == nil {

@@ -111,7 +111,7 @@ func TestOpenLocalLenientCloseMakesEverythingDurable(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := [][]byte{[]byte("a"), []byte("b")}
-	if err := local.Write("t", &entries); err != nil {
+	if _, err := local.Write(driver.WriteParams{Topic: "t", Entries: &entries}); err != nil {
 		t.Fatal(err)
 	}
 	if got := countEntries(t, local, "t"); got != 0 {

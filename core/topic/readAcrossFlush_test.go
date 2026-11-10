@@ -20,7 +20,7 @@ import (
 func TestReadDoesNotSkipTheEndOfABlockWhenAFlushLandsDuringIt(t *testing.T) {
 	store := newSyncGate()
 	three := [][]byte{[]byte("a0"), []byte("a1"), []byte("a2")}
-	frames, _, err := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: 1 << 20}).buildFrames(&three)
+	frames, _, err := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: 1 << 20}).buildFrames(WriteRequest{Entries: &three})
 	if err != nil {
 		t.Fatal(err)
 	}

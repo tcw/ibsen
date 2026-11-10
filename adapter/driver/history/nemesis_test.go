@@ -33,6 +33,10 @@ type scenario struct {
 	// the flush policy under test; zero is the default, every write synced before it is acked
 	flushEntries  uint32
 	flushInterval time.Duration
+	// producers gives every writer a producer ID that outlives the lives, and a writer whose
+	// write failed sends it again, same number, before anything else: exactly-once is then
+	// the checker's rule that nothing is in the log twice
+	producers bool
 	// lenient acknowledges writes once appended; a ticker goroutine, recorded in the history,
 	// flushes every millisecond or so, as the composition root's would
 	lenient bool
@@ -58,6 +62,11 @@ func TestNemesis(t *testing.T) {
 		{name: "fsync fails, then power cut",
 			loss:      func(uint64) faultfs.Loss { return faultfs.LoseEverything() },
 			failSyncs: true},
+		{name: "producers retry across power cuts",
+			loss: faultfs.LoseSome, producers: true},
+		{name: "producers retry across a failed fsync and power cuts",
+			loss:      func(uint64) faultfs.Loss { return faultfs.LoseEverything() },
+			failSyncs: true, producers: true},
 		{name: "lenient: power cut loses everything unflushed",
 			loss: func(uint64) faultfs.Loss { return faultfs.LoseEverything() }, lenient: true},
 		{name: "lenient: power cut keeps some of what was unflushed",
@@ -81,6 +90,17 @@ func runSeed(t *testing.T, s scenario, seed uint64) {
 	h := &history.History{}
 	nemesis := rand.New(rand.NewPCG(seed, 1))
 	loss := s.loss(seed)
+	// what each writer is, across lives, when it has a producer
+	type retry struct {
+		topic    domain.TopicName
+		entries  []string
+		sequence uint64
+	}
+	pending := make([]*retry, writers)
+	nextSequence := make([]map[domain.TopicName]uint64, writers)
+	for w := range nextSequence {
+		nextSequence[w] = map[domain.TopicName]uint64{}
+	}
 
 	for life := 0; life < lives; life++ {
 		m := newManager(t, filestore.New(cache, dir), s)
@@ -107,15 +127,39 @@ func runSeed(t *testing.T, s scenario, seed uint64) {
 			process := life*100 + w
 			rng := rand.New(rand.NewPCG(seed, uint64(process)))
 			wg.Add(1)
+			writer := w
+			producer := domain.ProducerID{byte(writer + 1), byte(seed)}
 			go func() {
 				defer wg.Done()
 				for sent := 0; !cache.Crashed(); sent++ {
+					if s.producers && pending[writer] != nil {
+						again := pending[writer]
+						if h.WriteAs(m, process, again.topic, again.entries, producer, again.sequence) == nil {
+							nextSequence[writer][again.topic] = again.sequence + 1
+							pending[writer] = nil
+						}
+						afterWrite()
+						continue
+					}
 					topic := domain.TopicName(fmt.Sprintf("topic-%d", rng.IntN(topicsInPlay)))
 					entries := make([]string, 1+rng.IntN(maxEntriesSent))
 					for i := range entries {
 						entries[i] = fmt.Sprintf("p%d-w%d-e%d", process, sent, i)
 					}
-					_ = h.Write(m, process, topic, entries)
+					if !s.producers {
+						_ = h.Write(m, process, topic, entries)
+						afterWrite()
+						continue
+					}
+					sequence := nextSequence[writer][topic]
+					if sequence == 0 {
+						sequence = 1
+					}
+					if h.WriteAs(m, process, topic, entries, producer, sequence) == nil {
+						nextSequence[writer][topic] = sequence + 1
+					} else {
+						pending[writer] = &retry{topic: topic, entries: entries, sequence: sequence}
+					}
 					afterWrite()
 				}
 			}()
@@ -180,6 +224,8 @@ func newManager(t *testing.T, store *filestore.Store, s scenario) *manager.LogTo
 		FlushEntries:    s.flushEntries,
 		FlushInterval:   s.flushInterval,
 		FlushMode:       flushModeOf(s),
+		// a retry has to find its producer whatever a life wrote in between
+		ProducerWindowBlocks: 1 << 20,
 	})
 	if err != nil {
 		t.Fatal(err)

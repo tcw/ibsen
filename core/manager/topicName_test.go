@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/tcw/ibsen/core/domain"
+	"github.com/tcw/ibsen/core/port/driver"
 )
 
 func TestManager_rejectsTopicNamesOutsideTheirDirectory(t *testing.T) {
@@ -16,7 +17,7 @@ func TestManager_rejectsTopicNamesOutsideTheirDirectory(t *testing.T) {
 			afs := newTestRoot(t)
 			m := newTestManager(t, afs)
 			entries := [][]byte{[]byte("x")}
-			if err := m.Write(domain.TopicName(name), &entries); !errors.Is(err, domain.ErrInvalidTopicName) {
+			if _, err := m.Write(driver.WriteParams{Topic: domain.TopicName(name), Entries: &entries}); !errors.Is(err, domain.ErrInvalidTopicName) {
 				t.Errorf("write to topic %q: err=%v, want ErrInvalidTopicName", name, err)
 			}
 			if _, err := readTopic(m, name); !errors.Is(err, domain.ErrInvalidTopicName) {
