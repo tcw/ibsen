@@ -110,10 +110,18 @@ func heldBy(t *testing.T, client kubernetes.Interface, identity string, renewed 
 		}
 		return
 	}
-	current := lease(t, client)
-	current.Spec = spec
-	if _, err := leases.Update(context.Background(), current, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
+	// a takeover races the holder's renewals, and loses to one on resourceVersion now and
+	// then; another pod would read the lease again and retry, so this does too
+	for {
+		current := lease(t, client)
+		current.Spec = spec
+		_, err := leases.Update(context.Background(), current, metav1.UpdateOptions{})
+		if err == nil {
+			return
+		}
+		if !apierrors.IsConflict(err) {
+			t.Fatal(err)
+		}
 	}
 }
 
