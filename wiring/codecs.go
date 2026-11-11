@@ -1,9 +1,14 @@
 package wiring
 
 import (
-	"github.com/tcw/ibsen/core/port/driven"
+	"errors"
+	"path/filepath"
 
+	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	zstdcodec "github.com/tcw/ibsen/adapter/driven/compression/zstd"
+	"github.com/tcw/ibsen/core/domain"
+	"github.com/tcw/ibsen/core/port/driven"
+	"github.com/tcw/ibsen/core/topic"
 	"github.com/tcw/ibsen/errore"
 )
 
@@ -15,7 +20,7 @@ import (
 // written before or after this default reads the same either way.
 //
 // "none" is one word away for a deployment whose entries are already compressed, or whose
-// readers seek rather than stream. See the README.
+// readers seek rather than stream. See docs/OPERATIONS.md.
 const DefaultCompression = "zstd"
 
 // buildCodecs turns a compression name into the adapters behind it. Building them here rather
@@ -68,4 +73,41 @@ func ReadCodecs() (driven.Codecs, func(), error) {
 		return nil, nil, err
 	}
 	return codecs, zstd.Close, nil
+}
+
+// DefaultCompressMinBytes is the smallest frame the CLI offers to the codec, from
+// BenchmarkCompressionAttempt: on ~130-byte JSON events zstd keeps 2 frames in 200 at 128
+// bytes and 195 at 160, so below 128 an attempt is almost always thrown away. With a
+// dictionary the topic uses three eighths of it, 48 bytes, where a dictionary starts paying.
+const DefaultCompressMinBytes = 128
+
+// The values --compressionDict takes.
+const (
+	// DictAuto trains a dictionary per topic when the codec can use one.
+	DictAuto = "auto"
+	// DictOff writes plain codec frames, as before dictionaries.
+	DictOff = "off"
+)
+
+// ErrUnknownDictMode is a --compressionDict value that is neither auto nor off.
+var ErrUnknownDictMode = errors.New("unknown compression dictionary mode")
+
+// resolveDictMode turns --compressionDict into whether to train. Empty is auto.
+func resolveDictMode(mode string) (bool, error) {
+	switch mode {
+	case "", DictAuto:
+		return true, nil
+	case DictOff:
+		return false, nil
+	default:
+		return false, errore.WrapWithContextF(ErrUnknownDictMode, "%q, want auto or off", mode)
+	}
+}
+
+// DictionariesBeside finds the dictionaries kept beside a log block file, which is where a
+// data directory keeps them: <root>/<topic>/<id>.dict. It only reads.
+func DictionariesBeside(logFile string) driven.Dictionaries {
+	topicDir := filepath.Dir(logFile)
+	store := filestore.New(filestore.ReadOnly{FS: filestore.OS{}}, filepath.Dir(topicDir))
+	return topic.StoreDictionaries(store, domain.TopicName(filepath.Base(topicDir)))
 }

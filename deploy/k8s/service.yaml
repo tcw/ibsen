@@ -1,0 +1,16 @@
+# The headless service a StatefulSet needs, and the address clients use: ibsen-0.ibsen:54321,
+# or ibsen:54321.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ibsen
+  labels:
+    app: ibsen
+spec:
+  clusterIP: None
+  selector:
+    app: ibsen
+  ports:
+    - name: grpc
+      port: 54321
+      targetPort: grpc

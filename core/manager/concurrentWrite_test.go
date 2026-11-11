@@ -9,6 +9,7 @@ import (
 
 	"github.com/tcw/ibsen/adapter/driven/blockstore/memstore"
 	"github.com/tcw/ibsen/core/port/driven"
+	"github.com/tcw/ibsen/core/port/driver"
 )
 
 // heldSyncStore is a Syncable store whose syncs wait until the test lets them go, and which
@@ -52,7 +53,8 @@ func TestManager_concurrentWritersToOneTopicShareAFlush(t *testing.T) {
 	errs := make(chan error, writers+1)
 	write := func(i int) {
 		entries := [][]byte{[]byte(fmt.Sprintf("entry-%d", i))}
-		errs <- m.Write("shared", &entries)
+		_, err := m.Write(driver.WriteParams{Topic: "shared", Entries: &entries})
+		errs <- err
 	}
 
 	// the first write appends, then waits on a sync the test is holding

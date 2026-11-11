@@ -94,7 +94,7 @@ func TestAHeaderWithoutTheMagicIsNotAFrame(t *testing.T) {
 // A frame written by a newer Ibsen is refused rather than guessed at.
 func TestAFutureFrameVersionIsUnsupported(t *testing.T) {
 	encoded := AppendFrameHeader(nil, sampleHeader())
-	encoded[9] = FrameVersion + 1
+	encoded[9] = FrameVersionExtended + 1
 	reseal(encoded)
 
 	_, err := ReadFrameHeader(bytes.NewReader(encoded), MaxFrameSize)

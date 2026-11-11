@@ -18,6 +18,8 @@ var _ driven.Codec = &Codec{}
 type Codec struct {
 	encoder *zstd.Encoder
 	decoder *zstd.Decoder
+	level   zstd.EncoderLevel
+	dicts   dictCache
 }
 
 // Level is how hard the encoder tries. Faster levels cost less CPU per write and store more
@@ -60,7 +62,7 @@ func New(level Level) (*Codec, error) {
 		encoder.Close()
 		return nil, err
 	}
-	return &Codec{encoder: encoder, decoder: decoder}, nil
+	return &Codec{encoder: encoder, decoder: decoder, level: encoderLevel}, nil
 }
 
 func encoderLevel(level Level) (zstd.EncoderLevel, error) {
@@ -104,4 +106,5 @@ func (c *Codec) Decode(dst, src []byte, plainSize int) ([]byte, error) {
 func (c *Codec) Close() {
 	c.encoder.Close()
 	c.decoder.Close()
+	c.dicts.close()
 }

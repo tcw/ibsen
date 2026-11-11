@@ -11,6 +11,7 @@ import (
 
 	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/core/manager"
+	"github.com/tcw/ibsen/core/port/driver"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -48,7 +49,7 @@ func newTestServer(t *testing.T, entries int) server {
 	}
 	// stop the background indexing before the test's directory is removed: on a real
 	// filesystem an indexer still writing races the cleanup
-	t.Cleanup(logManager.Close)
+	t.Cleanup(func() { logManager.Close() })
 	s := server{manager: &logManager, TTL: time.Minute, CheckForNewEvery: time.Millisecond}
 	writeTestEntries(t, s, 0, entries)
 	return s
@@ -60,7 +61,7 @@ func writeTestEntries(t *testing.T, s server, from, count int) {
 	for i := range entries {
 		entries[i] = []byte(testPayload(from + i))
 	}
-	if err := s.manager.Write(testTopic, &entries); err != nil {
+	if _, err := s.manager.Write(driver.WriteParams{Topic: testTopic, Entries: &entries}); err != nil {
 		t.Fatal(err)
 	}
 }

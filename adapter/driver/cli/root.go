@@ -6,11 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/tcw/ibsen/adapter/driver/stdio"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/topic"
@@ -27,12 +29,23 @@ var (
 	indexSparsity               int
 	flushEntries                int
 	flushIntervalMs             int
+	flushMode                   string
 	compression                 string
 	compressionLevel            string
 	maxFrameEntries             int
 	maxFrameBytes               int
 	readOnly                    bool
 	rootDirectory               string
+	lockMode                    string
+	retainAge                   string
+	producerWindowBlocks        int
+	compressionDict             string
+	compressMinBytes            int
+	adaptiveCompression         bool
+	dictTrainBytes              string
+	retainBytes                 string
+	configPath                  string
+	clientFromEarliest          bool
 	benchEntiesByteSize         int
 	benchEntiesInEachBatchWrite int
 	benchWriteBatches           int
@@ -87,36 +100,60 @@ var (
 			if flushEntries < 1 {
 				log.Fatal().Msgf("flushEntries must be at least 1, got %d", flushEntries)
 			}
-			if flushIntervalMs < 0 {
-				log.Fatal().Msgf("flushIntervalMs cannot be negative, got %d", flushIntervalMs)
+			if err := validateFlush(flushMode, flushIntervalMs); err != nil {
+				fail(err, "invalid flush settings")
+			}
+			if producerWindowBlocks < 1 {
+				fail(userErrorf("--producerWindowBlocks must be at least 1, got %d", producerWindowBlocks), "")
+			}
+			trainBytes, err := dictTrainBytesValue()
+			if err != nil {
+				fail(err, "")
+			}
+			if compressMinBytes < 0 {
+				fail(userErrorf("--compressMinBytes cannot be negative, got %d", compressMinBytes), "")
 			}
 			if err := validateFrameBounds(maxFrameEntries, maxFrameBytes); err != nil {
 				log.Fatal().Err(err).Msg("invalid frame bounds")
 			}
 			ibsenServer := wiring.IbsenServer{
-				Readonly:         readOnly,
-				InMemory:         inMemory,
-				RootPath:         absolutePath,
-				TTL:              30 * time.Second,
-				MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
-				IndexSparsity:    uint32(indexSparsity),
-				MaxFrameEntries:  uint32(maxFrameEntries),
-				MaxFrameBytes:    maxFrameBytes,
-				Compression:      compression,
-				CompressionLevel: compressionLevel,
-				FlushEntries:     uint32(flushEntries),
-				FlushInterval:    time.Duration(flushIntervalMs) * time.Millisecond,
-				OTELExporterAddr: OTELExporterAddr,
-				GRPCCertKey:      AbsOrEmpty(certKey),
-				GRPCPrivateKey:   AbsOrEmpty(privateKey),
-				CpuProfile:       cpuProfile,
-				MemProfile:       memProfile,
+				Readonly:             readOnly,
+				InMemory:             inMemory,
+				RootPath:             absolutePath,
+				TTL:                  30 * time.Second,
+				MaxBlockSize:         maxBlockSizeMB * 1024 * 1024,
+				IndexSparsity:        uint32(indexSparsity),
+				MaxFrameEntries:      uint32(maxFrameEntries),
+				MaxFrameBytes:        maxFrameBytes,
+				Compression:          compression,
+				CompressionLevel:     compressionLevel,
+				FlushEntries:         uint32(flushEntries),
+				FlushInterval:        time.Duration(flushIntervalMs) * time.Millisecond,
+				FlushMode:            flushMode,
+				LockMode:             lockMode,
+				RetainAge:            retainAge,
+				RetainBytes:          retainBytes,
+				ConfigPath:           configPath,
+				ProducerWindowBlocks: producerWindowBlocks,
+				CompressionDict:      compressionDict,
+				DictTrainBytes:       trainBytes,
+				CompressMinBytes:     compressMinBytes,
+				AdaptiveCompression:  adaptiveCompression,
+				OTELExporterAddr:     OTELExporterAddr,
+				GRPCCertKey:          AbsOrEmpty(certKey),
+				GRPCPrivateKey:       AbsOrEmpty(privateKey),
+				CpuProfile:           cpuProfile,
+				MemProfile:           memProfile,
 			}
 			lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 			if err != nil {
 				log.Fatal().Err(err).Msgf("unable to listen on %s:%d", host, port)
 			}
 			err = ibsenServer.Start(lis)
+			if msg, ok := userMessage(localOpenError(absolutePath, err)); ok && err != nil {
+				fmt.Fprintf(os.Stderr, "ibsen: %s\n", msg)
+				os.Exit(1)
+			}
 			if err != nil {
 				log.Fatal().Err(err).Msg("ibsen server failed")
 			}
@@ -142,14 +179,10 @@ var (
 		Short:            "read ibsen log file from disk",
 		Long:             `file`,
 		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(0),
+		Args:             cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
 			batchSize := 1000
 			var err error
-			if len(args) < 1 {
-				fmt.Println("First parameter must be file name")
-				return
-			}
 			if len(args) == 2 {
 				batchSizeString := args[1]
 				batchSize, err = strconv.Atoi(batchSizeString)
@@ -173,18 +206,13 @@ var (
 		},
 	}
 
-	//Todo: fix
 	cmdToolsReadIndexLogFile = &cobra.Command{
 		Use:              "read-index [file]",
 		Short:            "read ibsen index file from disk",
 		Long:             `file`,
 		TraverseChildren: true,
-		Args:             cobra.MinimumNArgs(0),
+		Args:             cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			if len(args) < 1 {
-				fmt.Println("First parameter must be file name")
-				return
-			}
 			absolutePath, err := filepath.Abs(args[0])
 			if err != nil {
 				log.Fatal().Err(err).Msgf("unable to resolve index file %s", args[0])
@@ -303,13 +331,58 @@ var (
 				log.Fatal().Err(err).Msg("unable to connect to ibsen server")
 			}
 			defer client.Close()
-			err = client.Read(topic, offset, batchSize)
+			err = client.Read(topic, offset, batchSize, clientFromEarliest)
 			if err != nil {
 				log.Fatal().Err(err).Msgf("unable to read topic %s", topic)
 			}
 		},
 	}
 )
+
+// flushModeHelp is --flushMode's help, shared by the server and append.
+const flushModeHelp = "When a write is acknowledged: lenient (once it is in the page cache, fsyncing every --flushIntervalMs) or strict (once the fsync covering it returns). Entries are readable only once durable, in both"
+
+// validateFlush refuses flush settings that cannot work: an unknown mode, a negative interval,
+// and a lenient interval of zero, which would never flush and so never make anything readable.
+func validateFlush(mode string, intervalMs int) error {
+	if mode != wiring.FlushLenient && mode != wiring.FlushStrict {
+		return userErrorf("--flushMode %q is not one of %s", mode, strings.Join(wiring.FlushModes, ", "))
+	}
+	if intervalMs < 0 {
+		return userErrorf("--flushIntervalMs cannot be negative, got %d", intervalMs)
+	}
+	if mode == wiring.FlushLenient && intervalMs == 0 {
+		return userErrorf("--flushIntervalMs must be at least 1 in lenient mode, since it is how often anything is flushed; use --flushMode strict to flush every write")
+	}
+	return nil
+}
+
+const (
+	compressMinBytesHelp    = "Frames smaller than this many plain bytes are stored without trying to compress them, since compression almost never pays there; 0 tries every frame"
+	adaptiveCompressionHelp = "Stop trying to compress a topic's frames after 16 in a row did not shrink, and try again every 64th; false tries every frame"
+	compressionDictHelp     = "auto trains a zstd dictionary per topic from its own entries and writes new frames with it when it pays; off writes plain zstd frames. Frames written with a dictionary are read either way"
+	dictTrainBytesHelp      = "Plain entry bytes a topic writes before its first dictionary is trained, such as 4MiB"
+)
+
+// dictTrainBytesValue parses --dictTrainBytes.
+func dictTrainBytesValue() (int64, error) {
+	n, err := wiring.ParseBytes(dictTrainBytes)
+	if err != nil || n <= 0 {
+		return 0, userErrorf("--dictTrainBytes %q is not a size such as 4MiB", dictTrainBytes)
+	}
+	return n, nil
+}
+
+const producerWindowHelp = "Safe retries: how many of a topic's newest blocks a producer is remembered across. A producer silent for longer is treated as new, and its retry stored again"
+
+const (
+	retainAgeHelp   = "Delete whole blocks whose last entry is older than this, such as 168h or 7d; never the newest block. Unset keeps everything"
+	retainBytesHelp = "Delete the oldest whole blocks of a topic until it holds at most this, such as 10GB or 512MiB; never the newest block. Unset keeps everything"
+	configHelp      = "Settings file with per-topic overrides; default <rootDirectory>/ibsen.json if it is there"
+)
+
+// lockFlagHelp is --lock's help, shared by every command that writes.
+const lockFlagHelp = "Single-writer lock on the data directory: auto (a kernel lock where it is guaranteed, the lease file elsewhere), flock (a kernel lock, or refuse to start), file (the renewed lease file) or none; ibsen-k8s adds k8s (a Kubernetes Lease)"
 
 // defaultReadBatchSize is how many entries a read asks for at a time when the caller does
 // not say.
@@ -400,6 +473,15 @@ func setLogLevel(quiet zerolog.Level) {
 	}
 }
 
+// ExtendServer lets a separate entry point add flags to the commands that take the write lock,
+// such as cmd/ibsen-k8s adding the Kubernetes lease's. Call it before Execute.
+func ExtendServer(add func(*pflag.FlagSet)) {
+	flags := pflag.NewFlagSet("extension", pflag.ContinueOnError)
+	add(flags)
+	cmdServer.Flags().AddFlagSet(flags)
+	cmdAppend.Flags().AddFlagSet(flags)
+}
+
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
@@ -408,19 +490,30 @@ func Execute() {
 }
 
 func init() {
+	rootCmd.Version = version()
 
 	port, _ = strconv.Atoi(getenv("IBSEN_PORT", strconv.Itoa(54321)))
 	host = getenv("IBSEN_HOST", "0.0.0.0")
 	maxBlockSizeMB, _ = strconv.Atoi(getenv("IBSEN_MAX_BLOCK_SIZE", "1000"))
 	flushEntries, _ = strconv.Atoi(getenv("IBSEN_FLUSH_ENTRIES", strconv.FormatUint(uint64(topic.DefaultFlushEntries), 10)))
-	flushIntervalMs, _ = strconv.Atoi(getenv("IBSEN_FLUSH_INTERVAL_MS", "0"))
+	flushIntervalMs, _ = strconv.Atoi(getenv("IBSEN_FLUSH_INTERVAL_MS", strconv.Itoa(int(wiring.DefaultFlushInterval/time.Millisecond))))
+	flushMode = getenv("IBSEN_FLUSH_MODE", wiring.DefaultFlushMode)
 	indexSparsity, _ = strconv.Atoi(getenv("IBSEN_INDEX_SPARSITY", strconv.FormatUint(uint64(topic.DefaultIndexSparsity), 10)))
 	maxFrameEntries, _ = strconv.Atoi(getenv("IBSEN_MAX_FRAME_ENTRIES", strconv.FormatUint(uint64(topic.DefaultMaxFrameEntries), 10)))
 	maxFrameBytes, _ = strconv.Atoi(getenv("IBSEN_MAX_FRAME_BYTES", strconv.Itoa(topic.DefaultMaxFrameBytes)))
 	compression = getenv("IBSEN_COMPRESSION", wiring.DefaultCompression)
 	compressionLevel = getenv("IBSEN_COMPRESSION_LEVEL", "default")
+	compressionDict = getenv("IBSEN_COMPRESSION_DICT", wiring.DictAuto)
+	compressMinBytes, _ = strconv.Atoi(getenv("IBSEN_COMPRESS_MIN_BYTES", strconv.Itoa(wiring.DefaultCompressMinBytes)))
+	adaptiveCompression, _ = strconv.ParseBool(getenv("IBSEN_ADAPTIVE_COMPRESSION", "true"))
+	dictTrainBytes = getenv("IBSEN_DICT_TRAIN_BYTES", "4MiB")
 	readOnly, _ = strconv.ParseBool(getenv("IBSEN_READ_ONLY", "false"))
 	rootDirectory = getenv("IBSEN_ROOT_DIRECTORY", "")
+	lockMode = getenv("IBSEN_LOCK", wiring.DefaultLock)
+	retainAge = getenv("IBSEN_RETAIN_AGE", "")
+	producerWindowBlocks, _ = strconv.Atoi(getenv("IBSEN_PRODUCER_WINDOW_BLOCKS", strconv.Itoa(topic.DefaultProducerWindowBlocks)))
+	retainBytes = getenv("IBSEN_RETAIN_BYTES", "")
+	configPath = getenv("IBSEN_CONFIG", "")
 
 	rootCmd.PersistentFlags().IntVarP(&port, "port", "p", port, "config file (default is current directory)")
 	rootCmd.PersistentFlags().StringVarP(&host, "host", "l", "0.0.0.0", "config file (default is current directory)")
@@ -431,18 +524,29 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&trace, "trace", "t", false, "set logging to trace level")
 
 	cmdServer.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
-	cmdServer.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush before --flushIntervalMs is up; it does nothing on its own, since an interval of 0 flushes every batch at once")
-	cmdServer.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits")
+	cmdServer.Flags().StringVarP(&flushMode, "flushMode", "", flushMode, flushModeHelp)
+	cmdServer.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Strict mode: entries that may wait for a flush before --flushIntervalMs is up; it does nothing on its own, since an interval of 0 flushes every batch at once")
+	cmdServer.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Lenient mode: milliseconds between fsyncs, at least 1. Strict mode: milliseconds a batch may wait for more entries before flushing, 0 never waits")
 	cmdServer.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
 	cmdServer.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
 	cmdServer.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
 	cmdServer.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
+	cmdServer.Flags().IntVarP(&compressMinBytes, "compressMinBytes", "", compressMinBytes, compressMinBytesHelp)
+	cmdServer.Flags().BoolVarP(&adaptiveCompression, "adaptiveCompression", "", adaptiveCompression, adaptiveCompressionHelp)
+	cmdServer.Flags().StringVarP(&compressionDict, "compressionDict", "", compressionDict, compressionDictHelp)
+	cmdServer.Flags().StringVarP(&dictTrainBytes, "dictTrainBytes", "", dictTrainBytes, dictTrainBytesHelp)
 	cmdServer.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
 	cmdServer.Flags().BoolVarP(&readOnly, "readOnly", "o", readOnly, "set Ibsen in read only mode")
 	cmdServer.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - where ibsen will write all files")
+	cmdServer.Flags().StringVarP(&lockMode, "lock", "", lockMode, lockFlagHelp)
+	cmdServer.Flags().IntVarP(&producerWindowBlocks, "producerWindowBlocks", "", producerWindowBlocks, producerWindowHelp)
+	cmdServer.Flags().StringVarP(&retainAge, "retainAge", "", retainAge, retainAgeHelp)
+	cmdServer.Flags().StringVarP(&retainBytes, "retainBytes", "", retainBytes, retainBytesHelp)
+	cmdServer.Flags().StringVarP(&configPath, "config", "", configPath, configHelp)
 	cmdServer.Flags().StringVarP(&cpuProfile, "cpuProfile", "z", "", "Profile cpu usage")
 	cmdServer.Flags().StringVarP(&memProfile, "memProfile", "y", "", "Profile memory usage")
 
+	cmdClientRead.Flags().BoolVarP(&clientFromEarliest, "fromEarliest", "", false, "Start at the earliest retained offset if the one given has been deleted by retention, instead of failing")
 	cmdClientBench.Flags().IntVarP(&benchEntiesByteSize, "byteSize", "", 100, "Entry byte size in bench")
 	cmdClientBench.Flags().IntVarP(&benchEntiesInEachBatchWrite, "batchSize", "", 1000, "Entries in each batch in bench")
 	cmdClientBench.Flags().IntVarP(&benchWriteBatches, "bwb", "", 1000, "Write in batches of")
@@ -455,12 +559,23 @@ func init() {
 	cmdAppend.Flags().StringVarP(&framing, "framing", "", "lines", "How stdin delimits entries: lines or length (a little-endian uint64 byte count before each entry)")
 	cmdAppend.Flags().IntVarP(&appendBatchSize, "batchSize", "", stdio.DefaultAppendBatchSize, "Entries written in one call, which is one append and one flush: the throughput dial for a stream. A batch is also written whenever the stream has nothing more ready, so a slow feed never waits for one to fill")
 	cmdAppend.Flags().IntVarP(&maxBlockSizeMB, "maxBlockSize", "m", maxBlockSizeMB, "Max MB in log files")
-	cmdAppend.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Entries that may wait for a flush; it groups concurrent writers, of which a stream has none, so use --batchSize instead")
-	cmdAppend.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Milliseconds a batch may wait for more entries before flushing; 0 never waits. A stream has nobody to wait for, so this only delays it")
+	cmdAppend.Flags().StringVarP(&flushMode, "flushMode", "", flushMode, flushModeHelp+". Either way append exits zero only once everything it wrote is durable")
+	cmdAppend.Flags().IntVarP(&flushEntries, "flushEntries", "f", flushEntries, "Strict mode: entries that may wait for a flush; it groups concurrent writers, of which a stream has none, so use --batchSize instead")
+	cmdAppend.Flags().IntVarP(&flushIntervalMs, "flushIntervalMs", "", flushIntervalMs, "Lenient mode: milliseconds between fsyncs, at least 1. Strict mode: milliseconds a batch may wait for more entries before flushing; a stream has nobody to wait for, so this only delays it")
 	cmdAppend.Flags().IntVarP(&indexSparsity, "indexSparsity", "i", indexSparsity, "Entries between two index entries; lower scans less when reading, costs more per write")
 	cmdAppend.Flags().IntVarP(&maxFrameEntries, "maxFrameEntries", "", maxFrameEntries, "Entries that may share one frame; a larger write becomes several frames")
 	cmdAppend.Flags().IntVarP(&maxFrameBytes, "maxFrameBytes", "", maxFrameBytes, "Entry bytes that may share one frame, before compression; larger compresses better, smaller decodes less per read")
 	cmdAppend.Flags().StringVarP(&compression, "compression", "", compression, "Codec new frames are written with: none or zstd; blocks already written stay readable either way")
+	cmdAppend.Flags().StringVarP(&lockMode, "lock", "", lockMode, lockFlagHelp)
+	cmdAppend.Flags().StringVarP(&producerID, "producerId", "", "", "A UUID naming this input, which makes rerunning it safe: batches the topic already holds from an earlier run with the same id are skipped. Batches are then written only when full or at the end of the input")
+	cmdAppend.Flags().IntVarP(&producerWindowBlocks, "producerWindowBlocks", "", producerWindowBlocks, producerWindowHelp)
+	cmdAppend.Flags().StringVarP(&retainAge, "retainAge", "", retainAge, retainAgeHelp+"; append applies it once, when it finishes")
+	cmdAppend.Flags().StringVarP(&retainBytes, "retainBytes", "", retainBytes, retainBytesHelp+"; append applies it once, when it finishes")
+	cmdAppend.Flags().StringVarP(&configPath, "config", "", configPath, configHelp)
+	cmdAppend.Flags().IntVarP(&compressMinBytes, "compressMinBytes", "", compressMinBytes, compressMinBytesHelp)
+	cmdAppend.Flags().BoolVarP(&adaptiveCompression, "adaptiveCompression", "", adaptiveCompression, adaptiveCompressionHelp)
+	cmdAppend.Flags().StringVarP(&compressionDict, "compressionDict", "", compressionDict, compressionDictHelp)
+	cmdAppend.Flags().StringVarP(&dictTrainBytes, "dictTrainBytes", "", dictTrainBytes, dictTrainBytesHelp)
 	cmdAppend.Flags().StringVarP(&compressionLevel, "compressionLevel", "", compressionLevel, "How hard the codec tries: fastest, default, better or best")
 
 	cmdCat.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to read")
@@ -468,6 +583,7 @@ func init() {
 	cmdCat.Flags().BoolVarP(&offsets, "offsets", "", false, "Prefix each entry with its offset and a tab; line framing only")
 	cmdCat.Flags().BoolVarP(&follow, "follow", "F", false, "Keep reading as entries are written instead of stopping at the end of the log")
 	cmdCat.Flags().IntVarP(&catBatchSize, "batchSize", "", stdio.DefaultCatBatchSize, "Entries asked for in one call")
+	cmdCat.Flags().BoolVarP(&fromEarliest, "fromEarliest", "", false, "Start at the earliest retained offset if the one given has been deleted by retention, instead of failing")
 	cmdCat.Flags().IntVarP(&pollMs, "pollMs", "", 1000, "Milliseconds between passes while following; each pass reopens the log, so a large head block wants a larger value")
 
 	cmdTopics.Flags().StringVarP(&rootDirectory, "rootDirectory", "d", rootDirectory, "root directory - the data directory to list")

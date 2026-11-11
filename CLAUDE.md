@@ -92,9 +92,71 @@ errore/                     stdlib-only, shared by both sides
 - **Tests run against real directories.** Nothing emulates a filesystem any more, and two habits follow from that. A test that writes a file must create its parent directory, which the emulated filesystem did implicitly. And a test that builds a manager or a topic on a `t.TempDir()` must close it, because the background indexing a write starts will otherwise race Go's removal of that directory; it surfaces as `TempDir RemoveAll cleanup: directory not empty`, attributed to whichever test was unlucky. `newTestManagerWithStore`, `newTestTopic` and `stoppedByTest` register that cleanup.
 - Crash and torn-write fault injection: `adapter/driven/blockstore/faultfs` tears a write at a chosen byte and fails everything after it. Used by `adapter/driven/blockstore/filestore/crash_test.go` and `core/topic/topicAccess_crash_test.go`, on real directories. Nothing writes to the log while a crash is armed for the index: a write waits on a flush of its log block, and a crash tripped by the background indexer fails that flush too, so the write fails for a reason the test is not about. `TestTopic_CrashDuringIndexWriteDropsTheTornPair` lags the index by truncating it and reloading instead, which is the same state without the race.
 - `Topic` state is guarded by `Topic.mu`; `Read` works on a `snapshot()` so slow consumers never block writers.
+- **Docs are three layers.** `README.md` is the newcomer's front door (what a log is, a
+  one-minute quick start, no flag tables or numbers); `docs/USER_GUIDE.md` is for people using
+  the log (layout, filter commands, embedding, the API) and `docs/OPERATIONS.md` for people
+  running it (every flag, durability, compression, locks, Docker, TLS, development).
+  `ARCHITECTURE.md` and `TESTING.md` stay the level below. `scripts/check-links.py` fails CI on
+  a relative link or `#anchor` that does not resolve, so a moved section cannot strand a link.
+- **The write lock is chosen by `--lock`** (`IBSEN_LOCK`): `auto` (default), `flock`, `file`,
+  `none`, built by `wiring/writelock.go` for the server and `OpenLocal`. `auto` takes
+  `adapter/driven/locking/flock` (kernel `flock(2)`, stdlib + syscall only, in rule 1) where
+  `flock.Guaranteed` passes — a platform with flock, a local filesystem on the allow-list by
+  `statfs` — and the self-test on a second descriptor confirms it; otherwise the lease file,
+  logging why. Explicit `flock` refuses with `wiring.ErrLockNotGuaranteed`. The two adapters see
+  each other (the lease refuses a flock-held file; flock refuses a live lease). Tests:
+  `flock/flock_test.go` (a second process via the test binary, killed to show release on
+  death) and `wiring/writelock_test.go`. CI cross-compiles windows, darwin, freebsd, openbsd and
+  linux/arm, since the choice is made by build constraints.
+- **Retention** (spec 4, ARCHITECTURE §12a): `Topic.Retain(policy, now)` removes a prefix of
+  whole log blocks, never the head, lists first, then each log block, then its index; loading
+  drops an orphan index. `driven.Block.Modified` (zero when a store cannot tell, as
+  `flashstore`) is what age is judged by. A read before the first block is
+  `domain.ErrOffsetTooOld` (an `*OffsetTooOldError` naming the earliest), or starts there with
+  `ReadParams.FromEarliest`; a reader whose snapshot outlived a block gets the same error, not a
+  skip. Policy lives in `wiring/config.go`: `--retainAge`, `--retainBytes`, and `ibsen.json`
+  (or `--config`) with per-topic overrides that replace the global limits, stdlib JSON,
+  unknown keys refused. The server runs it every minute; `OpenLocal` once on a writable close.
+  Found on the way: a lenient flush batch naming a block retention removed failed with
+  `ErrBlockNotFound` and stopped the topic; `syncBlocks` now skips it, pinned by
+  `TestRetain_aLenientFlushAfterRetentionDoesNotFail`. `scripts/gen-clients.sh` regenerates the
+  Go gRPC code and every bundled client, with pinned generators (protoc 29.0).
+- **Safe retries** (spec 5, ARCHITECTURE §5.2 and §8.4). Frame header version 2 adds a variable
+  extension (producer, sequence, `writeEntries`, `dictID`, its own CRC) after a version 1 base
+  whose CRC an older build still verifies, so it refuses v2 as unsupported instead of
+  truncating it. The topic keeps a producer table under `Topic.mu` (`core/topic/producers.go`):
+  last sequence, offsets, block; duplicate, next, gap, stale and reused are decided in `append`.
+  It is rebuilt from the headers of the newest `ProducerWindowBlocks` (4) blocks and pruned to
+  them at rollover. Recovery cuts a torn producer write whole (`producerGroup` in
+  `logfmt/logUtils.go`). **The driving port changed**: `LogManager.Write(driver.WriteParams)
+  (domain.WriteResult, error)`. gRPC `InputEntries` has `producerId`/`sequence`, `WriteStatus`
+  `firstOffset`/`duplicate`; a bad number is `FAILED_PRECONDITION`. `clients/go/ibsen` retries
+  with the same number; `ibsen append --producerId` makes a rerun safe (batches then only cut
+  when full). The nemesis has two producer scenarios, and turning duplicate detection off fails
+  them. Both generated Go copies of the proto register the same names, so no binary may link
+  `adapter/driver/grpcapi` and `clients/go/api/grpcApi` together; the client's test serves the
+  real manager through its own stubs for that reason.
+- **Bundled clients** (spec 8): `adapter/driver/cli/clientgen` embeds
+  `clients/<lang>/` (generated stubs, build file, wrapper, example, README) and a copy of the
+  proto; `ibsen generate client <lang> [-o dir] [--force] [--package]` copies a folder out,
+  stripping `.tmpl` (Go sources and `go.mod` are kept so, so the main module does not build
+  them) and filling `@@MODULE@@`, `@@PACKAGE@@`, `@@PACKAGE_PATH@@`, `@@IBSEN_VERSION@@`,
+  `@@PROTO_VERSION@@`. `scripts/gen-clients.sh` regenerates everything from the proto — the
+  server's and `clients/go`'s stubs too — with pinned generators: protoc 29.0 (Maven Central),
+  grpcio-tools 1.71.0 for Python, protoc-gen-go 1.36.12, protoc-gen-go-grpc 1.6.2, grpc-java
+  1.68.1, ts-proto 2.18.4. The Go wrapper template is derived from `clients/go/ibsen`. CI
+  fails on stale generated code and runs `scripts/client-example.sh` per language in that
+  language's container. The bundle is 0.25 MB of the server binary. `clients/java` is gone.
+- **Releases** are a tag: `.github/workflows/release.yml` runs GoReleaser
+  (`.goreleaser.yaml`), which builds `ibsen` for linux/darwin/windows on amd64 and arm64 (and
+  linux/arm), archives, `checksums.txt`, release notes and multi-arch images at
+  `ghcr.io/tcw/ibsen` from `Dockerfile.release`. `cli.Version` is stamped by `-ldflags -X`,
+  falling back to the module version and then `dev`. CI builds a snapshot on every push to
+  master and runs `scripts/smoke-test.sh` (the README quick start) on it. `release.sh` is
+  gone: the protobuf it generated is committed. See `RELEASING.md`.
 - `go vet ./...` is clean; keep it that way. `staticcheck -checks U1000 ./...` prints nothing, so there is no unused code, and CI runs it (pinned, v0.8.2). The rest of staticcheck's checks are not run: they have findings — deprecated `rand.Seed` and `cobra.ExactValidArgs`, `time.Now().Sub` — that nobody has decided on yet.
-- CI (`.github/workflows/ci.yml`) runs `gofmt -l .`, `go vet`, staticcheck's U1000, a check that the generated gRPC code is current, `scripts/check-architecture.sh`, `scripts/embedded-size.sh` and `go test -race ./...` on every push. It takes its Go version from the `go` directive in `go.mod`, which is `1.27.3`; the `Dockerfile` builder image names the same version and has to be moved with it. `release.sh` runs the same checks before it builds.
-- Generated gRPC code: `api/grpcApi/ibsen.proto` is the one source, and `scripts/generate-proto.sh` writes both Go copies of it — `adapter/driver/grpcapi` (package `grpcapi`) and `clients/go/api/grpcApi` (package `grpcApi`) — through `buf` and the plugins pinned in `api/buf.gen.yaml`. buf compiles the proto itself, so generating needs nothing but Go, and the output is the same on every machine. `protoc-gen-go` is kept at the version of `google.golang.org/protobuf` in `go.mod`. Never edit the generated files; CI fails if regenerating changes them.
+- CI (`.github/workflows/ci.yml`) runs `gofmt -l .`, `go vet`, a cross-compile of the build-constrained platforms, staticcheck's U1000, a check that the generated gRPC code is current, `scripts/check-architecture.sh`, `scripts/embedded-size.sh` and `go test -race ./...` on every push. It takes its Go version from the `go` directive in `go.mod`, which is `1.27.3`; the `Dockerfile` builder image names the same version and has to be moved with it.
+- Generated gRPC code: `api/grpcApi/ibsen.proto` is the one source, and `scripts/generate-proto.sh` writes both Go copies of it — `adapter/driver/grpcapi` (package `grpcapi`) and `clients/go/api/grpcApi` (package `grpcApi`) — through `buf` and the plugins pinned in `api/buf.gen.yaml`. buf compiles the proto itself, so generating needs nothing but Go, and the output is the same on every machine. `protoc-gen-go` is kept at the version of `google.golang.org/protobuf` in `go.mod`. `scripts/gen-clients.sh` calls it for those two and generates the bundled clients itself. Never edit the generated files; CI fails if regenerating changes them.
 - Dependencies are current as of 2026-09-18 (OTEL 1.46, gRPC 1.84, zerolog 1.35, cobra 1.10, klauspost/compress 1.20). No deprecated gRPC dialling left: `grpcapi.DialContext` wraps `grpc.NewClient` and waits for the connection the way `grpc.WithBlock` used to, since `NewClient` connects lazily and would otherwise hand back a healthy-looking client for a server that is not there. Every client — CLI, bench and test helpers — goes through it, and `adapter/driver/grpcapi/client_test.go` pins that an unreachable address is an error rather than a client. CLI commands now bound that wait with `connectTimeout` (10s); `grpc.Dial` with `WithBlock` was given no context, so an unreachable server hung the command.
 - `Start` and `shutdown` can run on different goroutines, so what `Start` builds is guarded: `IbsenServer.mu` covers `topicsManager`, `grpcServer` and the lifecycle channels (`lifecycle()` makes the pair once), and `grpcapi.IbsenGrpcServer` guards its `*grpc.Server` behind `Stop`/`GracefulStop`, which are safe before `StartGRPC` has created it and record the request so it is honoured.
 - `Start` returns its failures instead of exiting: a refused single-writer lock is `wiring.ErrWriteLockUnavailable`, matchable with `errors.Is`, so a program embedding the log decides what to do. The CLI reports it and exits.
@@ -196,8 +258,18 @@ Known, not yet fixed: none.
 
 ## 2. Durability
 
-Done. A write is acknowledged, and its offsets become readable, only once the flush covering
-them has returned, so a reader never sees an entry a power cut could take back.
+Done. An entry becomes readable only once the flush covering it has returned, so a reader never
+sees an entry a power cut could take back. **Since step 42 there are two flush modes** (spec 3):
+`lenient`, the default for the server and `append`, acknowledges a write once it is appended and
+fsyncs every `--flushIntervalMs` (1000) from a ticker in the composition root
+(`embedded.StartFlushTicker`), so a power cut can take back up to a tick of acknowledged writes;
+`strict` is everything below, unchanged, and is the core's zero value (`topic.FlushStrict`), so
+the embedded root defaults to it and starts no goroutine. `driver.Flusher` (beside
+`LogManager`, implemented by the manager and `embedded.Log`) is the explicit flush;
+`Topic.Close` and so every close flushes, and returns the error; `ibsen append` exits zero only
+after that last flush. A failed lenient flush is logged with its offset range and returned by
+the next `Write`, `Flush` and `Close`. Measured in `docs/OPERATIONS.md#durability`.
+What follows describes strict mode, and the parts both share:
 
 - `NextOffset` is still the next offset to assign. The read boundary is now the *durable*
   offset, which trails it by whatever is appended but not yet flushed:
@@ -406,8 +478,11 @@ Done. Framing is step 17, the zstd adapter behind it step 18, and zstd is the de
   codec at all. Before the fallback it was 1.36, meaning compression actively cost bytes. The
   index also gets a pair only every sparsity frames, so a small frame costs header scanning
   too.
-- The CPU of a compression attempt that is then discarded is still paid; skipping it below a
-  size threshold would save that, and wants its own measurement.
+- The CPU of a compression attempt that is then discarded is no longer always paid (step 46,
+  spec 9B; ARCHITECTURE §13.4): measured at five to fifteen times storing the bytes,
+  `--compressMinBytes` (128; three eighths with a dictionary) and `--adaptiveCompression` (stop
+  after 16 misses, probe every 64th) skip it. One-entry writes cost a third to a half less,
+  ratios unchanged. Core zero values keep trying every frame.
 - **The default stays at 1000 entries per frame** (decided 2026-09-19). The table offered 100
   as the better all-round answer, and that was declined deliberately: reading forward through
   a large log is the workload this log is for, and sequential throughput is 403 MB/s at 1000
@@ -421,11 +496,33 @@ Done. Framing is step 17, the zstd adapter behind it step 18, and zstd is the de
 
 ## 6. Dictionaries
 
-- Per-topic trained zstd dictionaries, versioned by `dictID` in the frame header; immutable; retained while any frame references them.
-- Cold start writes plain frames while reservoir-sampling entries; a background trainer builds the dictionary and flips a current pointer.
-- Retention now couples dictionary lifetime to log lifetime.
+Done (step 45, spec 6; ARCHITECTURE §13.3).
+
+- Per-topic trained zstd dictionaries, named by an FNV-1a hash of their bytes in the frame's
+  version 2 extension (`dictID`, codec byte `CodecZstdDict`); immutable; a `driven.Dict` block
+  with a CRC, written and synced before any frame names it; removed by retention only once no
+  block names it and it is not current.
+- Cold start writes plain frames while reservoir-sampling entries **as frames encode them**;
+  the write that crosses `--dictTrainBytes` starts one coalescing training run, off the write
+  path, and the dictionary is kept only if it makes held-out entries 10% smaller in groups the
+  size of the topic's average frame. Retrained when recent frames compress 25% worse, at most
+  once per block.
+- Measured, and three things changed because of it: dictionaries are 4 KiB, not 64 (better
+  and ten times faster on small frames); samples are encoded entries (a dictionary of bare
+  entries matched frames worse); and the version 2 extension carries only the fields a frame
+  uses (a dictionary-only frame pays 13 bytes, not 44). On ~130-byte JSON events: one-entry
+  frames 1.26 → 0.80 of the input, ten-entry 0.30 → 0.26, a hundred no dictionary kept.
+- The codec port's optional `driven.DictionaryCodec` is probed like `Syncable`; the embedded
+  root links nothing new for it.
 
 ## 7. Distribution
+
+Since step 48 (spec 2, ARCHITECTURE §16.4): `--lock k8s` in a separate binary, `cmd/ibsen-k8s`,
+holds the lock in a Kubernetes Lease through client-go `leaderelection`
+(`adapter/driven/locking/k8slease`, coordination client only), exits on loss through
+`LeaseLost`, and the store is fenced (`wiring/fence.go`) once a renewal is older than the lease
+minus `--leaseFenceMargin`. Manifests in `deploy/k8s`; `ibsen` links no `k8s.io` (architecture
+rule 4). What follows is the reasoning that still holds.
 
 - Don't build Raft. Run on replicated storage as a Kubernetes StatefulSet.
 - Keep single-writer safety with a fencing lease and monotonic token (likely etcd lease + mod-revision); storage rejects stale-token writes.
@@ -513,7 +610,7 @@ and how to read their failures, recipes, and which test holds which promise — 
 - Properties: round-trip; read-from-every-offset.
 - Crash and torn-write fault injection at the storage adapter.
 - Race-detector concurrency tests.
-- Cross-dictionary-version read test.
+- Cross-dictionary-version read test: `TestDictionary_isRetrainedWhenTheDataChangesShape` reads one block holding frames of two dictionaries.
 - **End-to-end benchmarks over gRPC, at the defaults, on a real directory**:
   `adapter/driver/grpcapi/test/bench_test.go`, run with
   `go test ./adapter/driver/grpcapi/test/ -run XXX -bench . -benchtime 1s`. A client, the
@@ -584,7 +681,7 @@ and how to read their failures, recipes, and which test holds which promise — 
    reaches a driven one.~~
 9. ~~Return a refused write lock from `Start` instead of exiting the process.~~
 10. ~~Guard what `Start` builds against a shutdown on another goroutine.~~
-11. ~~Update every dependency, build with go 1.26.4, and move off the deprecated gRPC dialling.~~
+11. ~~Update every dependency, build with go 1.26.4 (since moved to 1.27.3), and move off the deprecated gRPC dialling.~~
 12. ~~Binary search in the index instead of the scan back from the end.~~
 13. ~~Make the index sparsity configurable instead of a constant.~~
 14. ~~Acknowledge a write only once it is on durable media (§2).~~
@@ -626,10 +723,40 @@ and how to read their failures, recipes, and which test holds which promise — 
 38. ~~Drop a head block's clean cached pages before recovering it, so a restart after a failed
     fsync reads what the media holds; enumerate a failed sync at every sync call (§2, §12).~~
 
-Every step ships green. Steps 0 to 38 are done, one commit each.
+39. ~~Rewrite the README for newcomers and move the detail into `docs/USER_GUIDE.md` and
+    `docs/OPERATIONS.md` (spec 1).~~
 
-Next, in the same one-change-at-a-time way: dictionaries (§6), which §5's measurements argue
-are narrower than they look; and §7, which is untouched. The frame-bound default is settled —
+40. ~~Publish release binaries and images from a tag with GoReleaser, and stamp the version
+    (spec 9A).~~
+
+41. ~~Hold the single-writer lock in the kernel (`flock`) where the platform, the filesystem
+    and a self-test guarantee it, and fall back to the lease file elsewhere (spec 7).~~
+
+42. ~~Lenient flushing by default, strict as an option: an explicit `Flush` behind
+    `driver.Flusher`, a ticker in the composition roots, close flushing (spec 3).~~
+
+43. ~~Retention: delete whole old blocks by age, size or both, never the head, with per-topic
+    overrides in `<root>/ibsen.json`, and tell a reader of a deleted offset so (spec 4).~~
+
+44. ~~Safe retries: frame header version 2 with a producer ID and sequence, a producer table
+    rebuilt from headers, and the driving port's `Write` taking `WriteParams` (spec 5).~~
+
+45. ~~Compression dictionaries, trained per topic off the write path and kept only where they
+    pay (spec 6).~~
+
+46. ~~Skip compression attempts below a size threshold and on topics where it keeps not
+    paying (spec 9B).~~
+
+47. ~~`ibsen generate client go|java|python|typescript` and `ibsen generate proto`, from
+    clients generated at build time and embedded (spec 8).~~
+
+48. ~~The Kubernetes Lease lock, in the separate `ibsen-k8s` binary, with a fencing store
+    decorator in `wiring` (spec 2).~~
+
+Every step ships green. Steps 0 to 48 are done, one commit each.
+
+Next, in the same one-change-at-a-time way: nothing planned. §7's storage-enforced token is
+the one open idea, and it needs a storage redesign. The frame-bound default is settled —
 it stays at 1000, for forward reading speed (§5).
 
 ## 11. The log without a server

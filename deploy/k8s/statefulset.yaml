@@ -1,0 +1,82 @@
+# One Ibsen writer on a ReadWriteOnce volume, holding a Kubernetes Lease so that two pods can
+# never write the log at once — not even for the moments around a rollout, a node failure or a
+# force-detached volume. See docs/OPERATIONS.md#running-on-kubernetes.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ibsen
+spec:
+  serviceName: ibsen
+  replicas: 1
+  # a new pod is only started once the old one is gone; the lease covers the rest
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      app: ibsen
+  template:
+    metadata:
+      labels:
+        app: ibsen
+    spec:
+      serviceAccountName: ibsen
+      # the lease is given up on a clean shutdown; give the last flush time to finish
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: ibsen
+          image: ghcr.io/tcw/ibsen-k8s:latest
+          args: ["server"]
+          ports:
+            - name: grpc
+              containerPort: 54321
+          env:
+            - name: IBSEN_ROOT_DIRECTORY
+              value: /data
+            - name: IBSEN_LOCK
+              value: k8s
+            - name: IBSEN_LEASE_NAME
+              value: ibsen
+            # the downward API: the lease names its holder after the pod, in the pod's namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # how long another pod must wait after the last renewal, how long a holder keeps
+            # trying to renew, and how often; writes stop FENCE_MARGIN before the lease can expire
+            - name: IBSEN_LEASE_DURATION
+              value: 15s
+            - name: IBSEN_LEASE_RENEW_DEADLINE
+              value: 10s
+            - name: IBSEN_LEASE_RETRY_PERIOD
+              value: 2s
+            - name: IBSEN_LEASE_FENCE_MARGIN
+              value: 5s
+            # every acknowledged write durable; drop this for the faster default
+            - name: IBSEN_FLUSH_MODE
+              value: strict
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

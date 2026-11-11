@@ -1,0 +1,11 @@
+# The image a release publishes, built by GoReleaser from the binary it has already built.
+# Dockerfile builds from source instead, for anyone without a release to start from.
+FROM scratch
+ARG TARGETPLATFORM
+ARG BINARY=ibsen
+COPY $TARGETPLATFORM/$BINARY /app/ibsen
+WORKDIR /app/data
+WORKDIR /app
+EXPOSE 54321
+ENTRYPOINT ["/app/ibsen"]
+CMD ["server", "-d", "/app/data"]

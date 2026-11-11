@@ -23,6 +23,30 @@ const DefaultFlushEntries uint32 = 1
 // server means a restart — PostgreSQL's answer to the same fsync, for the same reason.
 var ErrFlushFailed = errors.New("a flush of this topic failed; it takes no more writes until it is opened again")
 
+// FlushMode says when a write is acknowledged. In both modes an entry becomes readable only
+// once the flush covering it has returned, so a reader never sees what a power cut could take
+// back; the modes differ only in what the writer is told, and when.
+type FlushMode int
+
+const (
+	// FlushStrict acknowledges a write once the flush covering it has returned: nothing
+	// acknowledged is lost to a power cut. It is the zero value, so a topic built by a caller
+	// that says nothing is as safe as it can be.
+	FlushStrict FlushMode = iota
+	// FlushLenient acknowledges a write once it is appended — in the page cache, for a file —
+	// and leaves the flush to whoever calls Flush: in a server, a ticker in the composition
+	// root. A process crash loses nothing; a power cut loses what was acknowledged since the
+	// last flush. Readers are still held to the durable offset.
+	FlushLenient
+)
+
+func (m FlushMode) String() string {
+	if m == FlushLenient {
+		return "lenient"
+	}
+	return "strict"
+}
+
 // flusher decides when appended entries reach durable media and tells a writer when its own
 // entries got there. A write is acknowledged, and becomes visible to readers, only once the
 // flush covering it has returned, so a reader never sees an entry that a power cut could
@@ -39,6 +63,11 @@ type flusher struct {
 	syncable bool
 	entries  uint32
 	interval time.Duration
+	mode     FlushMode
+	// log and topic say which entries a failed lenient flush took with it, since their
+	// writers were told they were written and no longer wait to be told otherwise
+	log   driven.Logger
+	topic string
 
 	mu      sync.Mutex
 	durable domain.Offset
@@ -68,14 +97,71 @@ type pendingFlush struct {
 
 // newFlusher builds the flush policy for one topic. entries of 0 means DefaultFlushEntries,
 // and an interval of 0 means a batch is never held back waiting for more entries.
-func newFlusher(store driven.BlockStore, entries uint32, interval time.Duration) *flusher {
+func newFlusher(store driven.BlockStore, entries uint32, interval time.Duration, mode FlushMode, log driven.Logger, topic string) *flusher {
 	if entries == 0 {
 		entries = DefaultFlushEntries
+	}
+	if log == nil {
+		log = driven.NopLogger{}
 	}
 	_, syncable := store.(driven.Syncable)
 	return &flusher{
 		store: store, syncable: syncable, entries: entries, interval: interval,
+		mode: mode, log: log, topic: topic,
 		changed: make(chan struct{}),
+	}
+}
+
+// acknowledge is what a writer waits for before it is told its entries are written. In
+// strict mode that is the flush covering them. In lenient mode it is nothing, unless the
+// batch has already failed: entries appended behind a flush that failed while they were
+// being appended must not be acknowledged, since no later flush can ever cover them.
+func (f *flusher) acknowledge(p *pendingFlush) error {
+	if f.mode == FlushStrict {
+		return f.wait(p)
+	}
+	if p == nil {
+		return nil
+	}
+	select {
+	case <-p.done:
+		return p.err
+	default:
+		return nil
+	}
+}
+
+// flushAll makes everything appended before it was called durable, whatever the policy says,
+// and returns the error of the flush that covered it — or the failure that stopped the topic
+// earlier. It is how lenient mode is ever flushed, and how Close makes sure a clean exit
+// loses nothing in either mode.
+func (f *flusher) flushAll() error {
+	f.mu.Lock()
+	if f.failed != nil {
+		err := f.failed
+		f.mu.Unlock()
+		return err
+	}
+	p := f.pending
+	f.mu.Unlock()
+	if p != nil {
+		return f.waitFor(p, true)
+	}
+	// nothing new, but a driver may hold a batch it took before we were called: what was
+	// appended before this call is only durable once that batch is
+	for {
+		f.mu.Lock()
+		running := f.running
+		changed := f.changed
+		failed := f.failed
+		f.mu.Unlock()
+		if failed != nil {
+			return failed
+		}
+		if !running {
+			return nil
+		}
+		<-changed
 	}
 }
 
@@ -159,6 +245,11 @@ func (f *flusher) appended(ref driven.BlockRef, target domain.Offset, count int)
 // wait blocks until p is durable, driving the flush itself when the policy says it is due
 // and no one else is driving. It returns the error of the flush that covered p.
 func (f *flusher) wait(p *pendingFlush) error {
+	return f.waitFor(p, false)
+}
+
+// waitFor is wait, with force making the batch due at once whatever the policy says.
+func (f *flusher) waitFor(p *pendingFlush, force bool) error {
 	if p == nil {
 		return nil
 	}
@@ -166,7 +257,7 @@ func (f *flusher) wait(p *pendingFlush) error {
 		f.mu.Lock()
 		current := f.pending == p
 		running := f.running
-		due := current && f.dueLocked(p)
+		due := current && (force || f.dueLocked(p))
 		changed := f.changed
 		remaining := f.interval - time.Since(p.opened)
 		f.mu.Unlock()
@@ -235,6 +326,13 @@ func (f *flusher) drive() {
 			break
 		}
 		if err != nil {
+			if f.mode == FlushLenient {
+				// their writers were told these were written, and nobody is waiting to be
+				// told otherwise: the log is the only place left to say so
+				f.log.Log(driven.LevelError, "a flush failed: acknowledged entries may be lost to a power cut, and the topic takes no more writes",
+					driven.Str("topic", f.topic), driven.Uint64("fromOffset", uint64(f.durable)),
+					driven.Uint64("toOffset", uint64(batch.target)), driven.Err(err))
+			}
 			batch.err = fmt.Errorf("%w: %w", ErrFlushFailed, err)
 			close(batch.done)
 			f.failLocked(err)
@@ -304,7 +402,14 @@ func (f *flusher) syncBlocks(batch *pendingFlush) error {
 	})
 	var firstErr error
 	for _, ref := range refs {
-		if _, err := driven.Sync(f.store, ref); err != nil && firstErr == nil {
+		_, err := driven.Sync(f.store, ref)
+		if errors.Is(err, driven.ErrBlockNotFound) {
+			// retention removed it since it joined the batch. Retention never removes the
+			// head, and a block stops being the head only once the rollover barrier has
+			// synced it, so there was nothing left of it to sync
+			continue
+		}
+		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

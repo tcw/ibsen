@@ -1,0 +1,9 @@
+# kubectl apply -k deploy/k8s -n <namespace>
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - serviceaccount.yaml
+  - role.yaml
+  - rolebinding.yaml
+  - service.yaml
+  - statefulset.yaml

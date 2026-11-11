@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"sync"
@@ -17,14 +16,15 @@ import (
 	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/memstore"
 	zstdcodec "github.com/tcw/ibsen/adapter/driven/compression/zstd"
-	"github.com/tcw/ibsen/adapter/driven/locking"
 	"github.com/tcw/ibsen/adapter/driven/logging/zerologger"
 	"github.com/tcw/ibsen/adapter/driven/telemetry"
 	"github.com/tcw/ibsen/adapter/driver/grpcapi"
 	"github.com/tcw/ibsen/core/manager"
 	"github.com/tcw/ibsen/core/port/driven"
 	"github.com/tcw/ibsen/core/port/driver"
+	"github.com/tcw/ibsen/core/topic"
 	"github.com/tcw/ibsen/errore"
+	"github.com/tcw/ibsen/wiring/embedded"
 )
 
 var ibsenFiglet = `
@@ -42,8 +42,12 @@ var ibsenFiglet = `
 
 type IbsenServer struct {
 	Readonly bool
-	// Lock is optional: Start builds a file lease over RootPath when none is injected.
+	// Lock is optional: Start builds the one LockMode names over RootPath when none is
+	// injected.
 	Lock driven.SingleIbsenWriterLock
+	// LockMode names the single-writer lock: auto (the default), flock, file or none. See
+	// writelock.go.
+	LockMode string
 	// InMemory keeps the whole log in memory, in a memstore. Nothing is written anywhere and
 	// nothing survives the process.
 	InMemory     bool
@@ -75,19 +79,48 @@ type IbsenServer struct {
 	// FlushEntries and FlushInterval are the durability policy: how many entries may wait
 	// for a flush, and how long a batch may be held back hoping for more. Zero entries means
 	// topic.DefaultFlushEntries, which makes every write durable before it is acknowledged.
-	FlushEntries     uint32
-	FlushInterval    time.Duration
-	OTELExporterAddr string
-	GRPCPrivateKey   string
-	GRPCCertKey      string
-	CpuProfile       string
-	MemProfile       string
-	cpuProfileFile   *os.File
+	FlushEntries  uint32
+	FlushInterval time.Duration
+	// FlushMode is "lenient" (the default) or "strict". Lenient acknowledges a write once it
+	// is appended and flushes every FlushInterval, from a ticker this server owns; strict
+	// acknowledges a write once its flush has returned, and FlushEntries and FlushInterval
+	// keep their meaning above. Readers only ever see what is durable, either way.
+	FlushMode string
+	// RetainAge and RetainBytes are the global retention limits, as the flags give them
+	// ("168h", "7d"; "10GB", "512MiB"); empty keeps everything. ConfigPath names the settings
+	// file with per-topic overrides; empty means <root>/ibsen.json, if it is there.
+	RetainAge   string
+	RetainBytes string
+	ConfigPath  string
+	// ProducerWindowBlocks is how many of a topic's newest blocks a producer is remembered
+	// across for safe retries; zero means the core default.
+	ProducerWindowBlocks int
+	// CompressionDict is "auto" (the default) to train a dictionary per topic when the codec
+	// can use one, or "off"; DictTrainBytes is when, zero meaning the core default.
+	CompressionDict string
+	DictTrainBytes  int64
+	// CompressMinBytes and AdaptiveCompression decide which frames are offered to the codec
+	// at all. The zero values try every frame; the CLI's defaults are
+	// DefaultCompressMinBytes and true.
+	CompressMinBytes    int
+	AdaptiveCompression bool
+	// RetentionInterval is how often retention runs; zero means DefaultRetentionInterval.
+	RetentionInterval time.Duration
+	OTELExporterAddr  string
+	GRPCPrivateKey    string
+	GRPCCertKey       string
+	CpuProfile        string
+	MemProfile        string
+	cpuProfileFile    *os.File
 	// mu guards topicsManager, grpcServer and the lifecycle channels, which Start sets while
 	// a shutdown on another goroutine may read them
 	mu            sync.Mutex
 	zstdCodec     *zstdcodec.Codec
 	topicsManager *manager.LogTopicsManager
+	// stopFlushing stops the lenient flush ticker; nil when none runs
+	stopFlushing func()
+	// stopRetaining stops the retention ticker; nil when none runs
+	stopRetaining func()
 	grpcServer    *grpcapi.IbsenGrpcServer
 	shutdownOnce  sync.Once
 	stopping      chan struct{} // closed when a shutdown begins
@@ -130,18 +163,21 @@ func (ibs *IbsenServer) lifecycle() (stopping, stopped chan struct{}) {
 // defaults fills in the adapters the caller did not inject. It runs before Start begins
 // anything that reads them, so the signal handler never races the assignment. A test injects
 // its own Lock and keeps it.
-func (ibs *IbsenServer) defaults() {
+func (ibs *IbsenServer) defaults() error {
 	if ibs.Lock == nil {
 		if ibs.InMemory {
 			// the log lives in this process and is shared with nobody, so there is no second
 			// writer to fence off and no filesystem to keep a lease on
 			ibs.Lock = driven.NoFileLock{}
 		} else {
-			ibs.Lock = locking.NewFileLock(
-				filepath.Join(ibs.RootPath, writeLockFileName), writeLockLease, writeLockReclaim,
-				ibs.writeLockLost)
+			lock, err := buildWriteLock(ibs.LockMode, ibs.RootPath, ibs.writeLockLost)
+			if err != nil {
+				return err
+			}
+			ibs.Lock = lock
 		}
 	}
+	return nil
 }
 
 // resolveCodecs builds the compression adapters this server writes and reads frames with.
@@ -159,6 +195,15 @@ func (ibs *IbsenServer) resolveCodecs() error {
 	ibs.Codecs = codecs
 	log.Info().Msgf("writing frames with the %s codec", ibs.Codec.ID())
 	return nil
+}
+
+// retention is what this server keeps. In-memory mode has no data directory to hold a
+// settings file, so only the flags apply there.
+func (ibs *IbsenServer) retention() (Retention, error) {
+	if ibs.InMemory && ibs.ConfigPath == "" {
+		return GlobalRetention(ibs.RetainAge, ibs.RetainBytes)
+	}
+	return LoadRetention(ibs.RootPath, ibs.ConfigPath, ibs.RetainAge, ibs.RetainBytes)
 }
 
 // writeLockLost is what this server does when it can no longer prove it holds the single
@@ -206,8 +251,23 @@ func rootExists(path string) (bool, error) {
 }
 
 func (ibs *IbsenServer) Start(listener net.Listener) error {
-	ibs.defaults()
+	if err := ibs.defaults(); err != nil {
+		return err
+	}
 	if err := ibs.resolveCodecs(); err != nil {
+		return err
+	}
+	// refused before the lock is taken: a mode nobody asked for is not worth fencing for
+	flushMode, flushInterval, err := resolveFlushMode(ibs.FlushMode, ibs.FlushInterval)
+	if err != nil {
+		return err
+	}
+	dictionaries, err := resolveDictMode(ibs.CompressionDict)
+	if err != nil {
+		return err
+	}
+	retention, err := ibs.retention()
+	if err != nil {
 		return err
 	}
 	stopping, stopped := ibs.lifecycle()
@@ -227,9 +287,10 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 			return errore.NewF("path [%s] does not exist, will not start unless existing path is specified", ibs.RootPath)
 		}
 		log.Info().Msg(fmt.Sprintf("Waiting for single writer lock on file [%s]...", ibs.RootPath))
-		if !ibs.Readonly && !ibs.Lock.AcquireLock() {
-			return errore.WrapWithContextF(ErrWriteLockUnavailable,
-				"unable to acquire the single writer lock on path [%s], aborting start", ibs.RootPath)
+		if !ibs.Readonly {
+			if err := acquireWriteLock(ibs.Lock, ibs.RootPath); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -246,24 +307,48 @@ func (ibs *IbsenServer) Start(listener net.Listener) error {
 	}
 
 	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
-		ReadOnly:        ibs.Readonly,
-		Store:           ibs.blockStore(),
-		TTL:             ibs.TTL,
-		MaxBlockSize:    ibs.MaxBlockSize,
-		IndexSparsity:   ibs.IndexSparsity,
-		MaxFrameEntries: ibs.MaxFrameEntries,
-		MaxFrameBytes:   ibs.MaxFrameBytes,
-		Codec:           ibs.Codec,
-		Codecs:          ibs.Codecs,
-		FlushEntries:    ibs.FlushEntries,
-		FlushInterval:   ibs.FlushInterval,
-		Logger:          zerologger.New(log.Logger),
+		ReadOnly:             ibs.Readonly,
+		Store:                fenceIfHeld(ibs.blockStore(), ibs.Lock),
+		TTL:                  ibs.TTL,
+		MaxBlockSize:         ibs.MaxBlockSize,
+		IndexSparsity:        ibs.IndexSparsity,
+		MaxFrameEntries:      ibs.MaxFrameEntries,
+		MaxFrameBytes:        ibs.MaxFrameBytes,
+		Codec:                ibs.Codec,
+		Codecs:               ibs.Codecs,
+		FlushEntries:         ibs.FlushEntries,
+		FlushInterval:        flushInterval,
+		FlushMode:            flushMode,
+		ProducerWindowBlocks: ibs.ProducerWindowBlocks,
+		Dictionaries:         dictionaries,
+		DictTrainBytes:       ibs.DictTrainBytes,
+		CompressMinBytes:     ibs.CompressMinBytes,
+		AdaptiveCompression:  ibs.AdaptiveCompression,
+		Logger:               zerologger.New(log.Logger),
 	})
 	if err != nil {
 		return errore.Wrap(err)
 	}
 	ibs.mu.Lock()
 	ibs.topicsManager = &topicsManager
+	if flushMode == topic.FlushLenient && !ibs.Readonly {
+		// the core starts no timer, so the one lenient mode needs is this server's; the
+		// shutdown stops it before the last flush, and a lost lease exits without either
+		ibs.stopFlushing = embedded.StartFlushTicker(&topicsManager, flushInterval, func(err error) {
+			log.Error().Err(err).Msg("a periodic flush failed; the topic it failed on takes no more writes")
+		})
+		log.Info().Msgf("flush mode lenient: acknowledging writes once appended, fsyncing every %s", flushInterval)
+	} else {
+		log.Info().Msgf("flush mode %s", flushMode)
+	}
+	if !retention.Keeps() && !ibs.Readonly {
+		interval := ibs.RetentionInterval
+		if interval <= 0 {
+			interval = DefaultRetentionInterval
+		}
+		ibs.stopRetaining = startRetention(&topicsManager, retention, interval)
+		log.Info().Msgf("retention: checking every %s", interval)
+	}
 	ibs.mu.Unlock()
 	err = ibs.startGRPCServer(listener, &topicsManager)
 	// gRPC stops serving early in a shutdown, and the process exits once Start returns, so
@@ -374,10 +459,20 @@ func (ibs *IbsenServer) shutdown() {
 	// another instance must never write beside this one.
 	ibs.mu.Lock()
 	topicsManager := ibs.topicsManager
+	stopFlushing := ibs.stopFlushing
+	stopRetaining := ibs.stopRetaining
 	ibs.mu.Unlock()
+	if stopRetaining != nil {
+		stopRetaining()
+	}
+	if stopFlushing != nil {
+		stopFlushing()
+	}
 	if topicsManager != nil {
-		log.Info().Msg("waiting for in-flight writes and indexing to finish...")
-		topicsManager.Close()
+		log.Info().Msg("waiting for in-flight writes and indexing to finish, and flushing...")
+		if err := topicsManager.Close(); err != nil {
+			log.Error().Err(err).Msg("the last flush failed: acknowledged writes may not be on durable media")
+		}
 	}
 
 	// nothing reads or writes a frame any more, so the codec's buffers can go

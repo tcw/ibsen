@@ -22,6 +22,12 @@
 //   - A read saw what the log holds: every entry a reader was given is in the log at the offset
 //     it was given at. This is the durability promise from the reader's side, since the log is
 //     read back after the crash and a reader must never have seen what a crash took back.
+//
+// In lenient flush mode an acknowledgement promises less, and CheckWith is told so: a write
+// is owed to the log only once a flush of the same log, invoked after the write was
+// acknowledged, has succeeded. One that no flush covered may be lost, or survive as a prefix,
+// like a write that failed — but a lost one takes everything appended after it with it, and
+// a reader still must never have seen it.
 package history
 
 import (
@@ -41,6 +47,9 @@ type Kind int
 const (
 	Write Kind = iota
 	Read
+	// Flush is a call to driver.Flusher.Flush, which covers every write to the same log
+	// acknowledged before it was invoked
+	Flush
 )
 
 // Entry is one entry as a reader saw it or as the log holds it.
@@ -63,6 +72,16 @@ type Op struct {
 	From uint64
 	Seen []Entry
 	Err  error
+	// Producer and Sequence are what a write carried for safe retries; zero for none. A
+	// retry is recorded as a write of its own with the same entries, and the checker's rule
+	// that nothing is in the log twice is then exactly-once. The checker takes every attempt
+	// at one producer and sequence as one write, invoked when the first was and acknowledged
+	// when one was: the entries may have reached the log during any of them.
+	Producer domain.ProducerID
+	Sequence uint64
+	// log is the instance the operation went to. A flush covers writes to its own instance
+	// only: a restarted log has nothing of what the one before it did not flush.
+	log any
 }
 
 // History is a record of operations, safe for concurrent clients.
@@ -92,9 +111,24 @@ func (h *History) Write(log driver.LogManager, process int, topic domain.TopicNa
 	for i, entry := range entries {
 		batch[i] = []byte(entry)
 	}
-	op := Op{Kind: Write, Process: process, Topic: topic, Written: entries}
+	op := Op{Kind: Write, Process: process, Topic: topic, Written: entries, log: log}
 	op.Invoke = h.clock.Add(1)
-	op.Err = log.Write(topic, &batch)
+	_, op.Err = log.Write(driver.WriteParams{Topic: topic, Entries: &batch})
+	op.Complete = h.clock.Add(1)
+	h.record(op)
+	return op.Err
+}
+
+// WriteAs is Write for a client with a producer ID, numbering this write sequence. A retry
+// is the same call again with the same entries and number.
+func (h *History) WriteAs(log driver.LogManager, process int, topic domain.TopicName, entries []string, producer domain.ProducerID, sequence uint64) error {
+	batch := make([][]byte, len(entries))
+	for i, entry := range entries {
+		batch[i] = []byte(entry)
+	}
+	op := Op{Kind: Write, Process: process, Topic: topic, Written: entries, Producer: producer, Sequence: sequence, log: log}
+	op.Invoke = h.clock.Add(1)
+	_, op.Err = log.Write(driver.WriteParams{Topic: topic, Entries: &batch, Producer: producer, Sequence: sequence})
 	op.Complete = h.clock.Add(1)
 	h.record(op)
 	return op.Err
@@ -103,12 +137,23 @@ func (h *History) Write(log driver.LogManager, process int, topic domain.TopicNa
 // Read reads the topic from an offset to the end through log and records what it was given.
 // A topic with nothing at or after the offset is an empty read, not an error.
 func (h *History) Read(log driver.LogManager, process int, topic domain.TopicName, from uint64) ([]Entry, error) {
-	op := Op{Kind: Read, Process: process, Topic: topic, From: from}
+	op := Op{Kind: Read, Process: process, Topic: topic, From: from, log: log}
 	op.Invoke = h.clock.Add(1)
 	op.Seen, op.Err = ReadAll(log, topic, from)
 	op.Complete = h.clock.Add(1)
 	h.record(op)
 	return op.Seen, op.Err
+}
+
+// Flush flushes the log and records it. log must be the same value the writes it is meant to
+// cover were made through, since that is how the checker tells logs apart.
+func (h *History) Flush(log driver.Flusher, process int) error {
+	op := Op{Kind: Flush, Process: process, log: log}
+	op.Invoke = h.clock.Add(1)
+	op.Err = log.Flush()
+	op.Complete = h.clock.Add(1)
+	h.record(op)
+	return op.Err
 }
 
 // ReadAll reads a topic from an offset to the end of the log, copying every entry out of the
@@ -160,7 +205,15 @@ const (
 	RealTime          = "write before an earlier acknowledged write"
 	ReadNotInLog      = "read saw what the log does not hold"
 	ReadNotContiguous = "read not contiguous from where it asked"
+	LostThenKept      = "write lost while a later one to the same log survived"
 )
+
+// Options says what an acknowledgement promised.
+type Options struct {
+	// Lenient is lenient flush mode: an acknowledged write is owed to the log only once a
+	// successful flush covers it.
+	Lenient bool
+}
 
 // placed is where the log put one write: the positions of the entries of it that are there.
 type placed struct {
@@ -171,10 +224,35 @@ type placed struct {
 // Check compares a history with the log read back afterwards, topic by topic, and returns
 // every anomaly it finds; none means one log explains everything every client saw.
 func Check(ops []Op, final map[domain.TopicName][]Entry) []Anomaly {
+	return CheckWith(ops, final, Options{})
+}
+
+// CheckWith is Check, told what an acknowledgement promised.
+func CheckWith(ops []Op, final map[domain.TopicName][]Entry, options Options) []Anomaly {
 	var anomalies []Anomaly
+	ops = mergeRetries(ops)
 	byTopic := map[domain.TopicName][]*Op{}
+	var flushes []*Op
 	for i := range ops {
+		if ops[i].Kind == Flush {
+			flushes = append(flushes, &ops[i])
+			continue
+		}
 		byTopic[ops[i].Topic] = append(byTopic[ops[i].Topic], &ops[i])
+	}
+	owed := func(write *Op) bool {
+		if write.Err != nil {
+			return false
+		}
+		if !options.Lenient {
+			return true
+		}
+		for _, flush := range flushes {
+			if flush.Err == nil && flush.log == write.log && flush.Invoke > write.Complete {
+				return true
+			}
+		}
+		return false
 	}
 	topics := map[domain.TopicName]bool{}
 	for topic := range byTopic {
@@ -184,13 +262,49 @@ func Check(ops []Op, final map[domain.TopicName][]Entry) []Anomaly {
 		topics[topic] = true
 	}
 	for topic := range topics {
-		anomalies = append(anomalies, checkTopic(topic, byTopic[topic], final[topic])...)
+		anomalies = append(anomalies, checkTopic(topic, byTopic[topic], final[topic], owed)...)
 	}
 	sort.Slice(anomalies, func(i, j int) bool { return anomalies[i].String() < anomalies[j].String() })
 	return anomalies
 }
 
-func checkTopic(topic domain.TopicName, ops []*Op, log []Entry) []Anomaly {
+// mergeRetries folds the attempts at one producer write into one write. Taking the last
+// attempt alone would date a write that reached the log during its first, failed attempt to
+// when its retry was invoked, which can be after a write acknowledged in between, and call
+// that a real-time violation the log never made.
+func mergeRetries(ops []Op) []Op {
+	type key struct {
+		topic    domain.TopicName
+		producer domain.ProducerID
+		sequence uint64
+	}
+	merged := make([]Op, 0, len(ops))
+	at := map[key]int{}
+	for _, op := range ops {
+		if op.Kind != Write || op.Producer == (domain.ProducerID{}) {
+			merged = append(merged, op)
+			continue
+		}
+		k := key{op.Topic, op.Producer, op.Sequence}
+		i, seen := at[k]
+		if !seen {
+			at[k] = len(merged)
+			merged = append(merged, op)
+			continue
+		}
+		write := &merged[i]
+		if op.Invoke < write.Invoke {
+			write.Invoke, write.Process = op.Invoke, op.Process
+		}
+		// acknowledged by the first attempt that was; otherwise as the last one ended
+		if write.Err != nil && (op.Err == nil || op.Complete > write.Complete) {
+			write.Complete, write.Err, write.log = op.Complete, op.Err, op.log
+		}
+	}
+	return merged
+}
+
+func checkTopic(topic domain.TopicName, ops []*Op, log []Entry, owed func(*Op) bool) []Anomaly {
 	var anomalies []Anomaly
 	report := func(kind, format string, args ...any) {
 		anomalies = append(anomalies, Anomaly{Kind: kind, Topic: topic, Detail: fmt.Sprintf(format, args...)})
@@ -253,12 +367,27 @@ func checkTopic(topic domain.TopicName, ops []*Op, log []Entry) []Anomaly {
 				report(TornWrite, "write by process %d at %d holds its entries at positions %v", op.Process, op.Invoke, found)
 			}
 		}
-		if op.Err == nil && len(found) != len(op.Written) {
+		if owed(op) && len(found) != len(op.Written) {
 			report(LostWrite, "write by process %d, acknowledged at %d, has %d of its %d entries in the log",
 				op.Process, op.Complete, len(found), len(op.Written))
 		}
 		if len(found) > 0 {
 			writes = append(writes, placed{op: op, positions: found})
+		}
+	}
+	// a write acknowledged but not owed, and not whole: everything appended to the same log
+	// after it — every write invoked after it was acknowledged — went with it. In strict mode
+	// every acknowledged write is owed, so this only ever speaks for lenient losses.
+	for _, lost := range ops {
+		if lost.Kind != Write || lost.Err != nil || owed(lost) || len(positions[lost]) == len(lost.Written) {
+			continue
+		}
+		for _, later := range writes {
+			if later.op.log == lost.log && later.op.Invoke > lost.Complete {
+				report(LostThenKept, "write by process %d, acknowledged at %d, is not whole, but a write by process %d invoked at %d is in the log",
+					lost.Process, lost.Complete, later.op.Process, later.op.Invoke)
+				break
+			}
 		}
 	}
 	anomalies = append(anomalies, checkRealTime(topic, writes)...)

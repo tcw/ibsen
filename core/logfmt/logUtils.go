@@ -97,6 +97,11 @@ func scanValidFrames(store driven.BlockStore, ref driven.BlockRef, firstOffset d
 	reader := bufio.NewReader(block)
 	nextOffset := firstOffset
 	var validSize int64
+	// a producer's write is a group of frames appended together, and a group cut short by a
+	// crash is cut whole: it was never acknowledged as durable, and keeping a prefix of it
+	// would leave its retry nothing to recognise. group is the one being read; a write without
+	// a producer keeps the old rule, any prefix of it survives.
+	var group producerGroup
 	// a block that starts with zeros where its first header should be is a hole, not a block
 	// written before framing: the page cache held a first write the media never got, because
 	// its fsync failed and a later one set the size without writing it. Zeros are torn, and
@@ -113,7 +118,7 @@ func scanValidFrames(store driven.BlockStore, ref driven.BlockRef, firstOffset d
 		}
 		header, err := domain.ReadFrameHeader(reader, maxStored)
 		if err == io.EOF {
-			return nextOffset, validSize, nil
+			return group.end(nextOffset, validSize)
 		}
 		if validSize == 0 && errors.Is(err, domain.ErrNotAFrame) {
 			// nothing in this block was ever a frame, so there is no torn tail to cut and
@@ -125,14 +130,14 @@ func scanValidFrames(store driven.BlockStore, ref driven.BlockRef, firstOffset d
 			return 0, 0, errore.Wrap(err)
 		}
 		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, domain.ErrCorruptFrame) {
-			return nextOffset, validSize, nil
+			return group.end(nextOffset, validSize)
 		}
 		if err != nil {
 			return 0, 0, errore.Wrap(err)
 		}
 		err = domain.VerifyFramePayload(reader, header)
 		if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, domain.ErrCorruptFrame) {
-			return nextOffset, validSize, nil
+			return group.end(nextOffset, validSize)
 		}
 		if err != nil {
 			return 0, 0, errore.Wrap(err)
@@ -141,8 +146,112 @@ func scanValidFrames(store driven.BlockStore, ref driven.BlockRef, firstOffset d
 			return 0, 0, errore.NewF("log block %s: frame at byte %d starts at offset %d, expected %d",
 				ref, validSize, header.FirstOffset, nextOffset)
 		}
+		group.add(header, nextOffset, validSize)
 		nextOffset = header.EndOffset()
 		validSize = validSize + header.Size()
+	}
+}
+
+// producerGroup follows the frames of one producer's write through a scan.
+type producerGroup struct {
+	producer domain.ProducerID
+	sequence uint64
+	want     uint32
+	have     uint32
+	// startOffset and startSize are where the group began: where a scan ends if it is cut
+	startOffset domain.Offset
+	startSize   int64
+}
+
+// add counts a verified frame into the group it belongs to, starting a new one when it does
+// not continue the last.
+func (g *producerGroup) add(h domain.FrameHeader, offset domain.Offset, size int64) {
+	continues := !h.Producer.IsZero() && h.Producer == g.producer && h.Sequence == g.sequence && g.have < g.want
+	if !continues {
+		*g = producerGroup{producer: h.Producer, sequence: h.Sequence, want: h.WriteEntries,
+			startOffset: offset, startSize: size}
+	}
+	g.have += h.EntryCount
+}
+
+// end is where a scan that stops here ends: after the last frame, unless that frame left a
+// producer's write incomplete, in which case before the write.
+func (g *producerGroup) end(offset domain.Offset, size int64) (domain.Offset, int64, error) {
+	if !g.producer.IsZero() && g.have < g.want {
+		return g.startOffset, g.startSize, nil
+	}
+	return offset, size, nil
+}
+
+// ProducerWrite is one producer's write, as the frame headers of a block describe it.
+type ProducerWrite struct {
+	Producer domain.ProducerID
+	Sequence uint64
+	First    domain.Offset
+	Entries  uint32
+}
+
+// ScanDictionaries lists the dictionary ids a log block's frames name, in the order frames
+// first name them, from the frame headers alone.
+func ScanDictionaries(store driven.BlockStore, ref driven.BlockRef) ([]uint64, error) {
+	block, err := store.Open(ref, 0)
+	if err != nil {
+		return nil, errore.Wrap(err)
+	}
+	defer block.Close()
+	reader := bufio.NewReader(block)
+	var ids []uint64
+	seen := map[uint64]bool{}
+	for {
+		header, err := domain.ReadFrameHeader(reader, domain.MaxFrameSize)
+		if err == io.EOF {
+			return ids, nil
+		}
+		if err != nil {
+			return nil, errore.WrapWithContextF(err, "reading the frame headers of %s", ref)
+		}
+		if err := domain.SkipFramePayload(reader, header); err != nil {
+			return nil, errore.WrapWithContextF(err, "reading the frame headers of %s", ref)
+		}
+		if header.DictID != 0 && !seen[header.DictID] {
+			seen[header.DictID] = true
+			ids = append(ids, header.DictID)
+		}
+	}
+}
+
+// ScanProducers lists the producer writes a log block holds, in order, from its frame headers
+// alone: nothing is decoded and no payload is read, which is what makes rebuilding the
+// producer table after a restart cheap. The block must already have been recovered.
+func ScanProducers(store driven.BlockStore, ref driven.BlockRef) ([]ProducerWrite, error) {
+	block, err := store.Open(ref, 0)
+	if err != nil {
+		return nil, errore.Wrap(err)
+	}
+	defer block.Close()
+	reader := bufio.NewReader(block)
+	var writes []ProducerWrite
+	for {
+		header, err := domain.ReadFrameHeader(reader, domain.MaxFrameSize)
+		if err == io.EOF {
+			return writes, nil
+		}
+		if err != nil {
+			return nil, errore.WrapWithContextF(err, "reading the frame headers of %s", ref)
+		}
+		if err := domain.SkipFramePayload(reader, header); err != nil {
+			return nil, errore.WrapWithContextF(err, "reading the frame headers of %s", ref)
+		}
+		if header.Producer.IsZero() {
+			continue
+		}
+		if n := len(writes); n > 0 && writes[n-1].Producer == header.Producer &&
+			writes[n-1].Sequence == header.Sequence && writes[n-1].First+domain.Offset(writes[n-1].Entries) == header.FirstOffset {
+			writes[n-1].Entries += header.EntryCount
+			continue
+		}
+		writes = append(writes, ProducerWrite{Producer: header.Producer, Sequence: header.Sequence,
+			First: header.FirstOffset, Entries: header.EntryCount})
 	}
 }
 
@@ -160,10 +269,13 @@ type ReadFileParams struct {
 	Reader io.Reader
 	// Codecs resolves the codec byte a frame carries. A nil registry reads frames written
 	// without compression and reports the rest as unknown.
-	Codecs    driven.Codecs
-	LogChan   chan *[]domain.LogEntry
-	Wg        *sync.WaitGroup
-	BatchSize uint32
+	Codecs driven.Codecs
+	// Dictionaries finds a dictionary a frame names. Nil reads every frame that names none,
+	// and reports the rest as a missing dictionary.
+	Dictionaries driven.Dictionaries
+	LogChan      chan *[]domain.LogEntry
+	Wg           *sync.WaitGroup
+	BatchSize    uint32
 	// Cancel stops the read with domain.ErrReadCancelled when closed; nil never cancels.
 	Cancel <-chan struct{}
 	// FromOffset is the first offset to send. The frame holding it may start earlier, and
@@ -258,7 +370,7 @@ func ReadFile(params ReadFileParams) (ReadResult, error) {
 		if err != nil {
 			return ReadResult{}, errore.Wrap(err)
 		}
-		entries, err := DecodeFrame(params.Codecs, header, payload)
+		entries, err := DecodeFrameWith(params.Codecs, params.Dictionaries, header, payload)
 		if err != nil {
 			return ReadResult{}, errore.Wrap(err)
 		}

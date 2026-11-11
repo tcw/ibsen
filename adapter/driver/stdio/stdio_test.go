@@ -27,7 +27,7 @@ func openLog(t *testing.T) *embedded.Log {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(log.Close)
+	t.Cleanup(func() { log.Close() })
 	return log
 }
 
@@ -185,9 +185,9 @@ type countingLog struct {
 	writes int
 }
 
-func (c *countingLog) Write(topic domain.TopicName, entries domain.EntriesPtr) error {
+func (c *countingLog) Write(params driver.WriteParams) (domain.WriteResult, error) {
 	c.writes++
-	return c.LogManager.Write(topic, entries)
+	return c.LogManager.Write(params)
 }
 
 // TestBatchSizeIsHowManyEntriesShareAWrite pins what the batch size buys. One Write is one
@@ -437,7 +437,7 @@ func TestFollowPicksUpEntriesAndStopsOnCancel(t *testing.T) {
 func TestCatWithoutFollowStopsAtTheEndOfTheLog(t *testing.T) {
 	log := openLog(t)
 	empty := make([][]byte, 0)
-	if err := log.Write("empty", &empty); err != nil {
+	if _, err := log.Write(driver.WriteParams{Topic: "empty", Entries: &empty}); err != nil {
 		t.Fatal(err)
 	}
 	if out := catString(t, log, "empty", stdio.CatParams{}); out != "" {

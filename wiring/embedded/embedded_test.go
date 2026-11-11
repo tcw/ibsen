@@ -22,7 +22,7 @@ func openTestLog(t *testing.T, params Params) *Log {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(log.Close)
+	t.Cleanup(func() { log.Close() })
 	return log
 }
 
@@ -32,7 +32,7 @@ func write(t *testing.T, log *Log, topic string, from, count int) {
 	for i := range batch {
 		batch[i] = []byte(fmt.Sprintf("%s-%d", topic, from+i))
 	}
-	if err := log.Write(domain.TopicName(topic), &batch); err != nil {
+	if _, err := log.Write(driver.WriteParams{Topic: domain.TopicName(topic), Entries: &batch}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -106,7 +106,7 @@ func TestAnEmbeddedLogIsADriverLogManager(t *testing.T) {
 	var port driver.LogManager = openTestLog(t, Params{})
 
 	entries := [][]byte{[]byte("through the port")}
-	if err := port.Write("events", &entries); err != nil {
+	if _, err := port.Write(driver.WriteParams{Topic: "events", Entries: &entries}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -165,7 +165,7 @@ func TestCloseRefusesFurtherWrites(t *testing.T) {
 	log.Close()
 
 	entries := [][]byte{[]byte("after close")}
-	if err := log.Write("events", &entries); !errors.Is(err, manager.ErrClosed) {
+	if _, err := log.Write(driver.WriteParams{Topic: "events", Entries: &entries}); !errors.Is(err, manager.ErrClosed) {
 		t.Errorf("write after Close gave %v, want ErrClosed", err)
 	}
 	// a loaded topic stays readable, which is what lets a program drain before it exits

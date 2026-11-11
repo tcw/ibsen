@@ -13,6 +13,7 @@ import (
 )
 
 var _ driver.LogManager = &LogTopicsManager{}
+var _ driver.Flusher = &LogTopicsManager{}
 
 type LogTopicManagerParams struct {
 	ReadOnly bool
@@ -37,6 +38,21 @@ type LogTopicManagerParams struct {
 	// FlushInterval is how long a batch may be held back hoping for more entries; zero
 	// never holds one back.
 	FlushInterval time.Duration
+	// ProducerWindowBlocks is how many of a topic's newest blocks a producer is remembered
+	// across; zero means topic.DefaultProducerWindowBlocks.
+	ProducerWindowBlocks int
+	// Dictionaries trains a compression dictionary per topic when Codec can use one, after
+	// DictTrainBytes of plain entries (zero means topic.DefaultDictTrainBytes).
+	Dictionaries   bool
+	DictTrainBytes int64
+	// CompressMinBytes and AdaptiveCompression decide which frames are offered to the codec
+	// at all; see topic.Params. The zero values try every frame.
+	CompressMinBytes    int
+	AdaptiveCompression bool
+	// FlushMode says when a write is acknowledged; the zero value is topic.FlushStrict. In
+	// topic.FlushLenient nothing is flushed until Flush is called, which is the composition
+	// root's job: the core starts no timer.
+	FlushMode topic.FlushMode
 	// Logger is optional: a core built without one logs nothing rather than crashing.
 	Logger driven.Logger
 }
@@ -84,19 +100,67 @@ func NewLogTopicsManager(params LogTopicManagerParams) (LogTopicsManager, error)
 	return manager, nil
 }
 
-// Close stops accepting writes and topic loads, waits for those in flight, and waits for the
-// background indexing each topic's writes started, so nothing writes to storage once it
-// returns. Reads of loaded topics are not waited for: they do not write, and a tailing read
-// lasts until its client leaves. Calling Close again is a no-op.
-func (l *LogTopicsManager) Close() {
+// Close stops accepting writes and topic loads, waits for those in flight, flushes every
+// topic, and waits for the background indexing each topic's writes started, so nothing writes
+// to storage once it returns. It returns the first flush error. Reads of loaded topics are
+// not waited for: they do not write, and a tailing read lasts until its client leaves.
+// Calling Close again flushes nothing new.
+func (l *LogTopicsManager) Close() error {
 	l.state.mu.Lock()
 	l.state.closed = true
 	l.state.mu.Unlock()
 	l.state.requests.Wait()
+	var first error
 	l.Topics.Range(func(_, loaded any) bool {
-		loaded.(*topic.Topic).Close()
+		if err := loaded.(*topic.Topic).Close(); err != nil && first == nil {
+			first = err
+		}
 		return true
 	})
+	return first
+}
+
+// Retain applies retention to every topic in the store, loading those not loaded yet, and
+// returns the first error; a topic that fails does not stop the others. policy says what to
+// keep of each topic. now is the caller's clock, since the core reads none. A read-only manager
+// deletes nothing.
+func (l *LogTopicsManager) Retain(policy func(domain.TopicName) topic.RetentionPolicy, now time.Time) error {
+	if l.Params.ReadOnly {
+		return nil
+	}
+	if err := l.begin(); err != nil {
+		return err
+	}
+	defer l.state.requests.Done()
+	var first error
+	for _, name := range l.List() {
+		chosen := policy(name)
+		if chosen.Keeps() {
+			continue
+		}
+		loaded, err := l.getOrCreateTopic(name)
+		if err == nil {
+			_, err = loaded.Retain(chosen, now)
+		}
+		if err != nil && first == nil {
+			first = errore.WrapWithContextF(err, "unable to apply retention to topic %s", name)
+		}
+	}
+	return first
+}
+
+// Flush makes every entry appended to any loaded topic before the call durable, and so
+// readable, and returns the first error. Every topic is flushed even when one fails, since a
+// failure stops only its own topic.
+func (l *LogTopicsManager) Flush() error {
+	var first error
+	l.Topics.Range(func(name, loaded any) bool {
+		if err := loaded.(*topic.Topic).Flush(); err != nil && first == nil {
+			first = errore.WrapWithContextF(err, "unable to flush topic %s", name)
+		}
+		return true
+	})
+	return first
 }
 
 // begin registers a request that may write to storage, or fails once the manager is closed.
@@ -115,21 +179,21 @@ func (l *LogTopicsManager) List() []domain.TopicName {
 	return l.StatusAccess.List()
 }
 
-func (l *LogTopicsManager) Write(topicName domain.TopicName, entries domain.EntriesPtr) error {
+func (l *LogTopicsManager) Write(params driver.WriteParams) (domain.WriteResult, error) {
 	if l.Params.ReadOnly {
-		return errors.New("ibsen is in read only mode and will not accept any writes")
+		return domain.WriteResult{}, errors.New("ibsen is in read only mode and will not accept any writes")
 	}
 	if err := l.begin(); err != nil {
-		return err
+		return domain.WriteResult{}, err
 	}
 	defer l.state.requests.Done()
-	loaded, err := l.getOrCreateTopic(topicName)
+	loaded, err := l.getOrCreateTopic(params.Topic)
 	if err != nil {
-		return err
+		return domain.WriteResult{}, err
 	}
 	// no lock of our own: the topic assigns offsets under its own, and writers to one topic
 	// have to be inside it together for their entries to share a flush
-	return loaded.Write(entries)
+	return loaded.WriteWith(topic.WriteRequest{Entries: params.Entries, Producer: params.Producer, Sequence: params.Sequence})
 }
 
 func (l *LogTopicsManager) Read(params driver.ReadParams) error {
@@ -139,11 +203,12 @@ func (l *LogTopicsManager) Read(params driver.ReadParams) error {
 	}
 	readFrom := params.From
 	return loaded.Read(domain.ReadLogParams{
-		LogChan:   params.LogChan,
-		Wg:        params.Wg,
-		From:      readFrom,
-		BatchSize: params.BatchSize,
-		Cancel:    params.Cancel,
+		LogChan:      params.LogChan,
+		Wg:           params.Wg,
+		From:         readFrom,
+		BatchSize:    params.BatchSize,
+		Cancel:       params.Cancel,
+		FromEarliest: params.FromEarliest,
 	})
 }
 
@@ -194,17 +259,23 @@ func (l *LogTopicsManager) getOrCreateTopic(name domain.TopicName) (*topic.Topic
 // keep working.
 func (l *LogTopicsManager) loadOrCreateNewTopic(topicName domain.TopicName) (*topic.Topic, error) {
 	loaded := topic.NewLogTopic(topic.Params{
-		Logger:          l.Params.Logger,
-		IndexSparsity:   l.Params.IndexSparsity,
-		MaxFrameEntries: l.Params.MaxFrameEntries,
-		MaxFrameBytes:   l.Params.MaxFrameBytes,
-		Codec:           l.Params.Codec,
-		Codecs:          l.Params.Codecs,
-		FlushEntries:    l.Params.FlushEntries,
-		FlushInterval:   l.Params.FlushInterval,
-		Store:           l.Params.Store,
-		TopicName:       string(topicName),
-		MaxBlockSize:    l.Params.MaxBlockSize,
+		Logger:               l.Params.Logger,
+		IndexSparsity:        l.Params.IndexSparsity,
+		MaxFrameEntries:      l.Params.MaxFrameEntries,
+		MaxFrameBytes:        l.Params.MaxFrameBytes,
+		Codec:                l.Params.Codec,
+		Codecs:               l.Params.Codecs,
+		FlushEntries:         l.Params.FlushEntries,
+		FlushInterval:        l.Params.FlushInterval,
+		FlushMode:            l.Params.FlushMode,
+		ProducerWindowBlocks: l.Params.ProducerWindowBlocks,
+		Dictionaries:         l.Params.Dictionaries,
+		DictTrainBytes:       l.Params.DictTrainBytes,
+		CompressMinBytes:     l.Params.CompressMinBytes,
+		AdaptiveCompression:  l.Params.AdaptiveCompression,
+		Store:                l.Params.Store,
+		TopicName:            string(topicName),
+		MaxBlockSize:         l.Params.MaxBlockSize,
 	})
 	if err := loaded.LoadOrCreate(); err != nil {
 		return nil, errore.WrapWithContextF(err, "unable to load topic %s", topicName)

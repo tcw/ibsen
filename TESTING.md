@@ -6,7 +6,8 @@ and do not model, how to read a failure from the two system-level harnesses, and
 to a given part of the log has to come with.
 
 [ARCHITECTURE.md](ARCHITECTURE.md) describes what is being tested. [README.md](README.md) is
-the introduction.
+the introduction, and [docs/OPERATIONS.md](docs/OPERATIONS.md#development) lists the
+commands CI runs.
 
 - [1. What the tests are for](#1-what-the-tests-are-for)
 - [2. Principles](#2-principles)
@@ -278,6 +279,13 @@ the reason a change to framing, indexing or block rollover can be made with conf
 
 Tests that decide an interleaving with a gate (§2) and check the contract in it.
 
+- **Lenient mode** (`core/topic/lenient_test.go`): a write returns before any sync; nothing is
+  readable until `Flush`, nor while its sync is still running; a tailing reader sees every
+  entry once the ticker flushes; concurrent writers all land and one flush covers them;
+  `Close` flushes; a failed flush is logged with its offset range at error level and returned
+  by the next `Write`, `Flush` and `Close`, with nothing past the durable offset readable; a
+  power cut loses only what was not flushed and the log carries on from there. Strict mode's
+  tests below run unchanged, since strict is the core's zero value.
 - **Durability** (`core/topic/flush_test.go`): a reader sees nothing until the flush returns,
   and `Write` does not return either; a failed flush is reported, leaves nothing readable and
   refuses every later write; a batch that formed behind a failed flush fails with it; a failed
@@ -336,6 +344,10 @@ Each adapter is tested for its own job and nothing more.
   contracts, an unknown level refused, concurrent frames, an oversized frame refused before it
   is decoded, and a real topic through the codec: smaller, readable from every offset,
   reloadable, and readable by a build without zstd for its plain frames.
+- `adapter/driven/locking/flock` — the kernel lock. A second holder is a second *process*,
+  the test binary re-executed holding the lock, and it is killed rather than released to show
+  the kernel letting go on death. The filesystem check and the self-test are variables a test
+  replaces to play NFS or a filesystem that grants a lock twice.
 - `adapter/driven/locking` — the file lease on real directories: renewal, release, a stalled
   holder not stealing its lease back, a lease that aged out treated as lost, loss reported,
   release not removing a lock it no longer holds, one claimant for a fresh lock and for an
@@ -446,11 +458,21 @@ order, and every rule is a scan of it.
 | `write before an earlier acknowledged write` | real-time order broken: a write acknowledged before another was invoked is after it in the log |
 | `read saw what the log does not hold` | a reader was given an entry that is not at that offset afterwards — the durability promise from the reader's side |
 | `read not contiguous from where it asked` | a read skipped or repeated an offset |
+| `write lost while a later one to the same log survived` | lenient only: an acknowledged write that no flush covered is missing, but one invoked after it was acknowledged is there |
 
 **A failed write is indeterminate, not failed.** Ibsen does not promise that a write returning
 an error left nothing behind — a write is appended as frames, and recovery truncates at the
 first damaged one — so the checker allows any prefix of a failed write, at most once, and
 nothing else of it.
+
+**Lenient mode promises less, and the checker is told so.** `CheckWith(ops, final,
+Options{Lenient: true})` owes an acknowledged write to the log only once a `Flush` of the same
+log instance (recorded by `History.Flush`), invoked after the write was acknowledged, has
+succeeded. A write no flush covered may be lost or survive as a prefix, like a failed one —
+but a lost one takes with it every write to the same log invoked after it was acknowledged, and
+no reader may ever have seen it. `lenient_test.go` shows it both sides, and
+`TestCheck_strictStillOwesEveryAcknowledgedWrite` that the same lost write is still a lost
+write under `Check`.
 
 **Testing the checker.** `history_test.go` gives it every anomaly in a hand-built history, and
 the valid histories it must accept: concurrent writes in either order, a failed write that left
@@ -469,6 +491,22 @@ twelve seeds per scenario.
 | power cut keeps some of what was unsynced | `LoseSome(seed)` | |
 | power cut under coalesced flushes | `LoseSome(seed)` | `FlushEntries 20`, `FlushInterval 1ms` |
 | fsync fails, then power cut | `LoseEverything` | one log fsync fails at a random point of each life |
+| producers retry across power cuts | `LoseSome(seed)` | every writer has a producer ID and retries a failed write, same number, before anything else |
+| producers retry across a failed fsync and power cuts | `LoseEverything` | the same, and one log fsync fails |
+| lenient: power cut loses everything unflushed | `LoseEverything` | lenient mode, a recorded flusher every 0.2–1.7 ms |
+| lenient: power cut keeps some of what was unflushed | `LoseSome(seed)` | the same |
+| lenient: fsync fails, then power cut | `LoseEverything` | the same, and one log fsync fails |
+
+The checker takes every attempt at one producer and sequence as one write, invoked when the
+first attempt was and acknowledged when one was, since its entries may have reached the log
+during any of them. Dating it from its last attempt instead flagged about one producer run in
+eighty as a real-time violation: a first attempt that landed before a power cut, a write
+acknowledged after it, and a retry found to be a duplicate.
+
+The lenient scenarios run a fifth client that plays the composition root's ticker, calling
+`History.Flush` at random intervals, and are checked with `Options{Lenient: true}`. Making
+appended entries readable at once in lenient mode fails all three with lost writes and reads
+of what the power cut took.
 
 Blocks are 2000 bytes and frames three entries, so a life rolls over several times and most
 writes are several frames. The crash is brought by whichever writer reaches a random **write**
@@ -602,7 +640,7 @@ first is not enumerated.
 
 | what | command |
 |---|---|
-| everything CI runs | `./release.sh` runs them and then builds; by hand, `gofmt -l . && go vet ./... && go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -checks U1000 ./... && ./scripts/generate-proto.sh && ./scripts/check-architecture.sh && ./scripts/embedded-size.sh && go test -race ./...` |
+| everything CI runs | by hand, `gofmt -l . && go vet ./... && go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -checks U1000 ./... && ./scripts/generate-proto.sh && ./scripts/check-architecture.sh && ./scripts/embedded-size.sh && go test -race ./...` |
 | the whole suite | `go test -race ./...` |
 | one package | `go test -race ./core/topic/` |
 | one test | `go test -race ./core/topic/ -run TestAFailedFlushStopsTheTopic -count=1 -v` |
@@ -694,7 +732,8 @@ in rule 1.
 
 | promise | held by |
 |---|---|
-| an acknowledged write is durable | `flush_test.go`; `powerCut_test.go` (topic and store); `TestNemesis`; `TestCrashAtEveryStorageCall` lineage check and checker |
+| nothing is readable before it is durable (both modes); a lenient write is durable once flushed | `lenient_test.go`; `TestNemesis` lenient scenarios |
+| an acknowledged write is durable (strict) | `flush_test.go`; `powerCut_test.go` (topic and store); `TestNemesis`; `TestCrashAtEveryStorageCall` lineage check and checker |
 | nothing is readable before it is durable | `TestReadersDoNotSeeAnUnflushedEntry`; the checker's `read saw what the log does not hold`; the lineage check on reads |
 | a failed fsync is not retried | `TestAFailedFlushStopsTheTopic`, `TestABatchBehindAFailedFlushFailsWithIt`, `TestAFailedRolloverSyncStopsTheTopic`, `TestPowerCut_aFailedFsyncIsNotRetryable`, the failed-sync runs |
 | a restart does not trust a failed fsync | `TestPowerCut_aRestartAfterAFailedFsyncDoesNotWriteBehindTheHole`, `TestPowerCut_aRestartRetriesTheDirectorySyncThatFailed`, the failed-sync runs before the restart |
@@ -703,7 +742,7 @@ in rule 1.
 | offsets are contiguous | the property tests; `TestPowerCut_aRolloverWaitsForTheOldBlock`; the checker's `offsets not contiguous` |
 | a read does not skip | `TestReadDoesNotSkipTheEndOfABlockWhenAFlushLandsDuringIt`; the property tests; the checker's `read not contiguous` |
 | recovery never destroys what is not damaged | `logUtils_test.go` (pre-framing reported, offset gap an error, unwired codec recovered); `indexChecksum_test.go` |
-| one writer | `locking/singleInstanceLock_test.go`; `wiring/lock_test.go`; `wiring/local_test.go` |
+| one writer | `locking/singleInstanceLock_test.go`; `locking/flock/flock_test.go`; `wiring/lock_test.go`; `wiring/writelock_test.go`; `wiring/local_test.go` |
 | a reader changes nothing | `TestReadOnlyOpenWritesNothing`; `TestReadonlyModeBuildsAStoreThatCannotWrite`; `TestList_aReadOnlyStoreKeepsTheCache` |
 | the core is pure | `scripts/check-architecture.sh`; `scripts/embedded-size.sh` |
 
@@ -733,9 +772,9 @@ unsynced tail at all, which reverting the rollover fix and watching the harness 
 
 What the suite does not test, so nobody assumes it does:
 
-- **Clients that retry.** Every harness drives the manager. A gRPC client that retries a write
-  would duplicate it, since writes carry no idempotency key, and the checker would say so — but
-  nothing exercises it.
+- **Clients that retry over gRPC.** The nemesis retries through the manager with producer IDs,
+  and the Go client's retry is tested against a real manager; no history-checked test retries
+  through a real server under a nemesis.
 - **The lease under failure.** The lease's own tests cover stalls and races between instances;
   no history-checked test runs two writers against one directory with a nemesis.
 - **Nested crashes.** A second crash during the recovery from the first is not enumerated.
@@ -786,10 +825,33 @@ What the suite does not test, so nobody assumes it does:
 | `adapter/driver/grpcapi/*_test.go` | L6 | the handler, TLS, dialling |
 | `adapter/driven/compression/zstd/*_test.go` | L6 | the codec, and a topic through it |
 | `adapter/driven/locking/singleInstanceLock_test.go` | L6 | the file lease |
+| `adapter/driven/locking/flock/flock_test.go` | L6 | the kernel lock: a second process holding it (the test binary re-executed), release on death, a live lease file refused, the self-test, remote filesystems refused |
+| `adapter/driven/locking/k8slease/lease_test.go` | L6 | the Kubernetes lease against client-go's fake clientset, made to enforce `resourceVersion` as the API server does: acquire and renew, a live lease waited for and not taken, an expired one taken over, a loss reported and the lease not stolen back on release, release giving it up |
+| `wiring/fence_test.go` | L6 | the fencing decorator: writes refused once the lock is gone, `Syncable` forwarded exactly when the store has it, an append outliving the lock rolled back or marked dirty |
+| `wiring/k8s/k8s_test.go` | L6 | `--lock k8s` through `OpenLocal` against a fake cluster |
+| `wiring/writelock_test.go` | L6 | `--lock`: auto's choice and both fallbacks, explicit flock refusing with its reason, and the two adapters seeing each other |
 | `adapter/driven/logging/zerologger/zerologger_test.go` | L6 | the logging adapter |
 | `wiring/*_test.go`, `wiring/embedded/embedded_test.go` | L6 | the composition roots |
 | `adapter/driver/grpcapi/test/` | L7 | a real server on a free port; gRPC benchmarks |
 | `adapter/driver/history/history_test.go` | L8 | the checker, against hand-built histories |
-| `adapter/driver/history/nemesis_test.go` | L8 | randomised power cuts and failed fsyncs, checked |
+| `adapter/driver/history/nemesis_test.go` | L8 | randomised power cuts and failed fsyncs, checked, in both flush modes |
+| `adapter/driver/history/lenient_test.go` | L8 | the checker's lenient rules, both sides |
+| `core/topic/lenient_test.go` | L4 | lenient flush mode |
+| `adapter/driven/compression/zstd/dict_test.go` | L6 | dictionaries through a real topic: trained at the threshold, round trip and restart, off writes plain frames, one that does not pay discarded, retrained when the data changes shape with two dictionaries in one block, missing or corrupt reported by name with nothing truncated, a crash between the dictionary and its first frame, retention keeping what is named |
+| `adapter/driven/compression/zstd/dict_bench_test.go` | — | `BenchmarkDictionary`: ratio, write and read with and without a dictionary at 1, 10 and 100 entries a frame |
+| `adapter/driver/cli/clientgen/clientgen_test.go` | L6 | `ibsen generate`: every language writes its folder with no placeholder left, the build file records the versions, a non-empty folder is refused without `--force`, names filled in, unknown languages and bad packages refused, and the bundled proto is the repository's |
+| `scripts/client-example.sh` | L7 | per language, in CI: the generated client built with its own toolchain and its example run against an in-memory server |
+| `core/topic/compressSkip_test.go` | L4 | the compression skip: below the threshold no codec is called (a counting codec), the adaptive skip engaging after 16 misses, probing every 64th, resuming when data compresses, and mixed blocks reading back |
+| `adapter/driven/compression/zstd/attempt_bench_test.go` | — | `BenchmarkCompressionAttempt` (what a discarded attempt costs) and `BenchmarkCompressionSkip` (what the skip saves) |
+| `core/topic/producer_test.go` | L4 | safe retries: duplicate, next, gap, stale, reused; a restart; the window, live and rebuilt; producers racing themselves; a torn producer write cut whole and one without a producer keeping its prefix; v1 and v2 frames in one block; a strict duplicate waiting for the original's flush |
+| `core/domain/frameV2_test.go` | L1 | frame header v2: round trip, every extension byte checked, a cut extension torn, an unknown extension unsupported, and a copy of the v1 reader refusing v2 rather than calling it corrupt |
+| `adapter/driver/stdio/producer_test.go` | L6 | `append --producerId`: a rerun after a failure at every batch stores the input once |
+| `adapter/driver/grpcapi/producer_test.go` | L6 | a retry answered as a duplicate; `FAILED_PRECONDITION`; a malformed producer id |
+| `clients/go/ibsen/client_test.go` | L6 | the Go client retrying lost replies with the same number, and not retrying without a producer |
+| `core/topic/retention_test.go` | L4 | retention: age, size, both, the head kept, a prefix only, reads of deleted offsets and from the earliest, a reader whose next block goes, an orphan index after a crash, a lenient flush naming a removed block |
+| `wiring/config_test.go` | L6 | sizes and ages, overrides replacing the global limits, bad settings files refused, read-only opens deleting nothing, append and the server applying retention |
+| `adapter/driver/grpcapi/retention_test.go` | L6 | a deleted offset is `OUT_OF_RANGE`; `fromEarliest` |
+| `wiring/flushmode_test.go` | L6 | `--flushMode`: names, the ticker in lenient mode only, a clean shutdown and close flushing |
+| `wiring/embedded/flush_test.go` | L6 | the embedded root starts no goroutine by default; its opt-in ticker; `StartFlushTicker` |
 | `adapter/driver/history/crashpoints_test.go` | L8 | a crash at every storage call, and every promise's support |
 | `adapter/driven/compression/zstd/bench_test.go`, `core/index/find_test.go` | bench | frame bound and index lookup |

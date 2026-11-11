@@ -39,6 +39,8 @@ const (
 	CodecNone CodecID = 0
 	// CodecZstd is zstd, which an adapter provides; the core never links it.
 	CodecZstd CodecID = 1
+	// CodecZstdDict is zstd with a trained dictionary, which the frame names by its id.
+	CodecZstdDict CodecID = 2
 )
 
 func (c CodecID) String() string {
@@ -47,6 +49,8 @@ func (c CodecID) String() string {
 		return "none"
 	case CodecZstd:
 		return "zstd"
+	case CodecZstdDict:
+		return "zstd-dict"
 	default:
 		return fmt.Sprintf("CodecID(%d)", uint8(c))
 	}
@@ -67,6 +71,9 @@ func NewCodecs(codecs ...Codec) Codecs {
 	registry := Codecs{CodecNone: NoCodec{}}
 	for _, codec := range codecs {
 		registry[codec.ID()] = codec
+		if dictionaries, ok := codec.(DictionaryCodec); ok {
+			registry[dictionaries.DictCodecID()] = codec
+		}
 	}
 	return registry
 }
@@ -103,3 +110,45 @@ func (NoCodec) Decode(dst, src []byte, plainSize int) ([]byte, error) {
 	}
 	return append(dst, src...), nil
 }
+
+// Dictionary is a trained compression dictionary: its id, which frames carry, and its bytes.
+// A dictionary is immutable once written, and its id is a promise about those bytes, like a
+// codec id.
+type Dictionary struct {
+	ID    uint64
+	Bytes []byte
+}
+
+// DictionaryCodec is the optional capability of a codec to compress with a dictionary trained
+// on a topic's own entries, which is what makes many small, similar entries compress. It is
+// probed by type assertion, like Syncable: a codec without it is used as it is, and a build
+// that wires no compressor carries none of it. Training happens here, in the adapter; the
+// core only supplies samples and keeps what comes back.
+type DictionaryCodec interface {
+	Codec
+
+	// DictCodecID is the byte a frame encoded with a dictionary carries.
+	DictCodecID() CodecID
+
+	// Train builds a dictionary of at most maxSize bytes from samples. It must not retain
+	// the samples.
+	Train(samples [][]byte, maxSize int) ([]byte, error)
+
+	// EncodeDict and DecodeDict are Encode and Decode with a dictionary. The codec may keep
+	// what it builds from a dictionary, keyed by its id, since ids never change their bytes.
+	EncodeDict(dst, src []byte, dict Dictionary) ([]byte, error)
+	DecodeDict(dst, src []byte, plainSize int, dict Dictionary) ([]byte, error)
+}
+
+// Dictionaries finds the dictionary a frame names, for a read.
+type Dictionaries interface {
+	Dictionary(id uint64) (Dictionary, error)
+}
+
+var (
+	// ErrDictionaryNotFound is a frame naming a dictionary the store does not hold. Nothing is
+	// truncated for it: the frame is intact, and the dictionary is what is missing.
+	ErrDictionaryNotFound = errors.New("compression dictionary not found")
+	// ErrCorruptDictionary is a dictionary whose checksum does not verify.
+	ErrCorruptDictionary = errors.New("compression dictionary is corrupt")
+)

@@ -30,6 +30,9 @@ edges() {
 #    The stdio driving adapter is here for the same reason, and it is the only driving adapter
 #    that can be: it speaks a byte stream and the driving port, so a program that appends to a
 #    log or reads one back pays for neither a transport nor a command-line framework.
+#
+#    The kernel lock is here because it is a lock a microcontroller-sized build could carry:
+#    flock and statfs, and nothing else.
 impure=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
 	./core/... \
 	./wiring/embedded/... \
@@ -37,7 +40,8 @@ impure=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' \
 	./adapter/driven/blockstore/filestore/... \
 	./adapter/driven/blockstore/memstore/... \
 	./adapter/driven/blockstore/flashstore/... \
-	./adapter/driven/blockstore/conformance/... |
+	./adapter/driven/blockstore/conformance/... \
+	./adapter/driven/locking/flock/... |
 	{ grep -v '^github.com/tcw/ibsen' || true; })
 if [ -n "$impure" ]; then
 	fail "the core or the embedded wiring reaches outside the standard library" $impure
@@ -60,6 +64,14 @@ crosswise=$(edges ./adapter/driver/... |
 	{ grep -v -E '^github\.com/tcw/ibsen/adapter/driver/[^ ]*/test ' || true; })
 if [ -n "$crosswise" ]; then
 	fail "a driving adapter imports a driven adapter directly" "$crosswise"
+fi
+
+# 4. The ibsen binary links no Kubernetes client. The Kubernetes lease is a heavy dependency,
+#    linked only by cmd/ibsen-k8s through wiring/k8s; nothing reachable from main.go may import
+#    it, or every ibsen user pays for one deployment's lock.
+kube=$(go list -deps . | { grep '^k8s.io/' || true; })
+if [ -n "$kube" ]; then
+	fail "the ibsen binary reaches a k8s.io package; only cmd/ibsen-k8s may" $(echo "$kube" | head -5)
 fi
 
 exit $status

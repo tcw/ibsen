@@ -348,7 +348,7 @@ func (s *secondSyncFails) Sync(driven.BlockRef) error {
 func TestAFailedRolloverSyncStopsTheTopic(t *testing.T) {
 	store := &secondSyncFails{BlockStore: memstore.New(), release: make(chan struct{})}
 	one := [][]byte{[]byte("a0")}
-	frame, _, err := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: 1}).buildFrames(&one)
+	frame, _, err := NewLogTopic(Params{Store: store, TopicName: "t", MaxBlockSize: 1}).buildFrames(WriteRequest{Entries: &one})
 	if err != nil {
 		t.Fatal(err)
 	}

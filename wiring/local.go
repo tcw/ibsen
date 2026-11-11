@@ -2,13 +2,11 @@ package wiring
 
 import (
 	"errors"
-	"path/filepath"
 	"time"
 
 	"github.com/rs/zerolog/log"
 	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	zstdcodec "github.com/tcw/ibsen/adapter/driven/compression/zstd"
-	"github.com/tcw/ibsen/adapter/driven/locking"
 	"github.com/tcw/ibsen/adapter/driven/logging/zerologger"
 	"github.com/tcw/ibsen/core/port/driven"
 	"github.com/tcw/ibsen/errore"
@@ -24,9 +22,11 @@ import (
 // tell it apart from the log a server holds.
 type LocalLog struct {
 	*embedded.Log
-	lock driven.SingleIbsenWriterLock
-	zstd *zstdcodec.Codec
-	root string
+	lock      driven.SingleIbsenWriterLock
+	zstd      *zstdcodec.Codec
+	root      string
+	retention Retention
+	readOnly  bool
 }
 
 // LocalParams is what opening a data directory takes. Everything but RootPath has a working
@@ -48,6 +48,10 @@ type LocalParams struct {
 	// MaxFrameEntries and MaxFrameBytes bound one frame; zero means the core defaults.
 	MaxFrameEntries uint32
 	MaxFrameBytes   int
+	// FlushMode is "lenient" (the default) or "strict"; see IbsenServer.FlushMode. In
+	// lenient mode FlushInterval is the tick, zero meaning DefaultFlushInterval, and Close
+	// flushes whatever the last tick did not.
+	FlushMode string
 	// FlushEntries and FlushInterval are the durability policy; zero entries flushes every
 	// write before acknowledging it.
 	FlushEntries  uint32
@@ -56,11 +60,27 @@ type LocalParams struct {
 	// Every codec this binary links can be read whatever is written with.
 	Compression      string
 	CompressionLevel string
-	// Lock is optional: a writable open builds a file lease over RootPath when none is
-	// given, the same lease at the same path the server takes.
+	// Lock is optional: a writable open builds the lock LockMode names over RootPath when
+	// none is given, the same lock at the same path the server takes.
 	Lock driven.SingleIbsenWriterLock
+	// LockMode names that lock: auto (the default), flock, file or none.
+	LockMode string
 	// Logger is optional; nil logs through zerolog, like the server.
 	Logger driven.Logger
+	// ProducerWindowBlocks is how many of a topic's newest blocks a producer is remembered
+	// across for safe retries; zero means the core default.
+	ProducerWindowBlocks int
+	// CompressionDict and DictTrainBytes are as for the server.
+	CompressionDict string
+	DictTrainBytes  int64
+	// CompressMinBytes and AdaptiveCompression are as for the server.
+	CompressMinBytes    int
+	AdaptiveCompression bool
+	// RetainAge, RetainBytes and ConfigPath are retention, as for the server. A writable open
+	// applies it once, when it is closed; a read-only one reads the file but deletes nothing.
+	RetainAge   string
+	RetainBytes string
+	ConfigPath  string
 }
 
 // ErrRootNotFound is returned by OpenLocal for a data directory that is not there. It is a
@@ -85,6 +105,18 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 			"path [%s] will not be opened unless it exists", params.RootPath)
 	}
 
+	flushMode, flushInterval, err := resolveFlushMode(params.FlushMode, params.FlushInterval)
+	if err != nil {
+		return nil, err
+	}
+	dictionaries, err := resolveDictMode(params.CompressionDict)
+	if err != nil {
+		return nil, err
+	}
+	retention, err := LoadRetention(params.RootPath, params.ConfigPath, params.RetainAge, params.RetainBytes)
+	if err != nil {
+		return nil, err
+	}
 	codec, codecs, zstd, err := buildCodecs(params.Compression, params.CompressionLevel, nil, nil)
 	if err != nil {
 		return nil, err
@@ -93,21 +125,22 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 	lock := params.Lock
 	if !params.ReadOnly {
 		if lock == nil {
-			lock = locking.NewFileLock(
-				filepath.Join(params.RootPath, writeLockFileName), writeLockLease, writeLockReclaim,
-				func(reason error) {
-					// the same reasoning as the server's: whatever this process still holds
-					// is already lost, and a clean shutdown would flush and write on the way
-					// out, so the only safe move is to stop touching the data directory
-					log.Fatal().Err(reason).Msgf(
-						"lost the single writer lock on [%s], stopping before another instance writes beside us",
-						params.RootPath)
-				})
+			lock, err = buildWriteLock(params.LockMode, params.RootPath, func(reason error) {
+				// the same reasoning as the server's: whatever this process still holds
+				// is already lost, and a clean shutdown would flush and write on the way
+				// out, so the only safe move is to stop touching the data directory
+				log.Fatal().Err(reason).Msgf(
+					"lost the single writer lock on [%s], stopping before another instance writes beside us",
+					params.RootPath)
+			})
+			if err != nil {
+				zstd.Close()
+				return nil, err
+			}
 		}
-		if !lock.AcquireLock() {
+		if err := acquireWriteLock(lock, params.RootPath); err != nil {
 			zstd.Close()
-			return nil, errore.WrapWithContextF(ErrWriteLockUnavailable,
-				"unable to acquire the single writer lock on path [%s]", params.RootPath)
+			return nil, err
 		}
 	}
 
@@ -116,17 +149,26 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 		logger = zerologger.New(log.Logger)
 	}
 	opened, err := embedded.Open(embedded.Params{
-		Store:           localStore(params),
-		ReadOnly:        params.ReadOnly,
-		MaxBlockSize:    params.MaxBlockSize,
-		IndexSparsity:   params.IndexSparsity,
-		MaxFrameEntries: params.MaxFrameEntries,
-		MaxFrameBytes:   params.MaxFrameBytes,
-		FlushEntries:    params.FlushEntries,
-		FlushInterval:   params.FlushInterval,
-		Codec:           codec,
-		Codecs:          codecs,
-		Logger:          logger,
+		Store:                fenceIfHeld(localStore(params), lock),
+		ReadOnly:             params.ReadOnly,
+		MaxBlockSize:         params.MaxBlockSize,
+		IndexSparsity:        params.IndexSparsity,
+		MaxFrameEntries:      params.MaxFrameEntries,
+		MaxFrameBytes:        params.MaxFrameBytes,
+		FlushEntries:         params.FlushEntries,
+		FlushInterval:        flushInterval,
+		FlushMode:            flushMode,
+		ProducerWindowBlocks: params.ProducerWindowBlocks,
+		Dictionaries:         dictionaries,
+		DictTrainBytes:       params.DictTrainBytes,
+		CompressMinBytes:     params.CompressMinBytes,
+		AdaptiveCompression:  params.AdaptiveCompression,
+		OnFlushError: func(err error) {
+			log.Error().Err(err).Msg("a periodic flush failed; the topic it failed on takes no more writes")
+		},
+		Codec:  codec,
+		Codecs: codecs,
+		Logger: logger,
 	})
 	if err != nil {
 		zstd.Close()
@@ -135,7 +177,8 @@ func OpenLocal(params LocalParams) (*LocalLog, error) {
 		}
 		return nil, err
 	}
-	return &LocalLog{Log: opened, lock: lock, zstd: zstd, root: params.RootPath}, nil
+	return &LocalLog{Log: opened, lock: lock, zstd: zstd, root: params.RootPath,
+		retention: retention, readOnly: params.ReadOnly}, nil
 }
 
 // localStore is where the bytes go: the filesystem adapter, read-only or not.
@@ -148,14 +191,21 @@ func localStore(params LocalParams) driven.BlockStore {
 
 // Close finishes what is under way and releases the directory, in the order the server's
 // shutdown uses: the log first, because closing it waits for writes and the indexing they
-// started; then the codec's buffers, once nothing reads or writes a frame; then the lease,
-// once nothing will write again.
-func (l *LocalLog) Close() {
-	l.Log.Close()
+// started and flushes what they left; then the codec's buffers, once nothing reads or writes
+// a frame; then the lease, once nothing will write again. It returns the last flush's error,
+// which in lenient mode is the difference between a clean exit and lost writes.
+func (l *LocalLog) Close() error {
+	if !l.readOnly && !l.retention.Keeps() {
+		if err := l.Log.Retain(l.retention.For, time.Now()); err != nil {
+			logRetentionFailure(err)
+		}
+	}
+	err := l.Log.Close()
 	if l.zstd != nil {
 		l.zstd.Close()
 	}
 	if l.lock != nil {
 		l.lock.ReleaseLock()
 	}
+	return err
 }

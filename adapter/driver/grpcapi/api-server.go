@@ -13,12 +13,11 @@ import (
 	"github.com/tcw/ibsen/core/manager"
 	"github.com/tcw/ibsen/core/port/driver"
 	"github.com/tcw/ibsen/errore"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
-
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 )
 
 type server struct {
@@ -165,16 +164,30 @@ func (s server) Write(ctx context.Context, entries *InputEntries) (*WriteStatus,
 	if err := domain.ValidateTopicName(domain.TopicName(entries.Topic)); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	err := s.manager.Write(domain.TopicName(entries.Topic), &entries.Entries)
+	producer, err := domain.ProducerIDFromBytes(entries.ProducerId)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	result, err := s.manager.Write(driver.WriteParams{
+		Topic:    domain.TopicName(entries.Topic),
+		Entries:  &entries.Entries,
+		Producer: producer,
+		Sequence: entries.Sequence,
+	})
 	if errors.Is(err, manager.ErrClosed) {
 		return nil, status.Error(codes.Unavailable, "ibsen is shutting down")
+	}
+	if errors.Is(err, domain.ErrSequenceGap) || errors.Is(err, domain.ErrStaleSequence) || errors.Is(err, domain.ErrSequenceReused) {
+		return nil, status.Error(codes.FailedPrecondition, err.Error())
 	}
 	if err != nil {
 		log.Error().Str("stack", errore.SprintStackTraceBd(err)).Err(errore.RootCause(err)).Msgf("write api failed")
 		return nil, status.Error(codes.Unknown, "error writing batch")
 	}
 	return &WriteStatus{
-		Wrote: int64(len(entries.Entries)),
+		Wrote:       int64(result.Count),
+		FirstOffset: uint64(result.First),
+		Duplicate:   result.Duplicate,
 	}, nil
 }
 
@@ -186,8 +199,12 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 	topicName := domain.TopicName(params.Topic)
 	nextOffset := domain.Offset(params.Offset)
 	readTTL := time.Now().Add(s.TTL)
+	// only the first pass may start from the earliest offset: one already following the log
+	// whose next block was deleted is told so, rather than skipped ahead
+	fromEarliest := params.FromEarliest
 	for time.Until(readTTL) > 0 {
-		sentUntil, readErr, sendErr := s.streamFrom(ctx, topicName, nextOffset, params.BatchSize, readServer)
+		sentUntil, readErr, sendErr := s.streamFrom(ctx, topicName, nextOffset, params.BatchSize, fromEarliest, readServer)
+		fromEarliest = false
 		if sendErr != nil {
 			return sendErr
 		}
@@ -196,6 +213,10 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 		}
 		if errors.Is(readErr, manager.ErrClosed) {
 			return status.Error(codes.Unavailable, "ibsen is shutting down")
+		}
+		var tooOld *domain.OffsetTooOldError
+		if errors.As(readErr, &tooOld) {
+			return status.Error(codes.OutOfRange, tooOld.Error())
 		}
 		if readErr == manager.TopicNotFound {
 			return status.Errorf(codes.NotFound, "Topic %s not found", topicName)
@@ -226,7 +247,7 @@ func (s server) Read(params *ReadParams, readServer Ibsen_ReadServer) error {
 // offset after the last entry sent, the read error and the send error. A failed send or a
 // departed client cancels the read, and any batch already on its way is drained, so the
 // read never blocks on a batch nobody will receive.
-func (s server) streamFrom(ctx context.Context, topic domain.TopicName, from domain.Offset, batchSize uint32, out Ibsen_ReadServer) (domain.Offset, error, error) {
+func (s server) streamFrom(ctx context.Context, topic domain.TopicName, from domain.Offset, batchSize uint32, fromEarliest bool, out Ibsen_ReadServer) (domain.Offset, error, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	logChan := make(chan *[]domain.LogEntry)
@@ -234,12 +255,13 @@ func (s server) streamFrom(ctx context.Context, topic domain.TopicName, from dom
 	readDone := make(chan error, 1)
 	go func() {
 		readDone <- s.manager.Read(driver.ReadParams{
-			TopicName: topic,
-			From:      from,
-			BatchSize: batchSize,
-			LogChan:   logChan,
-			Wg:        &wg,
-			Cancel:    ctx.Done(),
+			TopicName:    topic,
+			From:         from,
+			BatchSize:    batchSize,
+			LogChan:      logChan,
+			Wg:           &wg,
+			Cancel:       ctx.Done(),
+			FromEarliest: fromEarliest,
 		})
 		close(logChan)
 	}()

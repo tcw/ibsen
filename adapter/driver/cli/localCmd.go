@@ -26,7 +26,11 @@ import (
 var (
 	framing string
 	offsets bool
-	follow  bool
+	// producerID makes rerunning an append of the same input safe
+	producerID string
+	// fromEarliest starts cat at the earliest retained offset when the one asked for is gone
+	fromEarliest bool
+	follow       bool
 	// append and cat have a batch size each, and not one between them: cobra writes a flag's
 	// default into its variable as the flag is registered, so a shared one would end up
 	// holding whichever command was registered last.
@@ -49,9 +53,9 @@ var (
 	}
 
 	cmdCat = &cobra.Command{
-		Use:              "cat [topic] [offset (default=0)]",
+		Use:              "cat [topic] [offset (default: the earliest retained)]",
 		Short:            "write a topic to stdout, without a server",
-		Long:             `Writes a topic's entries to stdout from a data directory. Opens the log read-only, so it is safe to point at a directory a server is writing.`,
+		Long:             `Writes a topic's entries to stdout from a data directory. Opens the log read-only, so it is safe to point at a directory a server is writing. With no offset it starts at the earliest entry retention has kept; an offset retention has deleted is an error unless --fromEarliest is given.`,
 		TraverseChildren: true,
 		Args:             cobra.RangeArgs(1, 2),
 		Run: func(cmd *cobra.Command, args []string) {
@@ -60,7 +64,9 @@ var (
 			if err != nil {
 				fail(err, "unable to read topic %s", args[0])
 			}
-			if err := runCat(domain.TopicName(args[0]), from); err != nil {
+			// with no offset, "the whole topic" means whatever retention has kept of it
+			earliest := fromEarliest || len(args) < 2
+			if err := runCat(domain.TopicName(args[0]), from, earliest); err != nil {
 				fail(err, "unable to read topic %s", args[0])
 			}
 		},
@@ -93,31 +99,64 @@ func runAppend(topic domain.TopicName) error {
 	if err := validateFrameBounds(maxFrameEntries, maxFrameBytes); err != nil {
 		return err
 	}
+	if err := validateFlush(flushMode, flushIntervalMs); err != nil {
+		return err
+	}
+	if producerWindowBlocks < 1 {
+		return userErrorf("--producerWindowBlocks must be at least 1, got %d", producerWindowBlocks)
+	}
+	trainBytes, err := dictTrainBytesValue()
+	if err != nil {
+		return err
+	}
+	if compressMinBytes < 0 {
+		return userErrorf("--compressMinBytes cannot be negative, got %d", compressMinBytes)
+	}
+	producer, err := domain.ParseProducerID(producerID)
+	if err != nil {
+		return userErrorf("--producerId %q is not a UUID, or 32 hex digits", producerID)
+	}
 	root, err := localRoot()
 	if err != nil {
 		return err
 	}
 	local, err := wiring.OpenLocal(wiring.LocalParams{
-		RootPath:         root,
-		MaxBlockSize:     maxBlockSizeMB * 1024 * 1024,
-		IndexSparsity:    uint32(indexSparsity),
-		MaxFrameEntries:  uint32(maxFrameEntries),
-		MaxFrameBytes:    maxFrameBytes,
-		FlushEntries:     uint32(flushEntries),
-		FlushInterval:    time.Duration(flushIntervalMs) * time.Millisecond,
-		Compression:      compression,
-		CompressionLevel: compressionLevel,
+		RootPath:             root,
+		MaxBlockSize:         maxBlockSizeMB * 1024 * 1024,
+		IndexSparsity:        uint32(indexSparsity),
+		MaxFrameEntries:      uint32(maxFrameEntries),
+		MaxFrameBytes:        maxFrameBytes,
+		RetainAge:            retainAge,
+		RetainBytes:          retainBytes,
+		ConfigPath:           configPath,
+		ProducerWindowBlocks: producerWindowBlocks,
+		CompressionDict:      compressionDict,
+		DictTrainBytes:       trainBytes,
+		CompressMinBytes:     compressMinBytes,
+		AdaptiveCompression:  adaptiveCompression,
+		FlushEntries:         uint32(flushEntries),
+		FlushInterval:        time.Duration(flushIntervalMs) * time.Millisecond,
+		FlushMode:            flushMode,
+		Compression:          compression,
+		CompressionLevel:     compressionLevel,
+		LockMode:             lockMode,
 	})
 	if err != nil {
 		return localOpenError(root, err)
 	}
-	defer local.Close()
 	written, err := stdio.Append(local, topic, os.Stdin, stdio.AppendParams{
 		Framing:   chosen,
 		BatchSize: appendBatchSize,
+		Producer:  producer,
 	})
+	// closing flushes what lenient mode has not yet: append exits zero only once everything
+	// it wrote is on durable media, in either mode, so a pipeline that finished means durable
+	closeErr := local.Close()
 	if err != nil {
 		return errore.WrapWithContextF(err, "wrote %d entries before failing", written)
+	}
+	if closeErr != nil {
+		return errore.WrapWithContextF(closeErr, "wrote %d entries, and the flush that would have made them durable failed", written)
 	}
 	log.Debug().Msgf("appended %d entries to %s", written, topic)
 	return nil
@@ -136,7 +175,7 @@ func runAppend(topic domain.TopicName) error {
 // What it costs is a load per pass, and a load recovers the head block by scanning it, so a
 // large head block is worth a longer --pollMs. Nothing is written by any of it: the store is
 // read-only.
-func runCat(topic domain.TopicName, from domain.Offset) error {
+func runCat(topic domain.TopicName, from domain.Offset, earliest bool) error {
 	chosen, err := parseFraming(framing)
 	if err != nil {
 		return err
@@ -146,10 +185,11 @@ func runCat(topic domain.TopicName, from domain.Offset) error {
 		return err
 	}
 	params := stdio.CatParams{
-		From:      from,
-		BatchSize: uint32(catBatchSize),
-		Framing:   chosen,
-		Offsets:   offsets,
+		From:         from,
+		BatchSize:    uint32(catBatchSize),
+		Framing:      chosen,
+		Offsets:      offsets,
+		FromEarliest: earliest,
 	}
 	if !follow {
 		_, err := catPass(root, topic, params)
@@ -162,6 +202,7 @@ func runCat(topic domain.TopicName, from domain.Offset) error {
 			return err
 		}
 		params.From = next
+		params.FromEarliest = false
 		select {
 		case <-cancel:
 			return nil

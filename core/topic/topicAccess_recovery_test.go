@@ -93,7 +93,7 @@ func newTestTopic(t *testing.T, store driven.BlockStore, maxBlockSize int) *Topi
 // these tests used to run on had no directory to remove, so nothing showed it.
 func stoppedByTest(t *testing.T, topic *Topic) *Topic {
 	t.Helper()
-	t.Cleanup(topic.Close)
+	t.Cleanup(func() { topic.Close() })
 	return topic
 }
 

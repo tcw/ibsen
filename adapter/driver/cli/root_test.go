@@ -102,3 +102,30 @@ func TestValidateFrameBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateFlushRefusesWhatCannotWork(t *testing.T) {
+	for _, tc := range []struct {
+		mode     string
+		interval int
+		ok       bool
+	}{
+		{"lenient", 1000, true},
+		{"lenient", 1, true},
+		{"lenient", 0, false},
+		{"strict", 0, true},
+		{"strict", 5, true},
+		{"strict", -1, false},
+		{"sometimes", 1000, false},
+		{"", 1000, false},
+	} {
+		err := validateFlush(tc.mode, tc.interval)
+		if (err == nil) != tc.ok {
+			t.Errorf("validateFlush(%q, %d) = %v, want ok=%v", tc.mode, tc.interval, err, tc.ok)
+		}
+		if err != nil {
+			if _, isMessage := userMessage(err); !isMessage {
+				t.Errorf("validateFlush(%q, %d) is not a user message: %v", tc.mode, tc.interval, err)
+			}
+		}
+	}
+}

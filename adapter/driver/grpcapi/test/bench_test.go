@@ -85,7 +85,7 @@ func startBenchServer(b *testing.B, flushEntries uint32, flushInterval time.Dura
 	if err != nil {
 		b.Fatal(err)
 	}
-	b.Cleanup(codec.Close)
+	b.Cleanup(func() { codec.Close() })
 	syncs := newCountingFS()
 	topicsManager, err := manager.NewLogTopicsManager(manager.LogTopicManagerParams{
 		Store:         filestore.New(syncs, b.TempDir()),
@@ -102,7 +102,7 @@ func startBenchServer(b *testing.B, flushEntries uint32, flushInterval time.Dura
 	if err != nil {
 		b.Fatal(err)
 	}
-	b.Cleanup(topicsManager.Close)
+	b.Cleanup(func() { topicsManager.Close() })
 	server := grpcapi.NewUnsecureIbsenGrpcServer(&topicsManager, benchTTL, benchCheckForNewEvery)
 	lis, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
@@ -143,7 +143,7 @@ func connect(b *testing.B, target string) IbsenClient {
 	if err != nil {
 		b.Fatal(err)
 	}
-	b.Cleanup(client.Close)
+	b.Cleanup(func() { client.Close() })
 	return client
 }
 

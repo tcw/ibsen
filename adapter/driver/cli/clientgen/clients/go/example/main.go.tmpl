@@ -1,0 +1,52 @@
+// The example writes two entries to the topic "example" on an Ibsen server at
+// localhost:54321 (or the address given as the first argument), reads them back, and lists the
+// topics. Start a server with `ibsen server` first; with no data directory it keeps the log in
+// memory.
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"time"
+
+	"@@MODULE@@/ibsen"
+)
+
+func main() {
+	addr := "localhost:54321"
+	if len(os.Args) > 1 {
+		addr = os.Args[1]
+	}
+	client, err := ibsen.Dial(addr, []ibsen.Option{ibsen.WithProducer()})
+	if err != nil {
+		fail(err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := client.Write(ctx, "example", [][]byte{[]byte("hello"), []byte("world")})
+	if err != nil {
+		fail(err)
+	}
+	fmt.Printf("wrote %d entries at offset %d\n", result.Count, result.FirstOffset)
+
+	err = client.Read(ctx, "example", result.FirstOffset, false, false, func(e ibsen.Entry) error {
+		fmt.Printf("%d\t%s\n", e.Offset, e.Content)
+		return nil
+	})
+	if err != nil {
+		fail(err)
+	}
+	topics, err := client.List(ctx)
+	if err != nil {
+		fail(err)
+	}
+	fmt.Printf("topics: %v\n", topics)
+}
+
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, err)
+	os.Exit(1)
+}

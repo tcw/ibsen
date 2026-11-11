@@ -23,19 +23,26 @@ size() {
 }
 
 build server .
+build kube ./cmd/ibsen-k8s
 build embedded ./wiring/embedded/example
 
 server=$(size server)
+kube=$(size kube)
 embedded=$(size embedded)
 
 target="${GOOS:-$(go env GOOS)}/${GOARCH:-$(go env GOARCH)}"
 # awk rather than bc, which is not on every CI image
-awk -v target="$target" -v server="$server" -v embedded="$embedded" 'BEGIN {
+awk -v target="$target" -v server="$server" -v kube="$kube" -v embedded="$embedded" 'BEGIN {
 	printf "target        %s\n", target
-	printf "server        %8.2f MB  (gRPC, cobra, OTEL, zerolog, zstd)\n", server / 1048576
+	printf "server        %8.2f MB  ibsen: gRPC, cobra, OTEL, zerolog, zstd\n", server / 1048576
+	printf "ibsen-k8s     %8.2f MB  the same, and the Kubernetes client for --lock k8s\n", kube / 1048576
 	printf "embedded      %8.2f MB  (core + memstore, standard library only)\n", embedded / 1048576
 	printf "embedded is   %8.2fx smaller\n", server / embedded
 }'
+
+# What `ibsen generate client` costs the server binary: the bundled client folders it embeds.
+clients=$(find adapter/driver/cli/clientgen/clients adapter/driver/cli/clientgen/ibsen.proto -type f -exec cat {} + | wc -c)
+awk -v clients="$clients" 'BEGIN { printf "clients       %8.2f MB  embedded in the server by ibsen generate client\n", clients / 1048576 }'
 
 # A sanity check rather than a budget: a hard byte ceiling would drift with every Go release,
 # but an embedded build that stopped being smaller than the server would mean the wiring had

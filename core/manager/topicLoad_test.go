@@ -10,6 +10,7 @@ import (
 	"github.com/tcw/ibsen/adapter/driven/blockstore/filestore"
 	"github.com/tcw/ibsen/core/domain"
 	"github.com/tcw/ibsen/core/port/driven"
+	"github.com/tcw/ibsen/core/port/driver"
 )
 
 // gatedLoadStore counts how often a topic's log blocks are listed, which happens once per
@@ -54,7 +55,8 @@ func TestManager_concurrentFirstRequestsLoadTopicOnce(t *testing.T) {
 		go func(from int) {
 			defer wg.Done()
 			entries := [][]byte{[]byte(fmt.Sprintf("topic-%d", from))}
-			errs <- m.Write("topic", &entries)
+			_, err := m.Write(driver.WriteParams{Topic: "topic", Entries: &entries})
+			errs <- err
 		}(30 + i)
 	}
 	wg.Wait()
@@ -89,7 +91,7 @@ func TestManager_waitersOfFailedLoadGetErrorAndLaterRequestsRetry(t *testing.T) 
 		go func() {
 			defer wg.Done()
 			entries := [][]byte{[]byte("x")}
-			if err := m.Write("topic", &entries); err == nil {
+			if _, err := m.Write(driver.WriteParams{Topic: "topic", Entries: &entries}); err == nil {
 				t.Error("write to a topic that cannot be loaded succeeded")
 			}
 		}()

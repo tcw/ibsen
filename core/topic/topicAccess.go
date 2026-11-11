@@ -86,6 +86,17 @@ type Topic struct {
 	writeFailure error
 	// closed is set by Close; writes are refused so no new background indexing starts
 	closed bool
+	// producers is the last write accepted from each producer seen in the newest
+	// ProducerWindowBlocks blocks, so a retry is recognised; guarded by mu
+	producers            map[domain.ProducerID]producerState
+	ProducerWindowBlocks int
+	// dict is the dictionary training state, nil when the codec cannot use one or
+	// dictionaries are off; dicts finds the dictionaries frames name, and is shared with
+	// read snapshots
+	dict  *dictState
+	dicts *dictionaries
+	// skip decides which frames are offered to the codec at all
+	skip compressSkip
 }
 
 // Params is what the core needs to open one topic: the driven store to keep its blocks in,
@@ -115,8 +126,30 @@ type Params struct {
 	// FlushInterval is how long a batch may be held back hoping for more entries. Zero
 	// never holds one back. A store that cannot sync ignores both.
 	FlushInterval time.Duration
+	// FlushMode says when a write is acknowledged: FlushStrict (the zero value) once it is
+	// durable, FlushLenient once it is appended, leaving Flush to the caller. Readers are held
+	// to the durable offset either way. In lenient mode the two settings above do nothing:
+	// nothing is flushed until Flush is called.
+	FlushMode FlushMode
 	// Logger is optional: a core built without one logs nothing rather than crashing.
 	Logger driven.Logger
+	// ProducerWindowBlocks is how many of the newest blocks a producer is remembered across;
+	// zero means DefaultProducerWindowBlocks.
+	ProducerWindowBlocks int
+	// Dictionaries trains a compression dictionary for the topic once it has written
+	// DictTrainBytes of plain entries (zero means DefaultDictTrainBytes), and writes new
+	// frames with it — when Codec can use one. Frames that name a dictionary are read
+	// whatever this says.
+	Dictionaries   bool
+	DictTrainBytes int64
+	// CompressMinBytes is the smallest plain frame payload offered to the codec; a smaller
+	// one is stored plain without trying. Zero tries every frame. With a dictionary the
+	// threshold is three eighths of this, since a dictionary pays on smaller frames.
+	CompressMinBytes int
+	// AdaptiveCompression stops offering frames to the codec after AdaptiveMisses in a row
+	// were stored plain because compression did not pay, and tries again every
+	// AdaptiveProbeEvery frames.
+	AdaptiveCompression bool
 }
 
 func NewLogTopic(params Params) *Topic {
@@ -144,23 +177,39 @@ func NewLogTopic(params Params) *Topic {
 	if maxFrameBytes == 0 {
 		maxFrameBytes = DefaultMaxFrameBytes
 	}
+	window := params.ProducerWindowBlocks
+	if window <= 0 {
+		window = DefaultProducerWindowBlocks
+	}
+	var dict *dictState
+	if withDicts, ok := codec.(driven.DictionaryCodec); ok && params.Dictionaries {
+		trainBytes := params.DictTrainBytes
+		if trainBytes <= 0 {
+			trainBytes = DefaultDictTrainBytes
+		}
+		dict = &dictState{codec: withDicts, trainBytes: trainBytes, rng: 0x9E3779B97F4A7C15}
+	}
 	return &Topic{
-		Store:           params.Store,
-		Log:             logger,
-		IndexSparsity:   sparsity,
-		MaxFrameEntries: maxFrameEntries,
-		MaxFrameBytes:   maxFrameBytes,
-		Codec:           codec,
-		Codecs:          codecs,
-		flush:           newFlusher(params.Store, params.FlushEntries, params.FlushInterval),
-		TopicName:       params.TopicName,
-		indexWg:         &sync.WaitGroup{},
-		NextOffset:      0,
-		HeadBlockSize:   0,
-		MaxBlockSize:    params.MaxBlockSize,
-		LogBlockList:    []domain.LogBlock{},
-		IndexBlockList:  []domain.IndexBlock{},
-		IndexPosition:   nil,
+		skip:                 compressSkip{minBytes: max(params.CompressMinBytes, 0), adaptive: params.AdaptiveCompression},
+		dict:                 dict,
+		dicts:                newDictionaries(params.Store, domain.TopicName(params.TopicName)),
+		ProducerWindowBlocks: window,
+		Store:                params.Store,
+		Log:                  logger,
+		IndexSparsity:        sparsity,
+		MaxFrameEntries:      maxFrameEntries,
+		MaxFrameBytes:        maxFrameBytes,
+		Codec:                codec,
+		Codecs:               codecs,
+		flush:                newFlusher(params.Store, params.FlushEntries, params.FlushInterval, params.FlushMode, logger, params.TopicName),
+		TopicName:            params.TopicName,
+		indexWg:              &sync.WaitGroup{},
+		NextOffset:           0,
+		HeadBlockSize:        0,
+		MaxBlockSize:         params.MaxBlockSize,
+		LogBlockList:         []domain.LogBlock{},
+		IndexBlockList:       []domain.IndexBlock{},
+		IndexPosition:        nil,
 	}
 }
 
@@ -298,6 +347,16 @@ func (t *Topic) LoadOrCreate() error {
 	if len(logBlocks) == 0 {
 		return nil
 	}
+	// a crash between retention removing a log block and its index leaves the index
+	var orphans []driven.Block
+	indexBlocks, orphans = orphanIndexes(logBlocks, indexBlocks)
+	for _, orphan := range orphans {
+		ref := driven.IndexRef(t.topic(), domain.IndexBlock(orphan.Block))
+		err := t.Store.Remove(ref)
+		t.Log.Log(driven.LevelWarn, "ignoring an index block whose log block is gone",
+			driven.Str("topic", t.TopicName), driven.Uint64("indexBlock", orphan.Block),
+			driven.Bool("removed", err == nil))
+	}
 	t.LogBlockList = toLogBlocks(logBlocks)
 	t.IndexBlockList = toIndexBlocks(indexBlocks)
 
@@ -318,6 +377,13 @@ func (t *Topic) LoadOrCreate() error {
 	t.flush.reset(nextOffset)
 	t.HeadBlockSize = int(validSize)
 	t.writeFailure = nil
+
+	if err := t.rebuildProducersLocked(); err != nil {
+		return errore.Wrap(err)
+	}
+	if err := t.loadCurrentDictionaryLocked(); err != nil {
+		return errore.Wrap(err)
+	}
 
 	// Find position of last entry write to index
 	position, err := t.findCurrentIndexLogBlockPosition()
@@ -351,7 +417,17 @@ func (t *Topic) Read(params domain.ReadLogParams) error {
 	if err := domain.ValidateTopicName(t.topic()); err != nil {
 		return err
 	}
-	return t.snapshot().read(params)
+	for attempt := 0; ; attempt++ {
+		err := t.snapshot().read(params)
+		var tooOld *domain.OffsetTooOldError
+		// a FromEarliest read whose first block went between the snapshot and the open has
+		// sent nothing yet, so it starts again from what is there now
+		if params.FromEarliest && attempt < 3 && errors.As(err, &tooOld) && tooOld.Requested == params.From {
+			params.From = tooOld.Earliest
+			continue
+		}
+		return err
+	}
 }
 
 // snapshot copies the topic state so a read does not hold the lock while
@@ -370,6 +446,7 @@ func (t *Topic) snapshot() *Topic {
 		Codec:           t.Codec,
 		Codecs:          t.Codecs,
 		flush:           t.flush,
+		dicts:           t.dicts,
 		NextOffset:      t.NextOffset,
 		HeadBlockSize:   t.HeadBlockSize,
 		LogBlockList:    append([]domain.LogBlock(nil), t.LogBlockList...),
@@ -379,6 +456,12 @@ func (t *Topic) snapshot() *Topic {
 }
 
 func (t *Topic) read(params domain.ReadLogParams) error {
+	if earliest := t.earliestLocked(); len(t.LogBlockList) > 0 && params.From < earliest {
+		if !params.FromEarliest {
+			return &domain.OffsetTooOldError{Requested: params.From, Earliest: earliest}
+		}
+		params.From = earliest
+	}
 	// ensures reader will not read partially written log entries
 	endOffset, exists := t.findLastConfirmedWrittenEntryOffset(params.From)
 	if !exists {
@@ -400,6 +483,10 @@ func (t *Topic) read(params domain.ReadLogParams) error {
 	t.debugLogIndexLookup(params.From, byteOffset, scanCount)
 
 	if err = t.sendBlock(t.logRef(block), byteOffset, params.From, endOffset, params); err != nil {
+		if errors.Is(err, driven.ErrBlockNotFound) {
+			// retention removed it since this read's snapshot was taken
+			return &domain.OffsetTooOldError{Requested: params.From, Earliest: t.earliestInStore()}
+		}
 		return errore.Wrap(err)
 	}
 
@@ -419,6 +506,11 @@ func (t *Topic) read(params domain.ReadLogParams) error {
 		}
 		err = t.sendBlock(t.logRef(b), 0, domain.Offset(b), endOffset, params)
 		if errors.Is(err, driven.ErrBlockNotFound) {
+			// gone because retention removed it: say so rather than skip to the next block.
+			// A block not yet created is past the boundary and never reached here.
+			if earliest := t.earliestInStore(); earliest > domain.Offset(b) {
+				return &domain.OffsetTooOldError{Requested: domain.Offset(b), Earliest: earliest}
+			}
 			break
 		}
 		if err != nil {
@@ -435,14 +527,15 @@ func (t *Topic) sendBlock(ref driven.BlockRef, byteOffset int64, from domain.Off
 		return err
 	}
 	_, err = logfmt.ReadFile(logfmt.ReadFileParams{
-		Reader:     blockReader,
-		Codecs:     t.Codecs,
-		LogChan:    params.LogChan,
-		Wg:         params.Wg,
-		BatchSize:  params.BatchSize,
-		Cancel:     params.Cancel,
-		FromOffset: from,
-		EndOffset:  endOffset,
+		Reader:       blockReader,
+		Codecs:       t.Codecs,
+		Dictionaries: t.dicts,
+		LogChan:      params.LogChan,
+		Wg:           params.Wg,
+		BatchSize:    params.BatchSize,
+		Cancel:       params.Cancel,
+		FromOffset:   from,
+		EndOffset:    endOffset,
 	})
 	t.closeBlock(ref, blockReader)
 	return err
@@ -452,30 +545,62 @@ func (t *Topic) sendBlock(ref driven.BlockRef, byteOffset int64, from domain.Off
 // only become readable at that point, so an acknowledged write and a readable write are the
 // same thing.
 func (t *Topic) Write(entries domain.EntriesPtr) error {
+	_, err := t.WriteWith(WriteRequest{Entries: entries})
+	return err
+}
+
+// WriteWith is Write for a write that may carry a producer and its number, and that wants to
+// know where its entries went. A retry of the producer's last accepted write appends nothing
+// and returns the offsets the original was stored at, with Duplicate set; a number that is
+// neither that nor the next is refused with domain.ErrSequenceGap or ErrStaleSequence.
+func (t *Topic) WriteWith(req WriteRequest) (domain.WriteResult, error) {
 	if err := domain.ValidateTopicName(t.topic()); err != nil {
-		return err
+		return domain.WriteResult{}, err
 	}
-	pending, err := t.append(entries)
+	pending, result, err := t.append(req)
 	if err != nil {
-		return err
+		return domain.WriteResult{}, err
+	}
+	if result.Duplicate {
+		// in strict mode "already written" must mean what "written" means: durable. The
+		// original may still be waiting for its flush when its retry arrives
+		if t.flush.mode == FlushStrict && t.flush.durableOffset() < result.First+domain.Offset(result.Count) {
+			if err := t.flush.flushAll(); err != nil {
+				return domain.WriteResult{}, err
+			}
+		}
+		return result, nil
 	}
 	// waiting happens outside t.mu: a sync can be slow, and readers take that lock
-	return t.flush.wait(pending)
+	return result, t.flush.acknowledge(pending)
+}
+
+// Flush makes every entry appended to the topic before the call durable, and so readable,
+// and returns the first error. In strict mode there is nothing for it to do but wait for
+// flushes already under way. A failed flush stops the topic, and every later Flush returns
+// that failure.
+func (t *Topic) Flush() error {
+	return t.flush.flushAll()
 }
 
 // append writes entries into the head block and returns the flush that will make them
 // durable, or nil when the store has nothing to flush.
-func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
+func (t *Topic) append(req WriteRequest) (*pendingFlush, domain.WriteResult, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.writeFailure != nil {
-		return nil, errore.Wrap(t.writeFailure)
+		return nil, domain.WriteResult{}, errore.Wrap(t.writeFailure)
 	}
 	if t.closed {
-		return nil, ErrTopicClosed
+		return nil, domain.WriteResult{}, ErrTopicClosed
 	}
 	if err := t.flush.failure(); err != nil {
-		return nil, err
+		return nil, domain.WriteResult{}, err
+	}
+	// the check and the append happen under one lock, so a retry and its original, or two
+	// retries, can never both be appended
+	if duplicate, isDuplicate, err := t.checkSequenceLocked(req); err != nil || isDuplicate {
+		return nil, duplicate, err
 	}
 
 	// if topic is empty create the first log block
@@ -489,20 +614,21 @@ func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 	if t.HeadBlockSize > t.MaxBlockSize {
 		if old, ok := t.logBlockHead(); ok {
 			if err := t.flush.barrier(t.logRef(old)); err != nil {
-				return nil, err
+				return nil, domain.WriteResult{}, err
 			}
 		}
 		t.addNewLogBlock()
 		t.resetHeadBlockSize()
+		t.forgetOldProducersLocked()
 	}
 	// encode the entries into frames and append them to the head block
 	head, hasBlockHead := t.logBlockHead()
 	if !hasBlockHead {
-		return nil, errors.New("Topic " + t.TopicName + " has no block head")
+		return nil, domain.WriteResult{}, errors.New("Topic " + t.TopicName + " has no block head")
 	}
-	frames, offsets, err := t.buildFrames(entries)
+	frames, offsets, err := t.buildFrames(req)
 	if err != nil {
-		return nil, errore.Wrap(err)
+		return nil, domain.WriteResult{}, errore.Wrap(err)
 	}
 
 	block, err := t.Store.Append(t.logRef(head), frames)
@@ -512,10 +638,20 @@ func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 		if errors.Is(err, driven.ErrDirtyBlock) {
 			t.writeFailure = err
 		}
-		return nil, errore.Wrap(err)
+		return nil, domain.WriteResult{}, errore.Wrap(err)
+	}
+
+	if t.dict != nil {
+		for _, entry := range *req.Entries {
+			t.dict.plainSince += int64(len(entry))
+		}
+		t.dict.sampleLocked(*req.Entries, t.NextOffset)
+		t.startTrainingLocked(head)
 	}
 
 	// update internal log state
+	first := t.NextOffset
+	t.recordProducerLocked(req, first, offsets, head)
 	t.incrementOffset(offsets)
 	t.HeadBlockSize = int(block.Size)
 	pending := t.flush.appended(t.logRef(head), t.NextOffset, offsets)
@@ -532,18 +668,26 @@ func (t *Topic) append(entries domain.EntriesPtr) (*pendingFlush, error) {
 		}
 		t.Log.Log(driven.LevelTrace, "index update executed", driven.Bool("executed", wasExecuted))
 	}()
-	return pending, nil
+	return pending, domain.WriteResult{First: first, Count: uint32(offsets)}, nil
 }
 
-// Close refuses further writes and waits for the background indexing started by earlier
-// writes. It does not wait for UpdateIndex calls made by others; stop those first. Every
-// writer waits for its own batch, so nothing is left to flush: a flush that failed is not
-// tried again here either (see ErrFlushFailed).
-func (t *Topic) Close() {
+// Close refuses further writes, flushes what was appended, and waits for the background
+// indexing started by earlier writes. It does not wait for UpdateIndex calls made by others;
+// stop those first. It returns the flush's error, or the failure that stopped the topic
+// earlier: a flush that failed is not tried again here (see ErrFlushFailed).
+//
+// In strict mode every writer waited for its own batch, so the flush finds nothing. In
+// lenient mode it is what makes a clean exit lose nothing.
+func (t *Topic) Close() error {
 	t.mu.Lock()
 	t.closed = true
 	t.mu.Unlock()
+	err := t.flush.flushAll()
 	t.indexWg.Wait()
+	if t.dict != nil {
+		t.dict.wg.Wait()
+	}
+	return err
 }
 
 func (t *Topic) debugLogLoadResult(logBlocks []driven.Block, indexBlocks []driven.Block) {
@@ -619,7 +763,8 @@ func (t *Topic) ToString() string {
 // a frame may be. They are appended in one call, so the store still sees a write whole or
 // not at all and a flush still never lands inside a frame; what changes is only that a large
 // write is addressable at more than one point.
-func (t *Topic) buildFrames(entries domain.EntriesPtr) ([]byte, int, error) {
+func (t *Topic) buildFrames(req WriteRequest) ([]byte, int, error) {
+	entries := req.Entries
 	var frames []byte
 	var payload []byte
 	firstOffset := t.NextOffset
@@ -632,7 +777,35 @@ func (t *Topic) buildFrames(entries domain.EntriesPtr) ([]byte, int, error) {
 			return nil
 		}
 		var err error
-		frames, err = logfmt.AppendFrame(frames, t.Codec, firstOffset, inFrame, payload)
+		header := domain.FrameHeader{
+			FirstOffset:  firstOffset,
+			EntryCount:   uint32(inFrame),
+			Producer:     req.Producer,
+			Sequence:     req.Sequence,
+			WriteEntries: uint32(len(*entries)),
+		}
+		before := len(frames)
+		if t.dict != nil {
+			t.dict.frames++
+			t.dict.framedEntries += int64(inFrame)
+		}
+		withDictionary := t.dict != nil && t.dict.current != nil
+		tried := t.Codec.ID() != driven.CodecNone && t.skip.try(len(payload), withDictionary)
+		switch {
+		case !tried:
+			frames, err = logfmt.AppendFrameWith(frames, driven.NoCodec{}, header, payload)
+		case withDictionary:
+			frames, err = logfmt.AppendFrameDict(frames, t.dict.codec, *t.dict.current, header, payload)
+			if err == nil {
+				t.dict.noteFrameLocked(len(payload), len(frames)-before)
+			}
+		default:
+			frames, err = logfmt.AppendFrameWith(frames, t.Codec, header, payload)
+		}
+		if tried && err == nil {
+			// the codec byte, ninth of a header, says whether the attempt was kept
+			t.skip.tried(driven.CodecID(frames[before+8]) != driven.CodecNone)
+		}
 		if err != nil {
 			return err
 		}

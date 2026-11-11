@@ -28,7 +28,7 @@ func main() {
 	defer log.Close()
 
 	entries := [][]byte{[]byte("one"), []byte("two"), []byte("three")}
-	if err = log.Write("events", &entries); err != nil {
+	if _, err = log.Write(driver.WriteParams{Topic: "events", Entries: &entries}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

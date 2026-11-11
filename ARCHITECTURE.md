@@ -1,7 +1,8 @@
 # Architecture
 
 This document describes how Ibsen is built and why. [README.md](README.md) is the
-introduction; this is the level below it. It assumes you have read what a log is and want to
+introduction, and [the user guide](docs/USER_GUIDE.md) and [the operations guide](docs/OPERATIONS.md)
+say how to use and run it; this is the level below it. It assumes you have read what a log is and want to
 know what the bytes look like, what the interfaces promise, and which decisions are load
 bearing.
 
@@ -17,7 +18,8 @@ bearing.
 - [10. The index](#10-the-index)
 - [11. Recovery](#11-recovery)
 - [12. Indexing without timers](#12-indexing-without-timers)
-- [13. Compression](#13-compression)
+- [12a. Retention](#12a-retention)
+- [13. Compression](#13-compression) (and [13.3 Dictionaries](#133-dictionaries), [13.4 Not paying for compression that does not pay](#134-not-paying-for-compression-that-does-not-pay))
 - [14. Composition roots](#14-composition-roots)
 - [15. Concurrency and shutdown](#15-concurrency-and-shutdown)
 - [16. Single writer, and distribution](#16-single-writer-and-distribution)
@@ -226,6 +228,45 @@ The entry checksum still earns its place inside the frame: the frame checksum ca
 media, the entry checksum catches everything after it, and a frame that verifies whole can
 still hold an entry that does not.
 
+#### Version 2: the extension
+
+A frame that carries a producer (§8.4) or names a compression dictionary (§13.3) is version 2.
+Its first 36 bytes are laid out and checksummed exactly as version 1's, except that `version`
+is 2 and `reserved` holds the extension's length. The extension holds only what the frame
+uses, and a checksum of its own:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ the 36-byte header above, version 2, reserved = extension len │
+├──────────────────────────────────────────────────────────────┤
+│ flags uint8   bit 0: a producer follows · bit 1: a dictionary │
+├──────────────────────────────────────────────────────────────┤
+│ producer [16]byte · sequence uint64 · writeEntries uint32     │  bit 0, 28 bytes
+├──────────────────────────────────────────────────────────────┤
+│ dictID uint64                                                 │  bit 1, 8 bytes
+├──────────────────────────────────────────────────────────────┤
+│ extCrc uint32 over the extension bytes before it              │
+├──────────────────────────────────────────────────────────────┤
+│ payload                                                       │
+└──────────────────────────────────────────────────────────────┘
+```
+
+So a dictionary alone costs 13 bytes more than version 1, a producer alone 33, both 41. The
+first layout put every field in every version 2 frame — 44 bytes — and on one-entry frames
+of ~130-byte events that overhead ate a third of what a dictionary saved.
+
+- **An older build refuses version 2 rather than truncating it.** It verifies the 28 bytes
+  after the checksum, which version 2 keeps valid, and then refuses a version it does not
+  know with `ErrUnsupportedLogFormat`, which recovery never truncates. Had the extension been
+  folded into `headerCrc`, an older build would have read every version 2 frame as corrupt
+  and cut the block there. `core/domain/frameV2_test.go` carries a copy of the version 1
+  reader to pin this.
+- **Version 1 frames remain readable forever**, and a frame with neither a producer nor a
+  dictionary is still written as version 1, so a log that uses neither looks exactly as it
+  did. The two mix freely in one block.
+- `writeEntries` is the size of the whole write the frame belongs to, which is what makes a
+  producer's write torn by a crash recognisable (§11).
+
 ### 5.3 Index pair
 
 An index block is a sequence of 20-byte pairs (`index.PairSize`):
@@ -256,7 +297,7 @@ keeps them in flash pages with a page table in RAM. The core names a block with 
 ```go
 type LogManager interface {
 	List() []domain.TopicName
-	Write(topic domain.TopicName, entries domain.EntriesPtr) error
+	Write(params WriteParams) (domain.WriteResult, error)
 	Read(params ReadParams) error
 }
 ```
@@ -264,6 +305,17 @@ type LogManager interface {
 The whole of what a log server offers. `grpcapi` consumes it, `core/manager` implements it,
 and `embedded.Log` satisfies it — which is why code written against an embedded log works
 against a server and back. A driving adapter names this port and never the implementation.
+
+```go
+type Flusher interface {
+	Flush() error
+}
+```
+
+`driver.Flusher` sits beside it, the way `driven.Syncable` sits beside `BlockStore`: when to
+flush is a decision for whoever runs the log, not for every client of it, so the three-call
+port stays three calls. The manager and `embedded.Log` implement it. In lenient mode it is the
+only thing that flushes; in strict mode it waits for flushes already under way.
 
 `ReadParams` carries a channel of batches, a `WaitGroup` the caller uses to take them back, a
 starting offset, a batch size and a `Cancel` channel. `Cancel` exists because a read can
@@ -296,6 +348,14 @@ The contract that matters most:
 > learns a block must be recovered before it is appended to again.
 
 Implementations must be safe for concurrent use.
+
+**`Block.Modified`** is when a block was last appended to or truncated — for a log block that
+is no longer the head, when its last entry was written. Retention (§12a) deletes by it. A
+store that cannot tell reports zero, and a block of unknown age is never deleted for its age:
+`filestore` takes it from the file, `memstore` records it on append and truncate, and
+`flashstore` reports zero, since tracking it would cost a write per append on a device where
+writes are what wears out. The conformance suite checks that a store either tells, and tells
+the time of the last change, or says zero everywhere.
 
 ### 6.3 `driven.Syncable` — optional durability
 
@@ -353,7 +413,9 @@ type SingleIbsenWriterLock interface {
 ```
 
 Two methods, no token — see §16 for why that is deliberate and what it costs. `NoFileLock` is
-the no-op adapter for a single-process or embedded deployment.
+the no-op adapter for a single-process or embedded deployment. The adapters are the lease file
+(`adapter/driven/locking`) and the kernel lock (`adapter/driven/locking/flock`); `--lock`
+chooses between them in `wiring`.
 
 ## 7. Adapters
 
@@ -424,6 +486,8 @@ Indexing is started by the write that dirtied the index (§12) and never blocks 
 Read(params)
   └─ snapshot()                                    ── under t.mu.RLock, copies block lists
        └─ read()
+            ├─ From before the first block: ErrOffsetTooOld, or the first block's offset
+            │  if FromEarliest (§12a)
             ├─ end boundary = the durable offset, not NextOffset, taken once (§9)
             ├─ find the block containing From
             ├─ index.FindNearestByteOffset(From)   ── sort.Search, the pair at or before From
@@ -446,6 +510,46 @@ first block had been cut at the old one, the entries that became durable at its 
 never sent, and the read carried on from the next block's first offset. A tailing reader lost
 them for good. A reader that wants more reads again, from where it stopped.
 
+### 8.4 Safe retries: the producer table
+
+A client that retries a write after a lost reply must not get its entries stored twice. A
+write may carry a **producer ID** (16 bytes) and a **sequence number**: the client numbers its
+writes to a topic 1, 2, 3, and the topic remembers, per producer, the last number it accepted,
+where that write's entries are, and which block they went into.
+
+| the write's number | what happens |
+|---|---|
+| the last one accepted | a duplicate: nothing is appended, and the original's offsets come back with `Duplicate` set |
+| the last one + 1 | a normal write, recorded |
+| anything else | refused: `domain.ErrSequenceGap` or `ErrStaleSequence` (gRPC `FAILED_PRECONDITION`) |
+| any, from a producer not remembered | a normal write, recorded |
+
+- **The check and the append are one step**, under `Topic.mu` in `append`, so a retry and its
+  original — or two retries racing — can never both be appended.
+- **The ID and the number are in the log itself**: every frame of a producer's write carries
+  them in the version 2 extension. `LoadOrCreate` rebuilds the table, once the head block is
+  recovered, from the frame headers of the newest `ProducerWindowBlocks` blocks
+  (`logfmt.ScanProducers`, headers only, nothing decoded). A retry that arrives after a
+  restart is recognised.
+- **A producer is remembered across the newest `--producerWindowBlocks` blocks (4)**, and
+  forgotten once its last write falls out of them, at runtime as on a rebuild. A forgotten
+  producer is new, so its next write may carry any number — and a retry of a write that old
+  is stored again.
+- **A torn producer write is cut whole.** All frames of one write go in one append, so after a
+  crash only the last write can be incomplete, and recovery cuts it from its first frame
+  rather than keeping a prefix (§11): keeping one would give its retry half a write to call a
+  duplicate of. A write with no producer keeps the old rule.
+- **The same number on a different write** — a different entry count — is refused with
+  `ErrSequenceReused` rather than answered as a duplicate of something the client did not send.
+- **"Already written" means what "written" means.** In strict mode a duplicate that arrives
+  while the original still waits for its flush waits for it too. In lenient mode it means the
+  original is in the log; after a power cut that took the original, the rebuilt table does not
+  hold it, and the retry is stored normally.
+
+The driving port carries it: `LogManager.Write(driver.WriteParams) (domain.WriteResult,
+error)`, where `WriteParams` has the topic, the entries and the optional producer and number,
+and `WriteResult` the first offset, the count and `Duplicate`.
+
 ### 8.3 Failure states
 
 | state | cause | escape |
@@ -457,8 +561,36 @@ them for good. A reader that wants more reads again, from where it stopped.
 
 ## 9. Durability
 
-**A write is acknowledged, and its offsets become readable, only once the flush covering them
-has returned.** A reader never sees an entry a power cut could take back.
+**An entry becomes readable only once the flush covering it has returned**, in every mode. A
+reader never sees an entry a power cut could take back.
+
+**When a writer is told its write succeeded depends on the flush mode**, and in the default it
+no longer means "durable":
+
+| | `lenient` (default) | `strict` |
+|---|---|---|
+| writer acknowledged | once the append is in the page cache | once the fsync covering it returns |
+| entry readable | after the next flush | after the fsync covering it |
+| fsync | every `--flushIntervalMs` (1000), and on close | per write, coalesced across concurrent writers |
+| process crash | nothing lost | nothing lost |
+| power cut or kernel crash | acknowledged writes since the last flush can be lost | nothing acknowledged is lost |
+
+`topic.FlushMode` carries it. `FlushStrict` is the zero value, so a core built by a caller that
+says nothing is as safe as it can be; the composition roots of the server and of `ibsen
+append` default to lenient, and the embedded root to strict.
+
+In lenient mode `Topic.Write` returns once `append` has, without waiting on the flusher — unless
+the batch it joined has already failed, since entries appended behind a failed fsync can never
+be covered by a later one. **Nothing in the core flushes a lenient topic.** `Topic.Flush`,
+`LogTopicsManager.Flush` and `embedded.Log.Flush` do, behind `driver.Flusher` (§6.1), and the
+composition root calls them on a ticker it owns (§14): the core still starts no timer
+(invariant 11). `Topic.Close`, and so the manager's and every root's close, flushes too, so a
+clean exit loses nothing in either mode; the lease-lost path still exits without flushing
+(§16.1).
+
+The rollover barrier (§9.4), directory syncs for new names (§9.5), dropping the head block's
+cache before recovery (§9.6) and recovery itself are the same in both modes. They are about
+what the media holds, and lenient mode changes only when the writer hears about it.
 
 `NextOffset` is still the next offset to assign. The read boundary is the **durable offset**,
 which trails it by whatever is appended but not yet flushed. `endBoundaryForReadOffset`
@@ -466,12 +598,20 @@ returns it, and `snapshot()` carries the flusher so a read is bounded by it.
 
 ### 9.1 Policy
 
+In strict mode:
+
 | parameter | zero means | effect |
 |---|---|---|
 | `FlushEntries` | `DefaultFlushEntries` = 1 | how many entries may wait before a flush is forced |
 | `FlushInterval` | never hold back | how long a batch may wait hoping for more entries |
 
+In lenient mode neither applies inside the core. `FlushInterval` is the composition root's
+tick, and `wiring` refuses to start a lenient server or append with an interval of 0 from the
+command line, since nothing would ever be flushed; a programmatic zero means the default second.
+
 ### 9.2 No background goroutine
+
+(In strict mode. In lenient mode the flush is driven by `Flush`, from the root's ticker.)
 
 The writer that needs its entries durable drives the flush; writers whose entries joined the
 same batch wait on it. The core starts no timers it does not own and no goroutine outlives a
@@ -593,7 +733,8 @@ RecoverBlock(store, ref, firstOffset, blockSize)
   ├─ scan frames from the start of the block
   │    ├─ header does not verify, or payload CRC fails  ─▶ valid region ends here
   │    ├─ payload is shorter than storedSize            ─▶ valid region ends here
-  │    └─ a valid frame with an unexpected firstOffset  ─▶ error, truncate nothing
+  │    ├─ a valid frame with an unexpected firstOffset  ─▶ error, truncate nothing
+  │    └─ the region ends inside a producer's write      ─▶ it ends before that write
   ├─ truncate the block to the end of the valid region
   └─ return (nextOffset, validSize, truncatedBytes)
 ```
@@ -614,7 +755,10 @@ Rules worth stating explicitly:
 - **A frame whose codec this build does not carry is still recoverable**, because scanning
   needs only the checksums. The missing codec is reported when a read asks for the entries.
 - **Complete entries of a batch whose write returned an error can survive recovery**, as with
-  any crash. There are no batch markers.
+  any crash — unless the write carried a producer. A producer's frames say how many entries
+  the whole write holds (`writeEntries`, §5.2), so a group that ends short is recognisable,
+  and recovery cuts it from its first frame. Only the last write in a block can be torn, since
+  a write is one append; the cut keeps safe retries exactly-once (§8.4).
 - **The index is cut to match.** Pairs past the recovered end, and torn partial pairs, are
   dropped from the head index, and indexing resumes right after the last kept entry.
 
@@ -639,6 +783,39 @@ This replaced a ten-second ticker in `manager.NewLogTopicsManager` that swept ev
 topic to catch work its exclusion flag had dropped. The topic now takes that work itself, so
 the core starts no goroutine that outlives the call which made it, and an embedded build
 carries no timer it did not ask for.
+
+## 12a. Retention
+
+A topic would grow forever, so `Topic.Retain(policy, now)` deletes **whole log blocks, oldest
+first, and never the head**. `RetentionPolicy` has two limits, either of which deletes: a block
+whose `Modified` is older than `MaxAge`, and the oldest blocks while the topic's log blocks
+hold more than `MaxBytes`. It takes `now` as an argument, so the core reads no clock.
+
+- **Only a prefix is ever removed**, so the offsets left are contiguous. A young block in
+  front of an old one stops the run; the old one waits.
+- **The order is: block lists, then log block, then its index.** The lists change first, under
+  `Topic.mu`, which indexing and writing take as well, so neither can be part way through a
+  block being removed. A crash between the log and its index leaves an index with no log;
+  `LoadOrCreate` ignores it, logs a warning and removes it (`orphanIndexes`), which keeps the
+  index list aligned with the log list the way §10 needs.
+- **Readers are never handed a partial block.** A read starting before the first block gets
+  `domain.ErrOffsetTooOld`, an `*OffsetTooOldError` naming the earliest offset still there;
+  `ReadParams.FromEarliest` starts there instead. A reader on an older snapshot that reaches a
+  removed block gets the same error, not a silent skip to the block after it. A block already
+  open stays readable.
+- **A pending lenient flush may name a removed block**, and skips it: retention never removes
+  the head, and a block stops being the head only once the rollover barrier (§9.4) has synced
+  it.
+- `LogTopicsManager.Retain(policy func(topic) RetentionPolicy, now)` applies it to every topic
+  in the store, and a read-only manager deletes nothing.
+
+Policy is the composition root's. `wiring` reads `--retainAge` and `--retainBytes` and a JSON
+settings file — `<root>/ibsen.json` by default, so settings travel with the data, or
+`--config` — with per-topic overrides that replace the global limits for that topic. The file
+is read with the standard library, refuses unknown keys and bad values at startup, and is never
+written. The server runs retention on a ticker (`DefaultRetentionInterval`, a minute), stopped
+on shutdown; `OpenLocal` applies it once when a writable open closes, so `ibsen append` keeps a
+directory within its limits; the embedded root starts nothing and offers `Log.Retain`.
 
 ## 13. Compression
 
@@ -684,8 +861,94 @@ so every such frame falls back to plain bytes, and the 1.26× there is framing o
 The index also gets only one pair every *sparsity* frames, so small frames cost header
 scanning too.
 
-Not measured yet: the CPU of a compression attempt that is then discarded. Skipping it below
-a size threshold would save that, and wants its own benchmark.
+The CPU of an attempt that is then discarded is §13.4.
+
+### 13.3 Dictionaries
+
+A frame is compressed alone, so a small frame gives zstd almost nothing to find: a 130-byte
+event comes back *larger*, and the frame is stored plain. A **dictionary** trained on the
+topic's own entries — its field names, hosts, message shapes — gives every frame that shared
+history to refer to.
+
+- **Training is the adapter's, and off the write path.** The codec port grows an optional
+  capability, `driven.DictionaryCodec` (`Train`, `EncodeDict`, `DecodeDict`, `DictCodecID`),
+  probed by type assertion like `Syncable`; the zstd adapter implements it with
+  `zstd.BuildDict` and caches an encoder and decoder per dictionary. The core keeps a
+  reservoir of 1000 entries — sampled as frames hold them, checksum, size and offset
+  included, since that is what a dictionary is applied to — and once a topic has written
+  `--dictTrainBytes` (4 MiB) of plain entries, the write that crossed it starts one coalescing
+  training run in a goroutine and returns, the way indexing does (§12). No timer; `Close`
+  waits for it.
+- **Kept only if it pays.** A tenth of the samples is held out, compressed in groups the size
+  of the topic's average frame with and without the dictionary, and the dictionary is kept
+  only if it is at least 10% smaller. That is what stops a dictionary being used where frames
+  are large enough that zstd finds the same things on its own: at 100 entries a frame it
+  measured no better, and is not kept.
+- **Retrained when the data changes.** The compression of frames written with it is tracked;
+  once it is 25% worse than when the dictionary was trained, a new one is trained, at most
+  once per block.
+- **Immutable, named by a hash.** A dictionary's id is the FNV-1a hash of its bytes, so the id
+  is a promise about the bytes, like a codec id (invariant 7). It is a block of its own kind,
+  `driven.Dict` — `<root>/<topic>/<id>.dict` in `filestore` — holding a CRC and the bytes, and
+  it is **written, synced and its name made durable before any frame names it**. A crash in
+  between leaves a dictionary nothing names, which is harmless.
+- **A frame names it** in the version 2 extension (`dictID`, §5.2), with codec byte
+  `CodecZstdDict` (2). A frame the dictionary did not shrink is stored plain and names none.
+- **Reading** resolves the id through `driven.Dictionaries`, which a topic and its snapshots
+  share: read once from the store, verified (CRC, and that its bytes hash to its id), kept. A
+  missing or corrupt dictionary is an error naming it; nothing is truncated (invariant 9), and
+  the frames before the first that names it still read.
+- **Loading** takes up the dictionary the newest frames name and carries on with it.
+- **Retention** (§12a) removes a dictionary only once no remaining block names it and it is not
+  the one being written with.
+- `--compressionDict auto|off` (`auto` with zstd) and `--dictTrainBytes`. The embedded root
+  wires no dictionary-capable codec unless the program brings zstd, so it links nothing new
+  for this but bookkeeping.
+
+What it buys, on the ~130-byte JSON events of §13.2, writing 10000-entry batches through a
+real topic (`BenchmarkDictionary`, memstore, 2-core Ryzen 5 2600X):
+
+| entries per frame | ratio, zstd | ratio, zstd + dictionary | write, per entry | sequential read |
+|---|---|---|---|---|
+| 1 | 1.262 | **0.799** | 1.9 → 12.4 µs | 216 → 104 MB/s |
+| 10 | 0.295 | **0.255** | 1.9 → 3.5 µs | 91 → 90 MB/s |
+| 100 | 0.167 | 0.167 (none kept) | — | — |
+
+So a dictionary is for small frames: a client writing one event at a time stores 37% less, at
+six times the write CPU. On a log of real one-line JSON events appended one per write
+(`ibsen append --batchSize 1`), 30000 lines took 3.7 MB against 5.1 MB.
+
+### 13.4 Not paying for compression that does not pay
+
+A frame zstd cannot shrink is stored plain, but the attempt is paid for first.
+`BenchmarkCompressionAttempt` frames one payload through zstd and through no codec:
+
+| payload | 64 B | 256 B | 1 KiB | 4 KiB | 16 KiB |
+|---|---|---|---|---|---|
+| JSON events, zstd | 1.1 µs, **not kept** | 7.0 µs, kept 0.61 | 10.4 µs, kept 0.30 | 17.7 µs, kept 0.20 | 45 µs, kept 0.17 |
+| random, zstd | 0.7 µs, not kept | 1.1 µs, not kept | 3.7 µs, not kept | 4.7 µs, not kept | 6.3 µs, not kept |
+| gzipped, zstd | 1.1 µs, not kept | 2.4 µs, not kept | 1.9 µs, not kept | 4.7 µs, not kept | 6.3 µs, not kept |
+| any, stored plain | 0.06 µs | 0.09 µs | 0.12 µs | 0.3 µs | 0.9 µs |
+
+So an attempt that is thrown away costs five to fifteen times storing the bytes. On JSON events
+zstd keeps 2 frames in 200 at 128 bytes and 195 at 160; with a dictionary it pays from about
+48. Two things skip the attempt where it is unlikely to pay, in `core/topic/compressSkip.go`,
+under `Topic.mu`, with no timer:
+
+- **A size threshold**, `--compressMinBytes` (128): a smaller frame is stored plain without
+  trying. With a dictionary it is three eighths of that, 48.
+- **An adaptive skip**, `--adaptiveCompression` (on): once 16 frames in a row were stored plain
+  because compression did not pay, the topic stops trying, and tries again every 64th frame;
+  one that pays resumes trying every frame.
+
+Neither changes the format: a frame says which codec wrote it, so a reader cannot tell a frame
+that was not tried from one that did not pay, and blocks mix them freely. `0` and `false`
+restore trying every frame, and are the core's zero values; the CLI's defaults are the ones
+above. Through a real topic writing 10000-entry batches (`BenchmarkCompressionSkip`), one
+entry a frame: JSON 33–37 ms → 17–23 ms a batch, random entries 33–38 ms → 16–22 ms, the
+ratio unchanged; at 10 and 100 entries a frame compression pays, nothing is skipped, and
+nothing changes. The random entries compress about 3% at ten a frame — their checksum, size
+and offset fields do — so the skip correctly never engages there.
 
 ## 14. Composition roots
 
@@ -697,13 +960,16 @@ Two packages, not two build tags. Nothing is excluded; a program imports the roo
 
 ```
 Start(listener)
-  ├─ defaults()            build the adapters not injected: file lease at <root>/.writeLock,
-  │                        or NoFileLock for in-memory mode
+  ├─ defaults()            build the adapters not injected: the --lock adapter over
+  │                        <root>/.writeLock, or NoFileLock for in-memory mode
   ├─ resolveCodecs()       "zstd" → build the adapter; unknown name → ErrUnknownCompression
+  ├─ resolveFlushMode()    lenient | strict; unknown name → ErrUnknownFlushMode
   ├─ blockStore()          memstore | filestore.NewOS | filestore.ReadOnly
-  ├─ AcquireLock()         refused → ErrWriteLockUnavailable (matchable with errors.Is)
+  ├─ acquireWriteLock()    refused → ErrWriteLockUnavailable (matchable with errors.Is)
   ├─ telemetry exporter    lifetime held here, not by the gRPC adapter
   ├─ manager.NewLogTopicsManager
+  ├─ flush ticker          lenient mode only: embedded.StartFlushTicker calls Flush every
+  │                        interval; the shutdown stops it, then closes (and so flushes)
   ├─ startGRPCServer
   └─ wait for shutdown     Start returns only once the shutdown has finished,
                            because the process exits when it returns
@@ -732,6 +998,11 @@ log, err := embedded.Open(embedded.Params{Store: memstore.New()})
 chosen**: this package imports nothing but `core/`, so a program bringing `memstore`,
 `flashstore` or `filestore` stays inside the standard library, and one wiring the zstd codec
 pays for zstd. The logger and codec default to `NopLogger` and `NoCodec`.
+
+It defaults to strict flushing and starts no goroutine. `Params.FlushMode` lenient
+acknowledges writes once appended; with `FlushInterval` set, `Open` starts a ticker calling
+`Flush` (stopped by `Close`), and with it zero the program calls `Flush` itself. The ticker is
+`embedded.StartFlushTicker`, which the server root uses too.
 
 `ErrNoStore` is returned when no store is given. There is no default, because where the bytes
 go is the one decision an embedded build has to make, and guessing would be the package
@@ -835,6 +1106,53 @@ shutting down cleanly.
 This is a read followed by a write, not an atomic renewal. It closes the window a stall opens;
 it does not remove it.
 
+### 16.1a The kernel lock, where it is guaranteed
+
+On one machine there is a lock with no window at all: `flock(2)`.
+`adapter/driven/locking/flock` takes `LOCK_EX|LOCK_NB` on the same `<root>/.writeLock` and
+holds the descriptor open for the life of the process. The kernel grants it atomically, a
+process frozen for a minute still holds it — so nobody can take over while it is stalled — and
+the kernel drops it the moment the process dies, however it dies. There is no renewal, so
+there is nothing to lose and no lease-lost path. It is standard library and `syscall` only,
+and sits in rule 1 of the architecture check.
+
+`--lock` chooses: `auto` (the default), `flock`, `file` (the lease of §16.1) or `none`.
+`wiring/writelock.go` builds the adapter; `cat` and every read-only open still take nothing.
+
+A kernel lock is only as good as the filesystem honouring it, so it is used only where three
+checks pass:
+
+1. **Platform.** Linux, macOS and the BSDs have `flock`, chosen by build constraints. Solaris,
+   AIX, Windows and the rest build a stub that refuses, and `auto` picks the lease file there.
+2. **Filesystem.** `statfs` on the data directory. On Linux by magic number, on macOS and
+   FreeBSD by `f_fstypename`, against an allow-list of local types (ext4, xfs, btrfs, tmpfs,
+   zfs, overlayfs; apfs, hfs, ufs). Network and cluster filesystems — NFS, SMB/CIFS, CephFS,
+   FUSE (GlusterFS and the rest), GFS2, OCFS2, Lustre — are named and refused, because a lock
+   there may hold on one machine only or not at all. Anything unknown is refused too.
+3. **Self-test.** With the lock held, a second, independent descriptor on the same file must be
+   refused it. flock locks belong to an open file description, so this holds within one
+   process on any filesystem that enforces them, and catches one that only pretends to.
+
+`auto` logs which lock it chose and why, and falls back to the lease file when any check
+fails. Explicit `flock` refuses to start instead (`wiring.ErrLockNotGuaranteed`), naming the
+reason; it never quietly becomes something else.
+
+Two details keep the file honest. A holder that releases removes the file *while still holding
+the lock*, and an acquirer checks after locking that its descriptor and the path are still the
+same inode, retrying otherwise — without both, a lock taken on an inode somebody had just
+unlinked would be a lock on nothing. And the two adapters see each other: the flock holder
+writes its id into the file and refuses a file whose content names a holder that renewed within
+a lease, and the lease adapter refuses a file that is flock-held, since a kernel lock renews
+nothing and its file would otherwise read as an expired lease. An *older* binary that knows
+only the lease file does not know to look, so every instance on one directory should run the
+same version.
+
+What remains: the lease file is still what runs where a kernel lock is not guaranteed — on a
+network filesystem, which is exactly where two machines can share a directory — and the
+stall window of §16.1 is still open there. Across machines, the volume's own single-node
+attachment (§16.2) is the fence, and the Kubernetes Lease (§16.4) the one that holds at its
+edges.
+
 ### 16.2 Why there is no Raft
 
 Ibsen does not implement replication or consensus. Run it on replicated storage — a Kubernetes
@@ -864,6 +1182,45 @@ backstop rather than to build etcd integration.
   write. Getting it means an object store with `If-Match`, and object stores do not append,
   while `BlockStore` is built around appending to a growing block. That is a storage redesign,
   not a feature.
+
+### 16.4 The Kubernetes Lease, in a binary of its own
+
+For a StatefulSet on block storage, `adapter/driven/locking/k8slease` keeps the single-writer
+lock in a `coordination.k8s.io/v1` Lease, through client-go's `leaderelection`: acquire, renew
+every `RetryPeriod`, give up after `RenewDeadline` without a renewal; another holder may take
+over `LeaseDuration` after the last one. Kubernetes keeps Leases in etcd, so Ibsen runs no
+consensus and no etcd of its own.
+
+- **Losing it** — renewals failing past the deadline, or another holder in the record — goes
+  through `locking.LeaseLost`, the path the file lease uses, so `IbsenServer.writeLockLost`
+  **exits** rather than shutting down cleanly (§16.1).
+- **Releasing** writes an empty holder over the record last seen, an update the API server
+  refuses if anyone changed the Lease since; a holder that has lost the lease does not even try.
+  A Lease another holder owns is never overwritten or deleted. The tests pin this against
+  client-go's fake clientset with a reactor that enforces `resourceVersion`, which the fake on
+  its own does not — and without which a stale leader's blind renewal silently steals the
+  lease back.
+- **A fencing decorator** in `wiring` (`fence.go`) wraps the store whenever the lock can say it
+  is held (`Held() bool`): every `CreateTopic`, `Append`, `Truncate` and `Remove` is refused with
+  `wiring.ErrNotHolding` once the last renewal is older than the lease minus
+  `--leaseFenceMargin`, before another pod could take over. An append that lands as the lease
+  goes is rolled back, or reported wrapped in `ErrDirtyBlock` if it cannot be. It forwards
+  `Syncable` exactly when the store has it (invariant 8), and `StrayFiles`.
+- **A separate entry point.** `cmd/ibsen-k8s` imports `wiring/k8s`, which registers `--lock
+  k8s` and its flags through `wiring.RegisterLock` and `cli.ExtendServer`; nothing reachable from
+  `main.go` imports either, and rule 4 of `scripts/check-architecture.sh` fails if the `ibsen`
+  binary reaches any `k8s.io` package. The adapter uses the coordination client alone rather
+  than the full clientset, which took the binary from 51 MB to 41 MB; `leaderelection` itself
+  still links client-go's scheme. `ibsen` is 17 MB either way. The core and every port are
+  unchanged: no token is threaded through `AcquireLock` or `Append`.
+
+**What remains.** The fence stops a stalled writer by its own clock — a process that has not
+renewed for `LeaseDuration - FenceMargin` writes nothing — not by the storage refusing a stale
+token, because a filesystem cannot check a token (§16.3). A writer frozen in the middle of a
+`write(2)` that has already passed the fence's check can still complete that one write after
+the lease has gone; the margin is what makes that window shorter than the time another pod
+needs to take over, recover and write. A storage-enforced token remains the only thing that
+closes it outright.
 
 ## 17. Testing
 
@@ -926,14 +1283,22 @@ The rules that must not be broken, collected:
 3. No length read from storage is acted on before it has been checked.
 4. `Append` is all or nothing; a failure that cannot be rolled back wraps `ErrDirtyBlock`.
 5. One `Write` reaches the store as exactly one `Append`.
-6. An entry is readable only once the flush covering it has returned.
+6. An entry is readable only once the flush covering it has returned, in every flush mode.
+   An acknowledgement means durable in strict mode only; in lenient mode it means appended.
 7. A codec id is a promise about bytes already on disk.
 8. A `BlockStore` decorator forwards `Syncable`.
 9. A block that is not damaged is never truncated.
 10. The index says nothing the log does not, and may always be rebuilt from it.
-11. The core starts no goroutine that outlives the call which made it, and no timer at all.
+11. The core starts no goroutine that outlives the call which made it, and no timer at all. The
+    lenient flush tick is the composition root's.
 12. A failed fsync stops the topic; it is never retried.
 13. A block before the head is whole: a rollover syncs the old head before the new block exists.
 14. A write is acknowledged only once its block's name, and its topic's, are durable too.
 15. A read runs to one durable boundary, taken when it begins.
 16. A writable store reads a head block from the media, not the cache, before recovering it.
+17. Retention removes only a prefix of whole log blocks, never the head; the log block before
+    its index; and a reader of a removed offset is told so, never skipped ahead.
+18. A producer's write is appended whole or recovered away whole, and a sequence number is
+    checked and recorded in the same step as the append.
+19. A dictionary is durable before any frame names it, never changes its bytes, and is removed
+    only once no block names it.

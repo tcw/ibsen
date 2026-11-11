@@ -49,7 +49,7 @@ func afterPowerCut(t *testing.T, old *Topic, cache *faultfs.PageCache, loss faul
 	params.Store = filestore.NewOS(dir)
 	params.TopicName = "t"
 	recovered := NewLogTopic(params)
-	t.Cleanup(recovered.Close)
+	t.Cleanup(func() { recovered.Close() })
 	return recovered, recovered.LoadOrCreate()
 }
 
@@ -183,7 +183,7 @@ func TestPowerCut_aRolloverWaitsForTheOldBlock(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			one := [][]byte{[]byte("a0")}
-			frame, _, err := NewLogTopic(Params{Store: newSyncGate(), TopicName: "t", MaxBlockSize: 1}).buildFrames(&one)
+			frame, _, err := NewLogTopic(Params{Store: newSyncGate(), TopicName: "t", MaxBlockSize: 1}).buildFrames(WriteRequest{Entries: &one})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -192,7 +192,7 @@ func TestPowerCut_aRolloverWaitsForTheOldBlock(t *testing.T) {
 			topic, cache, dir := newPowerCutTopic(t, params)
 			hold := &heldSyncs{BlockStore: topic.Store, release: make(chan struct{})}
 			topic.Store = hold
-			topic.flush = newFlusher(hold, 0, 0)
+			topic.flush = newFlusher(hold, 0, 0, FlushStrict, nil, "")
 			close(hold.release)
 			if err = writeOne(topic, "a0"); err != nil {
 				t.Fatal(err)
