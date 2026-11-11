@@ -25,6 +25,13 @@ func read(process int, invoke, complete int64, from uint64, seen ...string) Op {
 	return op
 }
 
+// attempt is one try at a producer write; a retry is another with the same sequence and entries
+func attempt(process int, invoke, complete int64, err error, sequence uint64, entries ...string) Op {
+	op := write(process, invoke, complete, err, entries...)
+	op.Producer, op.Sequence = domain.ProducerID{1}, sequence
+	return op
+}
+
 func logOf(entries ...string) map[domain.TopicName][]Entry {
 	log := make([]Entry, len(entries))
 	for i, data := range entries {
@@ -58,6 +65,12 @@ func TestCheck_acceptsWhatOneLogExplains(t *testing.T) {
 		{"reads of what is there",
 			[]Op{write(1, 1, 2, nil, "a", "b"), read(2, 3, 4, 1, "b"), read(2, 5, 6, 0, "a", "b")},
 			logOf("a", "b")},
+		{"a retry that found its first attempt already in the log", // dated from that attempt
+			[]Op{attempt(1, 1, 2, errIndeterminate, 1, "a"), write(2, 3, 4, nil, "b"), attempt(3, 5, 6, nil, 1, "a")},
+			logOf("a", "b")},
+		{"a retry that wrote what its first attempt did not",
+			[]Op{attempt(1, 1, 2, errIndeterminate, 1, "a"), write(2, 3, 4, nil, "b"), attempt(3, 5, 6, nil, 1, "a")},
+			logOf("b", "a")},
 		{"a read that saw nothing yet",
 			[]Op{read(2, 1, 2, 0), write(1, 3, 4, nil, "a")},
 			logOf("a")},
@@ -100,6 +113,12 @@ func TestCheck_findsWhatNoLogExplains(t *testing.T) {
 		{RealTime, // an indeterminate write is still bound by what was acknowledged before it began
 			[]Op{write(1, 1, 2, nil, "a"), write(2, 3, 4, errIndeterminate, "b")},
 			logOf("b", "a")},
+		{RealTime, // every attempt began after the acknowledgement, so none can be before it
+			[]Op{write(2, 1, 2, nil, "b"), attempt(1, 3, 4, errIndeterminate, 1, "a"), attempt(3, 5, 6, nil, 1, "a")},
+			logOf("a", "b")},
+		{LostWrite, // a write is owed once any attempt at it was acknowledged
+			[]Op{attempt(1, 1, 2, errIndeterminate, 1, "a"), attempt(1, 3, 4, nil, 1, "a")},
+			logOf()},
 		{ReadNotInLog, // the durability promise: a reader saw what a crash then took back
 			[]Op{write(1, 1, 2, errIndeterminate, "a"), read(2, 3, 4, 0, "a")},
 			logOf()},

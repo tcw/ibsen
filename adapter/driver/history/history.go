@@ -74,7 +74,9 @@ type Op struct {
 	Err  error
 	// Producer and Sequence are what a write carried for safe retries; zero for none. A
 	// retry is recorded as a write of its own with the same entries, and the checker's rule
-	// that nothing is in the log twice is then exactly-once.
+	// that nothing is in the log twice is then exactly-once. The checker takes every attempt
+	// at one producer and sequence as one write, invoked when the first was and acknowledged
+	// when one was: the entries may have reached the log during any of them.
 	Producer domain.ProducerID
 	Sequence uint64
 	// log is the instance the operation went to. A flush covers writes to its own instance
@@ -228,6 +230,7 @@ func Check(ops []Op, final map[domain.TopicName][]Entry) []Anomaly {
 // CheckWith is Check, told what an acknowledgement promised.
 func CheckWith(ops []Op, final map[domain.TopicName][]Entry, options Options) []Anomaly {
 	var anomalies []Anomaly
+	ops = mergeRetries(ops)
 	byTopic := map[domain.TopicName][]*Op{}
 	var flushes []*Op
 	for i := range ops {
@@ -263,6 +266,42 @@ func CheckWith(ops []Op, final map[domain.TopicName][]Entry, options Options) []
 	}
 	sort.Slice(anomalies, func(i, j int) bool { return anomalies[i].String() < anomalies[j].String() })
 	return anomalies
+}
+
+// mergeRetries folds the attempts at one producer write into one write. Taking the last
+// attempt alone would date a write that reached the log during its first, failed attempt to
+// when its retry was invoked, which can be after a write acknowledged in between, and call
+// that a real-time violation the log never made.
+func mergeRetries(ops []Op) []Op {
+	type key struct {
+		topic    domain.TopicName
+		producer domain.ProducerID
+		sequence uint64
+	}
+	merged := make([]Op, 0, len(ops))
+	at := map[key]int{}
+	for _, op := range ops {
+		if op.Kind != Write || op.Producer == (domain.ProducerID{}) {
+			merged = append(merged, op)
+			continue
+		}
+		k := key{op.Topic, op.Producer, op.Sequence}
+		i, seen := at[k]
+		if !seen {
+			at[k] = len(merged)
+			merged = append(merged, op)
+			continue
+		}
+		write := &merged[i]
+		if op.Invoke < write.Invoke {
+			write.Invoke, write.Process = op.Invoke, op.Process
+		}
+		// acknowledged by the first attempt that was; otherwise as the last one ended
+		if write.Err != nil && (op.Err == nil || op.Complete > write.Complete) {
+			write.Complete, write.Err, write.log = op.Complete, op.Err, op.log
+		}
+	}
+	return merged
 }
 
 func checkTopic(topic domain.TopicName, ops []*Op, log []Entry, owed func(*Op) bool) []Anomaly {

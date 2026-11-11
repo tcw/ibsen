@@ -497,6 +497,12 @@ twelve seeds per scenario.
 | lenient: power cut keeps some of what was unflushed | `LoseSome(seed)` | the same |
 | lenient: fsync fails, then power cut | `LoseEverything` | the same, and one log fsync fails |
 
+The checker takes every attempt at one producer and sequence as one write, invoked when the
+first attempt was and acknowledged when one was, since its entries may have reached the log
+during any of them. Dating it from its last attempt instead flagged about one producer run in
+eighty as a real-time violation: a first attempt that landed before a power cut, a write
+acknowledged after it, and a retry found to be a duplicate.
+
 The lenient scenarios run a fifth client that plays the composition root's ticker, calling
 `History.Flush` at random intervals, and are checked with `Options{Lenient: true}`. Making
 appended entries readable at once in lenient mode fails all three with lost writes and reads
