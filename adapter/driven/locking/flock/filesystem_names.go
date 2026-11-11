@@ -1,3 +1,5 @@
+//go:build darwin || freebsd
+
 package flock
 
 // Filesystem type names as macOS and the BSDs report them in f_fstypename.

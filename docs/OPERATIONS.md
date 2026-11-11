@@ -515,7 +515,10 @@ Anything after the image name replaces the command, so the filter commands work 
 docker run --rm -v ibsen-data:/app/data ghcr.io/tcw/ibsen:latest topics -d /app/data
 ```
 
-To build an image from source instead, `docker build -t ibsen .` in a checkout.
+To build an image from source instead, `docker build -t ibsen .` in a checkout. That image
+holds nothing but the binary, and runs it as an unprivileged user (uid 65532) on `/app/data`.
+`docker compose up` starts it beside an OpenTelemetry collector and Jaeger, whose UI is on
+port 16686.
 [RELEASING.md](../RELEASING.md) says how releases and their images are made.
 
 ## TLS
@@ -530,7 +533,7 @@ Paths are taken as given, relative to the working directory.
 ## OpenTelemetry
 
 ```shell
-docker run -v ./collector-gateway.yaml:/etc/otelcol/config.yaml otel/opentelemetry-collector:0.54.0
+docker run -p 4317:4317 -v ./collector-gateway.yaml:/etc/otelcol/config.yaml otel/opentelemetry-collector:0.163.2
 ibsen server -d /tmp/ibsen/data -e 0.0.0.0:4317
 ```
 
@@ -562,15 +565,17 @@ GRPC_GO_LOG_VERBOSITY_LEVEL=99 GRPC_GO_LOG_SEVERITY_LEVEL=info ibsen client list
 go test -race ./...               # the whole suite: about 105 s on two cores
 go vet ./...
 gofmt -l .
+go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -checks U1000 ./...   # no unused code
 ./scripts/check-architecture.sh   # the core is pure; dependencies point inward
 ./scripts/embedded-size.sh        # an embedded build is still small
+./scripts/generate-proto.sh       # regenerate the server's and the Go client's gRPC code (buf, Go only)
 python3 scripts/check-links.py    # every Markdown link resolves
 ./scripts/smoke-test.sh BINARY    # the README's quick start against a built binary
 ./scripts/gen-clients.sh          # regenerate everything generated from the proto (pinned tools)
 ./scripts/client-example.sh LANG BINARY   # build and run one bundled client against a server
 ```
 
-CI runs the first six on every push, regenerates the generated code and fails if it is stale,
+CI runs the first eight on every push, regenerates the generated code and fails if it is stale,
 builds and runs every bundled client in a container holding only its toolchain, and runs the
 smoke test on a release snapshot of every push to master. The architecture check is the important one: it fails if any
 package under `core/` reaches outside the standard library, if the core imports an adapter,

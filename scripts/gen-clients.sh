@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates every piece of code generated from api/grpcApi/ibsen.proto: the server's Go stubs
-# in adapter/driver/grpcapi, the Go client's in clients/go/api/grpcApi, and the clients
+# in adapter/driver/grpcapi and the Go client's in clients/go/api/grpcApi (through
+# scripts/generate-proto.sh and buf), and the clients
 # `ibsen generate client` hands out, in adapter/driver/cli/clientgen/clients/<lang>/, with the
 # proto copied beside them. The hand-written
 # wrappers, examples and build files live in the same folders and are left alone. Everything
@@ -61,15 +62,9 @@ python_protoc() {
 	"$tools/venv/bin/python" -m grpc_tools.protoc --proto_path=api/grpcApi "$@" ibsen.proto
 }
 
-# --- the server's and the Go client's stubs ---------------------------------------------------------
-go_stubs() {
-	local dir=$1 pkg=$2
-	PATH="$tools/bin:$PATH" protoc \
-		--go_out="$dir" --go_opt=paths=source_relative --go_opt="Mibsen.proto=$pkg" \
-		--go-grpc_out="$dir" --go-grpc_opt=paths=source_relative --go-grpc_opt="Mibsen.proto=$pkg"
-}
-go_stubs adapter/driver/grpcapi "github.com/tcw/ibsen/adapter/driver/grpcapi;grpcapi"
-go_stubs clients/go/api/grpcApi "github.com/tcw/ibsen/clients/go/api/grpcApi;grpcApi"
+# --- the server's and the Go client's stubs: buf, through generate-proto.sh, so there is one
+# generator for them and CI's two checks agree on what they should hold --------------------------
+./scripts/generate-proto.sh
 
 # --- the proto itself, for `ibsen generate proto` ------------------------------------------------
 cp "$proto" adapter/driver/cli/clientgen/ibsen.proto
