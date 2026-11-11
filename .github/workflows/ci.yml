@@ -19,7 +19,7 @@ jobs:
 
       - name: gofmt
         run: |
-          unformatted=$(gofmt -l core adapter wiring main.go errore)
+          unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
             echo "not gofmt'd:" >&2
             echo "$unformatted" >&2
@@ -28,6 +28,23 @@ jobs:
 
       - name: go vet
         run: go vet ./...
+
+      # No unused code. Only U1000: the other checks have findings nobody has decided on yet.
+      - name: staticcheck unused
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 -checks U1000 ./...
+
+      # Both copies of the generated gRPC code come from api/grpcApi/ibsen.proto through one
+      # pinned generator, so regenerating them must change nothing.
+      - name: generated code is current
+        run: |
+          ./scripts/generate-proto.sh
+          stale=$(git status --porcelain -- adapter/driver/grpcapi clients/go/api/grpcApi)
+          if [ -n "$stale" ]; then
+            echo "generated gRPC code is stale; run scripts/generate-proto.sh:" >&2
+            echo "$stale" >&2
+            git diff >&2
+            exit 1
+          fi
 
       # The north star: the core imports only the standard library, and dependencies point
       # inward. See scripts/check-architecture.sh for the three rules.

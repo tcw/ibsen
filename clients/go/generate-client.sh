@@ -1,1 +1,3 @@
-protoc --proto_path=../../api/grpcApi --go_out=. --go-grpc_out=. ibsen.proto
+#!/usr/bin/env bash
+# The Go client's code is generated with the server's, from one place.
+exec "$(dirname "$0")/../../scripts/generate-proto.sh"
